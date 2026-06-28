@@ -21,6 +21,8 @@ colors:
   error: "#FF3B30"
   warning: "#F5A623"
   warning-alt: "#F59E0B"
+  severity-high: "#F97316"
+  severity-medium: "#C99424"
   text-primary: "#FFFFFF"
   text-secondary: "#D4D4D4"
   text-body: "#A3A3A3"
@@ -109,9 +111,9 @@ spacing:
   10: "40px"
   12: "48px"
   16: "64px"
-  sidebar-width: "260px"
-  topbar-height: "64px"
-  right-rail-width: "320px"
+  sidebar-width: "232px"
+  topbar-height: "56px"
+  right-rail-width: "288px"
   page-gutter: "24px"
 components:
   app-shell:
@@ -183,6 +185,7 @@ Status colors are semantic and rare:
 - Green `#34C759` for online, synced, completed, and healthy states.
 - Red `#FF3B30` for destructive actions, failed capture, or blocked reports.
 - Amber `#F5A623` / `#F59E0B` for pending, warning, connecting, or needs-review states.
+- Report severity badges use a separate ladder so they do not steal primary CTA blue: red for urgent, orange `#F97316` for high, muted gold `#C99424` for medium, and green for low/resolved. Do not use FeedMe primary blue for severity or triage pills.
 
 Text follows a strict hierarchy:
 
@@ -207,10 +210,12 @@ Compactness is a product rule, not a one-page tweak. Prefer the smallest comfort
 
 The default dashboard layout has four structural regions:
 
-- Left sidebar: fixed width around `260px`, persistent navigation, workspace switcher, helper card, and trial or plan status.
-- Top bar: fixed height around `64px`, global search, scoped filters, view toggles, notifications/help, and the primary capture action.
+- Left sidebar: fixed width around `232px`, persistent navigation, workspace switcher, and one compact extension helper card. The extension card should borrow the active navigation surface language and use a tonal install CTA that feels lifted without turning blue. Avoid icons, terminal mockups, or playful blue gradient washes in this card. Include a small dismiss affordance and persist the dismissal locally so installed users are not nagged.
+- Top bar: fixed height around `56px`, global search, scoped filters, right rail toggle, view toggles, notifications/help, and the primary capture action.
 - Main workspace: flexible content area with reports, empty states, work queues, domain pages, and detail panels.
-- Optional right rail: around `320px`, used for profile summary, team context, report metadata, activity, or assignment details.
+- Optional right rail: around `288px`, used for contextual metadata for the current surface or selected object: selected report metadata, team context, domain health, inbox source details, or current user's work summary. It is not a generic profile panel. It lives below the top bar and must open/close with a slow, smooth grid/width plus opacity transition from a topbar control.
+
+Dashboard responsiveness has only two shell modes. At `1024px` and above, use the full desktop shell with persistent sidebar, full search topbar, inset rounded workspace panel, and optional right rail. Below `1024px`, use the mobile/tablet shell: compact topbar, hamburger navigation sheet, search sheet, visible primary capture action, and a details sheet instead of a fixed right rail. Page content may adapt at smaller widths, but the navigation shell should not add extra structural breakpoints.
 
 Preserve strong separation of concerns. Navigation belongs in the sidebar, global actions belong in the top bar, primary page content belongs in the main workspace, and contextual metadata belongs in the right rail.
 
@@ -270,18 +275,19 @@ Required mappings:
 - `Table`: dense but breathable report lists with hover rows and muted metadata.
 - `DropdownMenu` / `Command`: charcoal surfaces, sharp text hierarchy, no bright menu backgrounds.
 - `Tooltip`: dark raised surface, concise text, used for icon-only controls.
+- Scrollable dashboard regions: use the shared thin FeedMe scrollbar utility. Tracks stay transparent, thumbs use muted text tokens with subtle hover brightening, and native chunky scrollbars should not appear inside report grids, tables, rails, or dense panels.
 
 Sidebar nav rows should have icons, labels, and optional counts. Active rows use the layered blue-grey selected gradient and a subtle inset glow. Hover rows use translucent white fill, not blue.
 
 Top bar search should feel like a command input: sunken surface, search icon, optional workspace/person scope pill, and keyboard hint when useful.
 
-Empty states should be useful, not decorative. A report empty state may include a single dimensional capture illustration, a clear title, one sentence of context, one primary CTA, and one secondary learning link.
+Empty states should be useful, not decorative. A report empty state may include a small skeleton-style report illustration, a clear title, one sentence of context, one primary CTA, and one secondary learning link. For the first reports empty state, keep the illustration to a dotted report rectangle, a plus marker, and a subtle blue shadow rather than stacked or rotated mock windows.
 
 Auth and welcome pages use the onboarding split shell as a full-viewport layout, not a centered card. Content stays on the left and the design space stays on the right for both `/login` and `/welcome`. Do not switch sides between routes; keep the experience calm and spatially predictable.
 
 The auth shell is fixed to the viewport height and must not create page scroll. `/login` and `/welcome` live under the same auth route-group layout so the FeedMe brand mark, right-side design space, and shell structure are owned once. Page files only provide the middle content. Form headings use the shared `AuthHeading` treatment with centered alignment across login and welcome, so route changes feel like content changes inside one stable layout. Animated design spaces live under FeedMe experience components, not `components/ui`. They may use token-driven motion texture such as glossy candy-like full-height bars, subtle linear atmosphere, smooth arc fades, concise top-right product links, and a legible bottom-right text block, but they must keep the product palette, use the dark card surface, avoid one-off hard-coded colors, and stay minimal. Bars must not bounce, resize, or create a changing skyline; the columns should stay aligned while a shared shimmer/brightness pass and coordinated per-column glints move across the full panel so the material feels connected and alive. Motion should reverse or alternate cleanly so the loop never visibly snaps back to the start. The top fade should hide roughly the upper third of the bars softly in an arc with no obvious edge; the right fade should lightly connect that arc into the bottom-right; the bottom fade can span the lower edge but must stay bottom-right weighted, feathering modestly into the lower center without becoming the dominant bottom-center shape. The combined fade should feel like one soft perimeter shape that collapses before reaching the left content area. The design space should be inset with breathing room and rounded edges instead of touching the viewport edges. Do not add fake preview cards, visible grid lines, circular decorative gradients, or dashboard mock content inside the design space.
 
-Report pages should prioritize screenshot evidence, issue title, severity, status, assignee, domain, browser/device metadata, comments, and next steps. Team pages should prioritize members, roles, presence, workload, invite status, and recent feedback activity. Operations pages should prioritize queue health, unresolved items, integrations, capture sources, and automation status.
+Report pages should prioritize screenshot evidence, issue title, severity, status, assignee, domain, browser/device metadata, comments, and next steps. The reports index can switch between a visual grid and a compact table. Grid view is the default because FeedMe reports are easiest to recognize from captured screenshots; card bodies must stay minimal and let the right rail carry the detail. Table view is the scan mode: compact issue/context/activity rows with one severity marker/tag and no screenshot evidence inside the row. Team pages should prioritize members, roles, presence, workload, invite status, and recent feedback activity. Operations pages should prioritize queue health, unresolved items, integrations, capture sources, and automation status.
 
 Generated imagery inside the dashboard should look like product evidence: feedback widgets, browser captures, member collaboration, report triage, and operational queues. Avoid generic stock art, oversized hero illustrations, or purely atmospheric images.
 

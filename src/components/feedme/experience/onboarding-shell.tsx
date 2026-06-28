@@ -1,3 +1,4 @@
+import Link from "next/link"
 import type { ReactNode } from "react"
 import { ArrowUpRight } from "lucide-react"
 
@@ -21,14 +22,20 @@ function DesignSpace() {
           aria-label="Product links"
           className="ml-auto flex items-center gap-5 text-body-3 font-medium text-text-muted"
         >
-          <a className="inline-flex items-center gap-1 transition-colors hover:text-text-secondary" href="/login">
+          <Link
+            className="inline-flex items-center gap-1 transition-colors hover:text-text-secondary"
+            href="/login"
+          >
             How it works
             <ArrowUpRight className="size-3" />
-          </a>
-          <a className="inline-flex items-center gap-1 transition-colors hover:text-text-secondary" href="/login">
+          </Link>
+          <Link
+            className="inline-flex items-center gap-1 transition-colors hover:text-text-secondary"
+            href="/login"
+          >
             Extension
             <ArrowUpRight className="size-3" />
-          </a>
+          </Link>
         </nav>
 
         <div className="ml-auto max-w-[390px] pb-2 text-right">
