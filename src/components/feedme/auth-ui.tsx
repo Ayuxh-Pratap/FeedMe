@@ -108,8 +108,8 @@ export function FeedMeField({
         placeholder={placeholder}
         defaultValue={defaultValue}
         className={cn(
-          "h-10 rounded-md border-border-subtle bg-input px-3 text-body-3 text-foreground shadow-card",
-          "placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/30"
+          "h-10 rounded-md border-border-hairline bg-input px-3 text-body-3 text-foreground",
+          "placeholder:text-muted-foreground focus-visible:border-border-strong focus-visible:ring-0"
         )}
       />
       {helper ? <p className="text-body-3 text-muted-foreground">{helper}</p> : null}
@@ -136,8 +136,8 @@ export function AuthDivider({ label }: { label: string }) {
     <div
       className={cn(
         "relative flex h-9 items-center justify-center text-caption text-muted-foreground",
-        "before:absolute before:left-[-14px] before:top-1/2 before:size-7 before:-translate-y-1/2 before:rounded-full before:bg-background",
-        "after:absolute after:right-[-14px] after:top-1/2 after:size-7 after:-translate-y-1/2 after:rounded-full after:bg-background"
+        // "before:absolute before:left-[-14px] before:top-1/2 before:size-7 before:-translate-y-1/2 before:rounded-full before:bg-background",
+        // "after:absolute after:right-[-14px] after:top-1/2 after:size-7 after:-translate-y-1/2 after:rounded-full after:bg-background"
       )}
     >
       <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-border-hairline" />
@@ -194,9 +194,9 @@ export function UploadLogoControl() {
     <button
       type="button"
       className={cn(
-        "flex h-14 w-full cursor-pointer items-center gap-3 rounded-lg border border-border-subtle bg-input px-4 text-left text-body-2 text-muted-foreground shadow-card",
+        "flex h-14 w-full cursor-pointer items-center gap-3 rounded-lg border border-border-hairline bg-input px-4 text-left text-body-2 text-muted-foreground",
         "transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-text-secondary hover:shadow-button-secondary",
-        "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30",
+        "focus-visible:border-border-strong focus-visible:outline-none focus-visible:ring-0",
         "active:scale-[var(--press-scale)]"
       )}
     >
