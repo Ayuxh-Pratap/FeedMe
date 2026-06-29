@@ -88,6 +88,29 @@ The dashboard shell uses only two structural modes:
 
 Page content can continue to adapt internally, but navigation structure should not introduce extra shell modes between mobile/tablet and desktop.
 
+## Default View Principle
+
+Dashboard pages should default to table/list views wherever the surface is operational, queue-like, or meant for repeated scanning. This includes reports, My Work, Team, and future settings/admin tables.
+
+```txt
+default
+-> table/list view
+-> compact rows
+-> fast scanning, sorting, filtering, and selection
+
+optional
+-> card/grid view
+-> visual browsing when screenshots or previews help recognition
+```
+
+For report surfaces, no `view` query means table mode. Card mode is opt-in with:
+
+```txt
+?view=grid
+```
+
+This keeps FeedMe practical as the dataset grows while still letting users switch to the visual evidence gallery when they want to browse by screenshot.
+
 ## Dashboard Regions
 
 ```txt
@@ -97,8 +120,39 @@ Workspace sidebar
 -> Reports
 -> My Work
 -> Team
--> Domains
 -> extension education card
+
+Workspace switcher menu
+-> Settings (disabled / coming soon)
+-> Domains dialog
+-> Switch workspace dialog
+-> Log out
+
+Team stays in the sidebar because it is a frequent collaboration surface. Inbox can remain visible as coming soon, but disabled until its workflow exists. Domains belongs in the workspace menu because it is workspace configuration for extension activation, not daily report work.
+
+Workspace switching uses a quick hover submenu, and the create/join action opens a focused dialog:
+
+```txt
+Switch workspace hover submenu
+-> current workspace with checkmark
+-> other workspaces
+-> Create or join workspace...
+
+Create or join workspace click
+-> opens a focused workspace dialog
+-> current workspace with checkmark
+-> no other workspaces / workspace list
+-> Create new workspace
+```
+
+The Domains dialog is the admin control surface for allowed capture domains:
+
+```txt
+current domains
+-> active / pending status
+-> edit affordance
+-> add new domain
+```
 
 The extension card should act like a small product teaser, not a generic upsell. It should borrow the active sidebar item surface language, stay gray/charcoal, and use a tonal install CTA that already feels slightly lifted at rest. Avoid icons, playful blue gradient washes, or terminal mockups here. The card should be dismissible with a small top-right close control and persist that dismissal in local storage.
 
@@ -188,8 +242,14 @@ The report empty-state illustration should be a small skeleton-style mark inside
 When reports exist, `/[workspaceSlug]/reports` supports two index modes controlled from the topbar:
 
 ```txt
+table view
+-> default mode for the platform
+-> scan mode for report queues
+-> issue, priority, context, activity
+-> uses the same neutral `P0-P3` priority code as cards instead of colorful severity pills
+
 grid view
--> default mode
+-> optional visual evidence mode
 -> visual gallery of report evidence
 -> card surface is the screenshot evidence, not a padded card containing an image
 -> use the dual-evidence card direction: page context plus selected-element/annotated area inside one full-bleed image
@@ -201,14 +261,9 @@ grid view
 -> selected state keeps the hover metadata revealed and uses a subtle FeedMe-blue hairline, not a heavy outline or filled blue card
 -> include a compact bottom-right open-report arrow for direct navigation to the report detail; the arrow uses its own neutral lifted button state and does not inherit selected-card blue styling
 -> grid should be responsive with comfortable card sizes, reaching four cards per row with the rail open and up to five on wide canvases when the rail is hidden
-
-table view
--> scan mode for large queues
--> issue, priority, context, activity
--> uses the same neutral `P0-P3` priority code as cards instead of colorful severity pills
 ```
 
-Grid is the default because FeedMe reports are visual evidence. Developers should be able to recognize a report from the captured image before reading every title. Table view exists for fast scanning, bulk triage, and future filtering.
+Table is the default because FeedMe is an operations dashboard. Developers and teams need fast scanning, bulk triage, sorting, and filtering first. Grid view exists because reports are visual evidence; users can switch to it when recognizing issues from screenshots is faster than reading rows.
 
 The table index should stay compact:
 
@@ -243,6 +298,128 @@ Open report action
 ```
 
 Opening a report leads to `/[workspaceSlug]/reports/[reportId]`. The detail route should give the main canvas to the report itself: screenshot evidence, full feedback, selected element data, metadata, and the full developer prompt. Avoid adding another internal right-side report panel on the detail page. The workspace shell should not render the right rail or right-rail toggle on report detail routes. Detail screenshot cards use the same expanded evidence viewer pattern as the rail: an image-first dialog with floating controls over a top gradient.
+
+## My Work Direction
+
+My Work should mean "work involving me," not only "reports submitted by me" and not only "tasks assigned to me." A developer can submit reports, and a reporter may not have assigned implementation work, so the page should be role-aware without changing its identity.
+
+Recommended structure:
+
+```txt
+/[workspaceSlug]/my-work
+-> default table/list view
+-> optional card/grid view for visual browsing
+-> right-aligned segmented scope using the same tactile tab language as the report evidence Page/Element switch:
+   Assigned to me
+   Reported by me
+```
+
+Assigned to me is the developer/operator view:
+
+```txt
+reports or tasks I own
+status
+priority
+domain
+last activity
+next action
+```
+
+Reported by me is the reporter/contributor view:
+
+```txt
+feedback I submitted
+current status
+owner
+domain
+comments/activity
+captured time
+```
+
+If a user has no developer role, the page can default to Reported by me and keep Assigned to me as an empty/guided tab. If a user has developer responsibilities, Assigned to me should be the first scope because it is the action queue.
+
+The right rail on My Work should summarize personal workload and selected-item context:
+
+```txt
+selected report/task details
+my open count
+urgent count
+blocked/in-progress count
+recent activity involving me
+```
+
+The My Work main surface should reuse the Reports table/card language instead of inventing a new visual system. Tables use neutral priority codes and compact rows. Cards use full-bleed evidence previews only when the user switches to grid mode. Because My Work items are still reports, selecting a row/card should use the same report inspector rail as the Reports route.
+
+## Team Direction
+
+Team represents workspace membership created through invites. A member joins by using an invite code/link, then can be assigned a role.
+
+```txt
+/[workspaceSlug]/team
+-> default table/list view
+-> Invite member CTA
+-> role/status filters:
+   All
+   Developers
+   Designers
+   Reporters
+   Pending
+-> member rows
+```
+
+Team table should stay operational and compact:
+
+```txt
+member
+role
+assigned/open work
+reports submitted
+joined date
+```
+
+Team does not need a card/grid switch. It is a membership and permissions surface, so the table is the product shape. Do not add an actions column to the table; member actions should live in the right rail after a teammate is selected.
+
+Roles are product permissions, not visual personas:
+
+```txt
+admin/owner
+developer
+reporter
+viewer
+```
+
+The right rail on Team should change based on selection:
+
+```txt
+no selected member
+-> team summary, seats, pending invites
+
+selected member
+-> member profile
+-> role management
+-> assigned work
+-> reports submitted
+-> recent activity
+```
+
+Invite flow should remain simple at this stage:
+
+```txt
+open invite dialog
+choose default role
+send one or more email invites
+generate/copy role-scoped invite link or code
+optionally show pending invites later
+```
+
+Invite entry points:
+
+```txt
+sidebar Invite member button
+Team header plus icon
+```
+
+Both entry points should open the same shared dialog. The dialog should stay compact and use FeedMe's dark tactile form language: Email and Invite code tabs, role selection, copy code, and copy invite link.
 
 ## Mock Data Strategy
 

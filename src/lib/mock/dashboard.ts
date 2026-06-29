@@ -57,6 +57,18 @@ export type MockReportSummary = {
   commentsCount: number
 }
 
+export type MockTeamMember = {
+  id: string
+  name: string
+  email: string
+  initials: string
+  role: "Owner" | "Admin" | "Developer" | "Designer" | "Reporter" | "Viewer"
+  status: "active" | "pending"
+  assignedCount: number
+  reportsCount: number
+  joinedAt: string
+}
+
 export const reservedWorkspaceSlugs = [
   "admin",
   "api",
@@ -440,4 +452,79 @@ export function getMockReport(
   void workspaceSlug
 
   return mockReports.find((report) => report.id === reportId)
+}
+
+const mockTeamMembers: MockTeamMember[] = [
+  {
+    id: "almostdev",
+    name: "Almostdev",
+    email: "almostdev@feedme.test",
+    initials: "A",
+    role: "Owner",
+    status: "active",
+    assignedCount: 2,
+    reportsCount: 5,
+    joinedAt: "Jun 27, 2026",
+  },
+  {
+    id: "priya",
+    name: "Priya S.",
+    email: "priya@acme.test",
+    initials: "P",
+    role: "Developer",
+    status: "active",
+    assignedCount: 3,
+    reportsCount: 1,
+    joinedAt: "Jun 27, 2026",
+  },
+  {
+    id: "sam",
+    name: "Sam",
+    email: "sam@acme.test",
+    initials: "S",
+    role: "Developer",
+    status: "active",
+    assignedCount: 2,
+    reportsCount: 2,
+    joinedAt: "Jun 28, 2026",
+  },
+  {
+    id: "maya",
+    name: "Maya Chen",
+    email: "maya@acme.test",
+    initials: "M",
+    role: "Reporter",
+    status: "active",
+    assignedCount: 0,
+    reportsCount: 4,
+    joinedAt: "Jun 28, 2026",
+  },
+  {
+    id: "elena",
+    name: "Elena Park",
+    email: "elena@acme.test",
+    initials: "E",
+    role: "Designer",
+    status: "active",
+    assignedCount: 0,
+    reportsCount: 3,
+    joinedAt: "Jun 28, 2026",
+  },
+  {
+    id: "amit",
+    name: "Amit Singh",
+    email: "amit@acme.test",
+    initials: "AS",
+    role: "Reporter",
+    status: "pending",
+    assignedCount: 0,
+    reportsCount: 0,
+    joinedAt: "Invited Jun 29, 2026",
+  },
+]
+
+export function getMockTeamMembers(workspaceSlug: string): MockTeamMember[] {
+  void workspaceSlug
+
+  return mockTeamMembers
 }

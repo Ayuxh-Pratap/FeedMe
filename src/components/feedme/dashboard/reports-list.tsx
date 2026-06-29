@@ -2,9 +2,10 @@
 
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import type { KeyboardEvent, ReactNode } from "react"
+import { useState, type KeyboardEvent, type ReactNode } from "react"
 import {
   ArrowUpRight,
+  Check,
   ChevronDown,
   Globe2,
 } from "lucide-react"
@@ -24,6 +25,7 @@ type ReportsListProps = {
 
 type ReportViewMode = "grid" | "table"
 type StatusFilter = "all" | "open" | "in_progress" | "resolved"
+type ReportSort = "newest" | "oldest" | "priority" | "comments"
 type SearchParamsLike = {
   get: (name: string) => string | null
 }
@@ -43,8 +45,25 @@ const filters: {
   { label: "Closed", value: "resolved", match: (report) => report.status === "resolved" },
 ]
 
+const sortOptions: {
+  label: string
+  value: ReportSort
+}[] = [
+  { label: "Newest first", value: "newest" },
+  { label: "Oldest first", value: "oldest" },
+  { label: "Priority", value: "priority" },
+  { label: "Most comments", value: "comments" },
+]
+
+const severitySortRank: Record<MockReportSummary["severity"], number> = {
+  urgent: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+}
+
 function getViewMode(searchParams: SearchParamsLike): ReportViewMode {
-  return searchParams.get("view") === "table" ? "table" : "grid"
+  return searchParams.get("view") === "grid" ? "grid" : "table"
 }
 
 function getStatusFilter(searchParams: SearchParamsLike): StatusFilter {
@@ -55,6 +74,50 @@ function getStatusFilter(searchParams: SearchParamsLike): StatusFilter {
   }
 
   return "all"
+}
+
+function getReportSort(searchParams: SearchParamsLike): ReportSort {
+  const value = searchParams.get("sort")
+
+  if (value === "oldest" || value === "priority" || value === "comments") {
+    return value
+  }
+
+  return "newest"
+}
+
+function getCapturedTimestamp(report: MockReportSummary) {
+  const timestamp = Date.parse(report.capturedAt)
+
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+function sortReports(reports: MockReportSummary[], sort: ReportSort) {
+  return [...reports].sort((first, second) => {
+    const newestFirst =
+      getCapturedTimestamp(second) - getCapturedTimestamp(first)
+
+    if (sort === "oldest") {
+      return getCapturedTimestamp(first) - getCapturedTimestamp(second)
+    }
+
+    if (sort === "priority") {
+      return (
+        severitySortRank[first.severity] -
+          severitySortRank[second.severity] || newestFirst
+      )
+    }
+
+    if (sort === "comments") {
+      return second.commentsCount - first.commentsCount || newestFirst
+    }
+
+    return newestFirst
+  })
+}
+
+function getSortLabel(sort: ReportSort) {
+  return sortOptions.find((option) => option.value === sort)?.label ?? "Newest first"
 }
 
 function ReportPriorityCode({
@@ -144,11 +207,15 @@ function ReportEvidenceImage({ report }: { report: MockReportSummary }) {
 function ReportsHeader({
   activeFilter,
   onFilterChange,
+  onSortChange,
   reports,
+  sort,
 }: {
   activeFilter: StatusFilter
   onFilterChange: (filter: StatusFilter) => void
+  onSortChange: (sort: ReportSort) => void
   reports: MockReportSummary[]
+  sort: ReportSort
 }) {
   return (
     <header className="shrink-0 border-b border-border-hairline px-4 py-4">
@@ -185,13 +252,7 @@ function ReportsHeader({
             })}
           </div>
 
-          <button
-            type="button"
-            className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-border-hairline bg-fill-translucent px-3 text-heading-5 text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)]"
-          >
-            Newest first
-            <ChevronDown className="size-3.5" />
-          </button>
+          <ReportSortDropdown sort={sort} onSortChange={onSortChange} />
         </div>
       </div>
 
@@ -199,7 +260,80 @@ function ReportsHeader({
   )
 }
 
-function ReportCard({
+function ReportSortDropdown({
+  onSortChange,
+  sort,
+}: {
+  onSortChange: (sort: ReportSort) => void
+  sort: ReportSort
+}) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div
+      className="relative"
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget
+
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+          setOpen(false)
+        }
+      }}
+    >
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-border-hairline bg-fill-translucent px-3 text-heading-5 text-text-body shadow-button-secondary outline-none transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover focus:border-border-strong active:scale-[var(--press-scale)]"
+      >
+        {getSortLabel(sort)}
+        <ChevronDown
+          className={cn(
+            "size-3.5 transition-transform duration-base ease-out-soft",
+            open && "rotate-180 text-text-secondary"
+          )}
+        />
+      </button>
+
+      {open ? (
+        <div
+          role="listbox"
+          aria-label="Sort reports"
+          className="absolute right-0 top-[calc(100%+0.375rem)] z-30 w-44 overflow-hidden rounded-lg border border-border-subtle bg-surface-card p-1 text-foreground shadow-popover"
+        >
+          {sortOptions.map((option) => {
+            const selected = sort === option.value
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onSortChange(option.value)
+                  setOpen(false)
+                }}
+                className={cn(
+                  "flex h-8 w-full cursor-pointer items-center justify-between rounded-md px-2.5 text-left text-body-3 transition-colors duration-base ease-out-soft",
+                  selected
+                    ? "bg-surface-raised text-foreground shadow-button-hover"
+                    : "text-text-body hover:bg-fill-subtle hover:text-foreground"
+                )}
+              >
+                {option.label}
+                {selected ? <Check className="size-3.5 text-text-secondary" /> : null}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export function ReportCard({
   isSelected,
   onSelect,
   report,
@@ -276,7 +410,7 @@ function ReportCard({
   )
 }
 
-function ReportTableRow({
+export function ReportTableRow({
   isSelected,
   onSelect,
   report,
@@ -356,8 +490,9 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
   const searchParams = useSearchParams()
   const viewMode = getViewMode(searchParams)
   const statusFilter = getStatusFilter(searchParams)
+  const sort = getReportSort(searchParams)
   const activeFilter = filters.find((filter) => filter.value === statusFilter) ?? filters[0]
-  const filteredReports = reports.filter(activeFilter.match)
+  const filteredReports = sortReports(reports.filter(activeFilter.match), sort)
   const selectedReportId = searchParams.get("report") ?? filteredReports[0]?.id ?? reports[0]?.id
 
   function replaceSearchParams(nextSearchParams: URLSearchParams) {
@@ -374,7 +509,7 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
   function changeFilter(filter: StatusFilter) {
     const nextSearchParams = new URLSearchParams(searchParams.toString())
     const nextFilter = filters.find((item) => item.value === filter) ?? filters[0]
-    const nextReports = reports.filter(nextFilter.match)
+    const nextReports = sortReports(reports.filter(nextFilter.match), sort)
 
     if (filter === "all") {
       nextSearchParams.delete("status")
@@ -391,12 +526,26 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
     replaceSearchParams(nextSearchParams)
   }
 
+  function changeSort(nextSort: ReportSort) {
+    const nextSearchParams = new URLSearchParams(searchParams.toString())
+
+    if (nextSort === "newest") {
+      nextSearchParams.delete("sort")
+    } else {
+      nextSearchParams.set("sort", nextSort)
+    }
+
+    replaceSearchParams(nextSearchParams)
+  }
+
   return (
     <section className="flex h-full min-h-0 flex-col">
       <ReportsHeader
         activeFilter={statusFilter}
         onFilterChange={changeFilter}
+        onSortChange={changeSort}
         reports={reports}
+        sort={sort}
       />
 
       {viewMode === "table" ? (

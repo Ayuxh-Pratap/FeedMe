@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowUpRight,
   Camera,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -15,23 +16,34 @@ import {
   Grid2X2,
   Inbox,
   ListFilter,
+  LogOut,
   Maximize2,
   Menu,
   MessageSquare,
   MousePointer2,
   PanelRightClose,
   PanelRightOpen,
+  Plus,
   Search,
+  Settings2,
   Table2,
   UserRound,
   UsersRound,
   X,
 } from "lucide-react"
-import { useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react"
+import {
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentType,
+  type ReactNode,
+} from "react"
 
 import {
   getMockReports,
+  getMockTeamMembers,
   type MockReportSummary,
+  type MockTeamMember,
   type MockWorkspace,
 } from "@/lib/mock/dashboard"
 import {
@@ -39,6 +51,7 @@ import {
   reportSeverityPillStyles,
   reportStatusPillStyles,
 } from "@/components/feedme/dashboard/report-badge-styles"
+import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -72,9 +85,8 @@ type ReportScreenshot = MockReportSummary["screenshots"][number]
 const navItems: NavItem[] = [
   { href: "inbox", icon: Inbox, label: "Inbox", planned: true },
   { href: "reports", icon: ClipboardList, label: "Reports" },
-  { href: "my-work", icon: UserRound, label: "My Work", planned: true },
-  { href: "team", icon: UsersRound, label: "Team", planned: true },
-  { href: "domains", icon: Globe2, label: "Domains", planned: true },
+  { href: "my-work", icon: UserRound, label: "My Work" },
+  { href: "team", icon: UsersRound, label: "Team" },
 ]
 
 const extensionCardDismissedKey = "feedme:extension-card-dismissed"
@@ -157,26 +169,412 @@ function IconButton({
 }
 
 function WorkspaceSwitcher({ workspace }: { workspace: MockWorkspace }) {
+  const [open, setOpen] = useState(false)
+  const [switcherOpen, setSwitcherOpen] = useState(false)
+  const [isSwitchDialogOpen, setIsSwitchDialogOpen] = useState(false)
+  const [isDomainsDialogOpen, setIsDomainsDialogOpen] = useState(false)
+  const switchCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const otherWorkspaceOptions = [
+    { name: "Ayush's Workspace", slug: "ayush-workspace" },
+    { name: "Client QA Lab", slug: "client-qa-lab" },
+  ].filter((item) => item.slug !== workspace.slug)
+  const workspaceOptions = [
+    { name: workspace.name, slug: workspace.slug, current: true },
+    ...otherWorkspaceOptions.map((item) => ({ ...item, current: false })),
+  ]
+
+  function clearSwitchCloseTimer() {
+    if (switchCloseTimerRef.current) {
+      clearTimeout(switchCloseTimerRef.current)
+      switchCloseTimerRef.current = null
+    }
+  }
+
+  function openWorkspaceSubmenu() {
+    clearSwitchCloseTimer()
+    setSwitcherOpen(true)
+  }
+
+  function scheduleWorkspaceSubmenuClose() {
+    clearSwitchCloseTimer()
+    switchCloseTimerRef.current = setTimeout(() => {
+      setSwitcherOpen(false)
+      switchCloseTimerRef.current = null
+    }, 180)
+  }
+
+  return (
+    <>
+      <div
+        className="relative"
+        onBlur={(event) => {
+          const nextTarget = event.relatedTarget
+
+          if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+            setOpen(false)
+            setSwitcherOpen(false)
+          }
+        }}
+      >
+        <button
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          className="flex h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-foreground outline-none transition-all duration-base ease-out-soft hover:bg-fill-translucent focus:bg-fill-translucent"
+        >
+          <span
+            className={cn(
+              "relative isolate flex size-7 items-center justify-center overflow-hidden rounded-md border border-primary-soft/60",
+              "[background:var(--gradient-primary-premium)] text-primary-foreground shadow-[var(--elevation-primary-premium)]",
+              "after:pointer-events-none after:absolute after:right-[12%] after:top-px after:z-[1] after:h-px after:w-[62%] after:[background:var(--gradient-button-glint)]"
+            )}
+            aria-hidden="true"
+          >
+            <MessageSquare className="relative z-10 size-4" strokeWidth={2.4} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-heading-5 text-foreground">
+            {workspace.name}
+          </span>
+          <ChevronDown
+            className={cn(
+              "size-4 text-muted-foreground transition-transform duration-base ease-out-soft",
+              open && "rotate-180 text-text-secondary"
+            )}
+          />
+        </button>
+
+        {open ? (
+          <div
+            role="menu"
+            className="absolute left-0 top-[calc(100%+0.375rem)] z-50 w-52 rounded-lg border border-border-hairline bg-surface-card p-1 text-foreground shadow-popover motion-safe:animate-[feedme-menu-in_180ms_var(--motion-out)_both]"
+          >
+            <WorkspaceMenuDisabledItem>
+              <Settings2 className="size-4 text-text-muted" />
+              <span className="min-w-0 flex-1 truncate">Settings</span>
+              <span className="text-caption text-text-muted">Soon</span>
+            </WorkspaceMenuDisabledItem>
+            <WorkspaceMenuAction
+              onClick={() => {
+                setOpen(false)
+                setSwitcherOpen(false)
+                setIsDomainsDialogOpen(true)
+              }}
+            >
+              <Globe2 className="size-4 text-text-muted" />
+              Domains
+            </WorkspaceMenuAction>
+
+            <div
+              className="relative"
+              onMouseEnter={openWorkspaceSubmenu}
+              onMouseLeave={scheduleWorkspaceSubmenuClose}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                aria-haspopup="menu"
+                aria-expanded={switcherOpen}
+                onClick={() => setSwitcherOpen((value) => !value)}
+                className={cn(
+                  "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-heading-5 transition-all duration-base ease-out-soft active:scale-[var(--press-scale)]",
+                  switcherOpen
+                    ? "bg-fill-subtle text-foreground shadow-button-hover"
+                    : "text-text-body hover:bg-fill-subtle hover:text-foreground"
+                )}
+              >
+                <span className="min-w-0 flex-1 truncate">Switch workspace</span>
+                <ChevronRight className="size-4 text-text-muted" />
+              </button>
+
+              {switcherOpen ? (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="absolute left-full top-0 z-40 h-full w-2"
+                  />
+                  <div
+                    role="menu"
+                    onMouseEnter={openWorkspaceSubmenu}
+                    onMouseLeave={scheduleWorkspaceSubmenuClose}
+                    className="absolute left-[calc(100%+0.375rem)] top-0 z-50 w-64 rounded-lg border border-border-hairline bg-surface-card p-1 text-foreground shadow-popover motion-safe:animate-[feedme-menu-in_180ms_var(--motion-out)_both]"
+                  >
+                    {workspaceOptions.map((item) => (
+                      <Link
+                        key={item.slug}
+                        href={`/${item.slug}/reports`}
+                        role="menuitem"
+                        className="flex h-8 cursor-pointer items-center gap-2 rounded-md px-2.5 text-heading-5 text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+                      >
+                        <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                        {item.current ? (
+                          <Check className="size-4 shrink-0 text-text-secondary" />
+                        ) : null}
+                      </Link>
+                    ))}
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setOpen(false)
+                        setSwitcherOpen(false)
+                        setIsSwitchDialogOpen(true)
+                      }}
+                      className="mt-1 flex h-8 w-full cursor-pointer items-center rounded-md px-2.5 text-left text-heading-5 text-foreground transition-all duration-base ease-out-soft hover:bg-fill-subtle active:scale-[var(--press-scale)]"
+                    >
+                      Create or join workspace...
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            <WorkspaceMenuLink href="/login">
+              <LogOut className="size-4 text-text-muted" />
+              Log out
+            </WorkspaceMenuLink>
+          </div>
+        ) : null}
+      </div>
+
+      <SwitchWorkspaceDialog
+        open={isSwitchDialogOpen}
+        onOpenChange={setIsSwitchDialogOpen}
+        workspace={workspace}
+      />
+      <DomainsDialog
+        open={isDomainsDialogOpen}
+        onOpenChange={setIsDomainsDialogOpen}
+        workspace={workspace}
+      />
+    </>
+  )
+}
+
+function WorkspaceMenuLink({
+  children,
+  href,
+}: {
+  children: ReactNode
+  href: string
+}) {
+  return (
+    <Link
+      href={href}
+      role="menuitem"
+      className="flex h-8 cursor-pointer items-center gap-2 rounded-md px-2.5 text-heading-5 text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+    >
+      {children}
+    </Link>
+  )
+}
+
+function WorkspaceMenuAction({
+  children,
+  onClick,
+}: {
+  children: ReactNode
+  onClick: () => void
+}) {
   return (
     <button
       type="button"
-      className="flex h-10 w-full cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-foreground transition-colors hover:bg-fill-translucent"
+      role="menuitem"
+      onClick={onClick}
+      className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-heading-5 text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
     >
-      <span
-        className={cn(
-          "relative isolate flex size-7 items-center justify-center overflow-hidden rounded-md border border-primary-soft/60",
-          "[background:var(--gradient-primary-premium)] text-primary-foreground shadow-[var(--elevation-primary-premium)]",
-          "after:pointer-events-none after:absolute after:right-[12%] after:top-px after:z-[1] after:h-px after:w-[62%] after:[background:var(--gradient-button-glint)]"
-        )}
-        aria-hidden="true"
-      >
-        <MessageSquare className="relative z-10 size-4" strokeWidth={2.4} />
-      </span>
-      <span className="min-w-0 flex-1 truncate text-heading-5 text-foreground">
-        {workspace.name}
-      </span>
-      <ChevronDown className="size-4 text-muted-foreground" />
+      {children}
     </button>
+  )
+}
+
+function WorkspaceMenuDisabledItem({ children }: { children: ReactNode }) {
+  return (
+    <div
+      aria-disabled="true"
+      role="menuitem"
+      className="flex h-8 items-center gap-2 rounded-md px-2.5 text-heading-5 text-text-muted"
+    >
+      {children}
+    </div>
+  )
+}
+
+function SwitchWorkspaceDialog({
+  onOpenChange,
+  open,
+  workspace,
+}: {
+  onOpenChange: (open: boolean) => void
+  open: boolean
+  workspace: MockWorkspace
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className="w-[min(calc(100vw-2rem),520px)] !max-w-[min(calc(100vw-2rem),520px)] gap-0 overflow-hidden rounded-xl border border-border-hairline bg-surface-card p-0 text-foreground shadow-popover sm:!max-w-[min(calc(100vw-2rem),520px)]"
+      >
+        <div className="flex items-start justify-between gap-4 px-5 pb-4 pt-5">
+          <div>
+            <DialogTitle className="text-heading-3 text-foreground">
+              Select a workspace
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-body-3 text-text-body">
+              Choose an existing workspace or create a new one.
+            </DialogDescription>
+          </div>
+          <button
+            type="button"
+            aria-label="Close workspace switcher"
+            onClick={() => onOpenChange(false)}
+            className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)]"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3 px-5 py-5">
+          <Link
+            href={`/${workspace.slug}/reports`}
+            onClick={() => onOpenChange(false)}
+            className="flex h-10 cursor-pointer items-center gap-3 rounded-lg border border-border-subtle bg-fill-translucent px-3 text-heading-5 text-foreground shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:shadow-button-hover active:scale-[var(--press-scale)]"
+          >
+            <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+            <Check className="size-4 text-text-secondary" />
+          </Link>
+
+          <p className="py-5 text-center text-body-2 text-text-body">
+            No other workspaces available
+          </p>
+
+          <Link
+            href="/welcome"
+            onClick={() => onOpenChange(false)}
+            className="relative isolate flex h-10 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
+          >
+            <Plus className="size-4" />
+            Create new workspace
+          </Link>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DomainsDialog({
+  onOpenChange,
+  open,
+  workspace,
+}: {
+  onOpenChange: (open: boolean) => void
+  open: boolean
+  workspace: MockWorkspace
+}) {
+  const [domains, setDomains] = useState([
+    { domain: "app.feedme.test", status: "Active" },
+    { domain: "checkout.feedme.test", status: "Active" },
+    { domain: "admin.feedme.test", status: "Pending" },
+  ])
+  const [newDomain, setNewDomain] = useState("")
+
+  function addDomain() {
+    const value = newDomain.trim()
+
+    if (!value) {
+      return
+    }
+
+    setDomains((items) => [
+      ...items,
+      { domain: value.replace(/^https?:\/\//, ""), status: "Pending" },
+    ])
+    setNewDomain("")
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className="w-[min(calc(100vw-2rem),600px)] !max-w-[min(calc(100vw-2rem),600px)] gap-0 overflow-hidden rounded-xl border border-border-hairline bg-surface-card p-0 text-foreground shadow-popover sm:!max-w-[min(calc(100vw-2rem),600px)]"
+      >
+        <div className="flex items-start justify-between gap-4 px-5 pb-4 pt-5">
+          <div>
+            <DialogTitle className="text-heading-3 text-foreground">
+              Domains
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-body-3 text-text-body">
+              Control where the FeedMe extension can capture feedback for {workspace.name}.
+            </DialogDescription>
+          </div>
+          <button
+            type="button"
+            aria-label="Close domains dialog"
+            onClick={() => onOpenChange(false)}
+            className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)]"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-5 py-5">
+          <div className="space-y-2">
+            {domains.map((item) => (
+              <div
+                key={item.domain}
+                className="flex min-h-10 items-center gap-3 rounded-lg border border-border-hairline bg-fill-translucent px-3 py-2"
+              >
+                <Globe2 className="size-4 shrink-0 text-text-muted" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-heading-5 text-foreground">
+                    {item.domain}
+                  </p>
+                  <p className="mt-0.5 text-caption text-text-muted">
+                    {item.status === "Active"
+                      ? "Extension capture enabled"
+                      : "Verification pending"}
+                  </p>
+                </div>
+                <span className="rounded-md border border-border-hairline bg-fill-subtle px-1.5 py-0.5 text-caption text-text-secondary">
+                  {item.status}
+                </span>
+                <button
+                  type="button"
+                  className="flex h-7 cursor-pointer items-center rounded-md border border-border-hairline bg-fill-translucent px-2 text-caption text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+                >
+                  Edit
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-border-hairline pt-4 sm:flex-row">
+            <input
+              aria-label="New domain"
+              value={newDomain}
+              onChange={(event) => setNewDomain(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  addDomain()
+                }
+              }}
+              placeholder="yourdomain.com"
+              className="h-9 min-w-0 flex-1 rounded-lg border border-border-subtle bg-background px-3 text-body-3 text-foreground outline-none transition-colors duration-base ease-out-soft placeholder:text-muted-foreground focus:border-border-strong"
+            />
+            <button
+              type="button"
+              onClick={addDomain}
+              disabled={!newDomain.trim()}
+              className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-lg border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-border-subtle disabled:hover:brightness-100"
+            >
+              <Plus className="size-4" />
+              Add domain
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -210,6 +608,7 @@ function SidebarNav({
               className="flex h-8 items-center gap-2 rounded-lg px-2.5 text-heading-5 text-text-muted"
             >
               {content}
+              <span className="ml-auto text-caption text-text-muted">Soon</span>
             </span>
           )
         }
@@ -297,6 +696,23 @@ function ExtensionCard() {
   )
 }
 
+function SidebarInviteButton({ workspace }: { workspace: MockWorkspace }) {
+  return (
+    <InviteMemberDialog
+      workspaceName={workspace.name}
+      workspaceSlug={workspace.slug}
+    >
+      <button
+        type="button"
+        className="flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
+      >
+        <Plus className="size-3.5" />
+        Invite member
+      </button>
+    </InviteMemberDialog>
+  )
+}
+
 function WorkspaceSidebar({ workspace }: { workspace: MockWorkspace }) {
   return (
     <aside className="hidden h-screen w-sidebar shrink-0 flex-col bg-card p-2.5 lg:flex">
@@ -304,6 +720,7 @@ function WorkspaceSidebar({ workspace }: { workspace: MockWorkspace }) {
       <SidebarNav workspaceSlug={workspace.slug} />
 
       <div className="mt-auto space-y-2">
+        <SidebarInviteButton workspace={workspace} />
         <ExtensionCard />
       </div>
     </aside>
@@ -342,6 +759,9 @@ function MobileNavSheet({ workspace }: { workspace: MockWorkspace }) {
         <SidebarNav closeLinks workspaceSlug={workspace.slug} />
 
         <div className="mt-auto">
+          <div className="mb-2">
+            <SidebarInviteButton workspace={workspace} />
+          </div>
           <ExtensionCard />
         </div>
       </SheetContent>
@@ -392,10 +812,11 @@ function ReportViewToggle({ workspaceSlug }: { workspaceSlug: string }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const reportsPath = `/${workspaceSlug}/reports`
-  const isReportsIndex = pathname === reportsPath
-  const isTableView = searchParams.get("view") === "table"
+  const myWorkPath = `/${workspaceSlug}/my-work`
+  const supportsViewSwitch = pathname === reportsPath || pathname === myWorkPath
+  const isGridView = searchParams.get("view") === "grid"
 
-  if (!isReportsIndex) {
+  if (!supportsViewSwitch) {
     return (
       <IconButton label="Help">
         <CircleHelp className="size-4" />
@@ -406,10 +827,10 @@ function ReportViewToggle({ workspaceSlug }: { workspaceSlug: string }) {
   function toggleView() {
     const nextSearchParams = new URLSearchParams(searchParams.toString())
 
-    if (isTableView) {
+    if (isGridView) {
       nextSearchParams.delete("view")
     } else {
-      nextSearchParams.set("view", "table")
+      nextSearchParams.set("view", "grid")
     }
 
     const query = nextSearchParams.toString()
@@ -418,14 +839,14 @@ function ReportViewToggle({ workspaceSlug }: { workspaceSlug: string }) {
 
   return (
     <IconButton
-      label={isTableView ? "Switch to grid view" : "Switch to table view"}
+      label={isGridView ? "Switch to table view" : "Switch to grid view"}
       onClick={toggleView}
-      pressed={isTableView}
+      pressed={isGridView}
     >
-      {isTableView ? (
-        <Grid2X2 className="size-4" />
-      ) : (
+      {isGridView ? (
         <Table2 className="size-4" />
+      ) : (
+        <Grid2X2 className="size-4" />
       )}
     </IconButton>
   )
@@ -510,10 +931,17 @@ function WorkspaceRightRailContent({
 }) {
   const pathname = usePathname()
   const reportsPath = `/${workspace.slug}/reports`
-  const isReportsRoute = pathname === reportsPath || pathname.startsWith(`${reportsPath}/`)
+  const myWorkPath = `/${workspace.slug}/my-work`
+  const teamPath = `/${workspace.slug}/team`
+  const isReportInspectorRoute = pathname === reportsPath || pathname === myWorkPath
+  const isTeamRoute = pathname === teamPath
 
-  if (isReportsRoute) {
+  if (isReportInspectorRoute) {
     return <ReportsContextRail className={className} workspace={workspace} />
+  }
+
+  if (isTeamRoute) {
+    return <TeamContextRail className={className} workspace={workspace} />
   }
 
   return (
@@ -939,6 +1367,93 @@ function ReportsContextRail({
       workspaceSlug={workspace.slug}
     />
   )
+}
+
+function TeamMemberRolePill({ role }: { role: MockTeamMember["role"] }) {
+  return (
+    <span className="inline-flex h-5 items-center rounded-md border border-border-hairline bg-fill-translucent px-1.5 text-caption font-medium text-text-secondary">
+      {role}
+    </span>
+  )
+}
+
+function TeamMemberRail({
+  className,
+  member,
+}: {
+  className?: string
+  member: MockTeamMember
+}) {
+  return (
+    <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
+      <section className="border-b border-border-hairline px-5 py-6 text-center">
+        <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-border-hairline bg-fill-subtle text-heading-4 text-foreground shadow-button-secondary">
+          {member.initials}
+        </div>
+        <h2 className="mt-3 truncate text-heading-3 text-foreground">
+          {member.name}
+        </h2>
+        <p className="mt-1 truncate text-body-3 text-text-muted">
+          {member.email}
+        </p>
+        <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+          <TeamMemberRolePill role={member.role} />
+          <span className="inline-flex h-5 items-center rounded-md border border-border-hairline bg-fill-translucent px-1.5 text-caption font-medium capitalize text-text-secondary">
+            {member.status}
+          </span>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-2 gap-2 border-b border-border-hairline px-4 py-3">
+        <ReportRailMeta label="Assigned" value={member.assignedCount} />
+        <ReportRailMeta label="Reports" value={member.reportsCount} />
+        <ReportRailMeta label="Role" value={member.role} />
+        <ReportRailMeta label="Joined" value={member.joinedAt} />
+      </section>
+
+      <section className="px-4 py-3">
+        <div className="flex items-center gap-2 text-heading-5 text-foreground">
+          <ListFilter className="size-4 text-text-muted" />
+          Member context
+        </div>
+        <p className="mt-2 rounded-lg border border-border-hairline bg-background p-2.5 text-caption text-text-body">
+          Role controls, recent activity, assigned reports, and submitted
+          feedback will live here once team permissions are connected.
+        </p>
+      </section>
+    </div>
+  )
+}
+
+function TeamContextRail({
+  className,
+  workspace,
+}: {
+  className?: string
+  workspace: MockWorkspace
+}) {
+  const searchParams = useSearchParams()
+  const members = getMockTeamMembers(workspace.slug)
+  const selectedMemberId = searchParams.get("member") ?? members[0]?.id
+  const selectedMember = members.find((member) => member.id === selectedMemberId)
+
+  if (!selectedMember) {
+    return (
+      <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
+        <section className="border-b border-border-hairline px-4 py-4">
+          <div className="flex size-9 items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary">
+            <UsersRound className="size-4" />
+          </div>
+          <h2 className="mt-3 text-heading-5 text-foreground">Select a teammate</h2>
+          <p className="mt-1 text-body-3 text-text-body">
+            Member role, workload, and recent activity will appear here.
+          </p>
+        </section>
+      </div>
+    )
+  }
+
+  return <TeamMemberRail className={className} member={selectedMember} />
 }
 
 function MobileRightRailSheet({ workspace }: { workspace: MockWorkspace }) {
