@@ -30,6 +30,8 @@ export default function LoginPage() {
             label="Email"
             type="email"
             placeholder="your@workemail.com"
+            autoComplete="email"
+            required
           />
 
           <div className="space-y-2">
@@ -44,20 +46,26 @@ export default function LoginPage() {
                 Forgot password?
               </Link>
             </div>
-            <FeedMeField id="password" type="password" placeholder="********" />
+            <FeedMeField
+              id="password"
+              type="password"
+              placeholder="********"
+              autoComplete="current-password"
+              required
+            />
           </div>
 
           <RouteTransitionButton href="/welcome" className="w-full">
-            Continue
+            Log in
           </RouteTransitionButton>
 
           <p className="pt-3 text-center text-body-3 font-medium text-muted-foreground">
-            Don&apos;t have an account?{" "}
+            New to FeedMe?{" "}
             <RouteTransitionLink
-              href="/welcome"
+              href="/signup"
               className="font-medium text-foreground hover:text-text-secondary"
             >
-              Sign up
+              Create account
             </RouteTransitionLink>
           </p>
         </form>

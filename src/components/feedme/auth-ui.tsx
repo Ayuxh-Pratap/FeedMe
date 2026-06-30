@@ -85,6 +85,8 @@ type FeedMeFieldProps = {
   placeholder?: string
   defaultValue?: string
   helper?: string
+  autoComplete?: string
+  required?: boolean
 }
 
 export function FeedMeField({
@@ -94,6 +96,8 @@ export function FeedMeField({
   placeholder,
   defaultValue,
   helper,
+  autoComplete,
+  required,
 }: FeedMeFieldProps) {
   return (
     <div className="space-y-2">
@@ -107,6 +111,8 @@ export function FeedMeField({
         type={type}
         placeholder={placeholder}
         defaultValue={defaultValue}
+        autoComplete={autoComplete}
+        required={required}
         className={cn(
           "h-10 rounded-md border-border-hairline bg-input px-3 text-body-3 text-foreground",
           "placeholder:text-muted-foreground focus-visible:border-border-strong focus-visible:ring-0"
@@ -175,12 +181,29 @@ function GoogleMark() {
 }
 
 export function SocialAuthButtons() {
+  const googleTooltipId = "feedme-google-auth-coming-soon"
+
   return (
     <div className="space-y-3">
-      <AuthButton tactile="secondary" className="w-full gap-2">
-        <GoogleMark />
-        Continue with Google
-      </AuthButton>
+      <div className="group relative">
+        <AuthButton
+          aria-disabled="true"
+          aria-describedby={googleTooltipId}
+          disabled
+          tactile="secondary"
+          className="w-full gap-2 opacity-60"
+        >
+          <GoogleMark />
+          Continue with Google
+        </AuthButton>
+        <span
+          id={googleTooltipId}
+          role="tooltip"
+          className="pointer-events-none absolute bottom-[calc(100%+0.5rem)] right-[calc(50%-4.60rem)] z-20 whitespace-nowrap rounded-md border border-border-hairline bg-surface-card px-2.5 py-1.5 text-caption text-text-secondary opacity-0 shadow-popover transition-opacity duration-base ease-out-soft group-hover:opacity-100 group-focus-within:opacity-100"
+        >
+          Google login is coming soon.
+        </span>
+      </div>
       {/* <AuthButton tactile="secondary" className="w-full gap-2">
         <KeyRound className="size-4 text-text-secondary" />
         Single Sign On

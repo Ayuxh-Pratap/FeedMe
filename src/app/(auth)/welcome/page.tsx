@@ -8,8 +8,6 @@ import {
   AuthHeading,
   ContinueIcon,
   FeedMeField,
-  FeedMeUploadField,
-  UploadLogoControl,
 } from "@/components/feedme/auth-ui"
 import { RouteTransitionLink } from "@/components/feedme/experience/route-transition-button"
 
@@ -29,17 +27,25 @@ export default function WelcomePage() {
           />
 
           <form className="space-y-5">
-            <FeedMeField id="name" label="Name" defaultValue="Ayush Pratap Singh" />
+            <FeedMeField
+              id="name"
+              label="Full name"
+              placeholder="Ayush Pratap Singh"
+              autoComplete="name"
+              required
+            />
             <FeedMeField
               id="display-name"
-              label="Display Name"
-              defaultValue="Ayush"
+              label="Display name (optional)"
+              placeholder="Ayush"
               helper="This could be your first name or a nickname"
+              autoComplete="nickname"
             />
             <FeedMeField
               id="title"
-              label="Your Title"
+              label="Your title (optional)"
               placeholder="Product Designer, Founder, etc."
+              autoComplete="organization-title"
             />
             <AuthButton
               type="button"
@@ -58,10 +64,21 @@ export default function WelcomePage() {
           />
 
           <form className="space-y-5">
-            <FeedMeField id="workspace-name" label="Workspace Name" placeholder="Acme Inc." />
-            <FeedMeUploadField label="Company Logo">
-              <UploadLogoControl />
-            </FeedMeUploadField>
+            <FeedMeField
+              id="workspace-name"
+              label="Workspace name"
+              placeholder="Bump"
+              autoComplete="organization"
+              required
+            />
+            <FeedMeField
+              id="workspace-domain"
+              label="First domain"
+              placeholder="v2.bump.fm"
+              helper="Add the first website where your team will capture feedback. You can add and manage domains later."
+              autoComplete="url"
+              required
+            />
             <AuthButton type="button" className="mt-2 w-full">
               Create workspace
               <ContinueIcon />
