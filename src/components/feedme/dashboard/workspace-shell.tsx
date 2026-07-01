@@ -33,6 +33,7 @@ import {
 } from "lucide-react"
 import {
   useRef,
+  useEffect,
   useState,
   useSyncExternalStore,
   type ComponentType,
@@ -67,7 +68,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
-import { postJson } from "@/lib/api-client"
+import { ApiClientError, deleteJson, getJson, postJson } from "@/lib/api-client"
 
 type WorkspaceShellProps = {
   children: ReactNode
@@ -82,6 +83,23 @@ type NavItem = {
 }
 
 type ReportScreenshot = MockReportSummary["screenshots"][number]
+
+type WorkspaceDomain = {
+  id: string
+  host: string
+  status: "active" | "pending_verification" | "verified" | "disabled"
+  verifiedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+type WorkspaceDomainsResponse = {
+  domains: WorkspaceDomain[]
+}
+
+type WorkspaceDomainMutationResponse = {
+  domain: WorkspaceDomain
+}
 
 const navItems: NavItem[] = [
   { href: "inbox", icon: Inbox, label: "Inbox", planned: true },
@@ -466,25 +484,98 @@ function DomainsDialog({
   open: boolean
   workspace: MockWorkspace
 }) {
-  const [domains, setDomains] = useState([
-    { domain: "app.feedme.test", status: "Active" },
-    { domain: "checkout.feedme.test", status: "Active" },
-    { domain: "admin.feedme.test", status: "Pending" },
-  ])
+  const [domains, setDomains] = useState<WorkspaceDomain[]>([])
   const [newDomain, setNewDomain] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [deletingDomainId, setDeletingDomainId] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const domainsEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/domains`
 
-  function addDomain() {
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadDomains() {
+      setIsLoading(true)
+      setErrorMessage(null)
+
+      try {
+        const result = await getJson<WorkspaceDomainsResponse>(domainsEndpoint)
+
+        if (isMounted) {
+          setDomains(result.domains)
+        }
+      } catch (error) {
+        if (isMounted) {
+          setErrorMessage(
+            error instanceof ApiClientError
+              ? error.message
+              : "Unable to load domains. Please try again."
+          )
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    if (open) {
+      void loadDomains()
+    }
+
+    return () => {
+      isMounted = false
+    }
+  }, [domainsEndpoint, open])
+
+  async function addDomain() {
     const value = newDomain.trim()
 
     if (!value) {
       return
     }
 
-    setDomains((items) => [
-      ...items,
-      { domain: value.replace(/^https?:\/\//, ""), status: "Pending" },
-    ])
-    setNewDomain("")
+    setIsSaving(true)
+    setErrorMessage(null)
+
+    try {
+      const result = await postJson<WorkspaceDomainMutationResponse>(domainsEndpoint, {
+        domain: value,
+      })
+
+      setDomains((items) => [...items, result.domain])
+      setNewDomain("")
+    } catch (error) {
+      setErrorMessage(
+        error instanceof ApiClientError
+          ? error.message
+          : "Unable to add domain. Please try again."
+      )
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  async function removeDomain(domainId: string) {
+    setDeletingDomainId(domainId)
+    setErrorMessage(null)
+
+    try {
+      await deleteJson<WorkspaceDomainMutationResponse>(
+        `${domainsEndpoint}/${encodeURIComponent(domainId)}`
+      )
+
+      setDomains((items) => items.filter((item) => item.id !== domainId))
+    } catch (error) {
+      setErrorMessage(
+        error instanceof ApiClientError
+          ? error.message
+          : "Unable to remove domain. Please try again."
+      )
+    } finally {
+      setDeletingDomainId(null)
+    }
   }
 
   return (
@@ -501,6 +592,9 @@ function DomainsDialog({
             <DialogDescription className="mt-1 text-body-3 text-text-body">
               Control where the FeedMe extension can capture feedback for {workspace.name}.
             </DialogDescription>
+            <p className="mt-2 text-caption text-text-muted">
+              {domains.length}/5 domains connected
+            </p>
           </div>
           <button
             type="button"
@@ -514,58 +608,93 @@ function DomainsDialog({
 
         <div className="space-y-4 px-5 py-5">
           <div className="space-y-2">
-            {domains.map((item) => (
-              <div
-                key={item.domain}
-                className="flex min-h-10 items-center gap-3 rounded-lg border border-border-hairline bg-fill-translucent px-3 py-2"
-              >
-                <Globe2 className="size-4 shrink-0 text-text-muted" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-heading-5 text-foreground">
-                    {item.domain}
-                  </p>
-                  <p className="mt-0.5 text-caption text-text-muted">
-                    {item.status === "Active"
-                      ? "Extension capture enabled"
-                      : "Verification pending"}
-                  </p>
-                </div>
-                <span className="rounded-md border border-border-hairline bg-fill-subtle px-1.5 py-0.5 text-caption text-text-secondary">
-                  {item.status}
-                </span>
-                <button
-                  type="button"
-                  className="flex h-7 cursor-pointer items-center rounded-md border border-border-hairline bg-fill-translucent px-2 text-caption text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
-                >
-                  Edit
-                </button>
+            {isLoading ? (
+              <div className="rounded-lg border border-border-hairline bg-fill-translucent px-3 py-4 text-center text-body-3 text-text-body">
+                Loading domains...
               </div>
-            ))}
+            ) : null}
+
+            {!isLoading && domains.length === 0 ? (
+              <div className="rounded-lg border border-border-hairline bg-fill-translucent px-3 py-4 text-center text-body-3 text-text-body">
+                No domains connected yet.
+              </div>
+            ) : null}
+
+            {!isLoading
+              ? domains.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex min-h-10 items-center gap-3 rounded-lg border border-border-hairline bg-fill-translucent px-3 py-2"
+                  >
+                    <Globe2 className="size-4 shrink-0 text-text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-heading-5 text-foreground">
+                        {item.host}
+                      </p>
+                      <p className="mt-0.5 text-caption text-text-muted">
+                        {item.status === "active"
+                          ? "Extension capture enabled"
+                          : "Verification pending"}
+                      </p>
+                    </div>
+                    <span className="rounded-md border border-border-hairline bg-fill-subtle px-1.5 py-0.5 text-caption capitalize text-text-secondary">
+                      {labelFromToken(item.status)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void removeDomain(item.id)
+                      }}
+                      disabled={deletingDomainId === item.id || isSaving}
+                      className="flex h-7 cursor-pointer items-center rounded-md border border-border-hairline bg-fill-translucent px-2 text-caption text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      {deletingDomainId === item.id ? "Removing" : "Remove"}
+                    </button>
+                  </div>
+                ))
+              : null}
           </div>
 
-          <div className="flex flex-col gap-2 border-t border-border-hairline pt-4 sm:flex-row">
-            <input
-              aria-label="New domain"
-              value={newDomain}
-              onChange={(event) => setNewDomain(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  addDomain()
-                }
-              }}
-              placeholder="yourdomain.com"
-              className="h-9 min-w-0 flex-1 rounded-lg border border-border-subtle bg-background px-3 text-body-3 text-foreground outline-none transition-colors duration-base ease-out-soft placeholder:text-muted-foreground focus:border-border-strong"
-            />
+          {errorMessage ? (
+            <div
+              role="alert"
+              className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-body-3 font-medium text-destructive"
+            >
+              {errorMessage}
+            </div>
+          ) : null}
+
+          <form
+            className="flex flex-col gap-2 border-t border-border-hairline pt-4 sm:flex-row"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void addDomain()
+            }}
+          >
+            <div className="min-w-0 flex-1">
+              <input
+                aria-label="New domain"
+                value={newDomain}
+                onChange={(event) => setNewDomain(event.target.value)}
+                placeholder="yourdomain.com"
+                disabled={isSaving || isLoading || domains.length >= 5}
+                className="h-9 w-full min-w-0 rounded-lg border border-border-subtle bg-background px-3 text-body-3 text-foreground outline-none transition-colors duration-base ease-out-soft placeholder:text-muted-foreground focus:border-border-strong disabled:cursor-not-allowed disabled:opacity-55"
+              />
+              <p className="mt-1 text-caption text-text-muted">
+                Exact domains only. Subdomains are added separately.
+              </p>
+            </div>
             <button
-              type="button"
-              onClick={addDomain}
-              disabled={!newDomain.trim()}
+              type="submit"
+              disabled={
+                !newDomain.trim() || isSaving || isLoading || domains.length >= 5
+              }
               className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-lg border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-border-subtle disabled:hover:brightness-100"
             >
               <Plus className="size-4" />
-              Add domain
+              {isSaving ? "Adding" : "Add domain"}
             </button>
-          </div>
+          </form>
         </div>
       </DialogContent>
     </Dialog>

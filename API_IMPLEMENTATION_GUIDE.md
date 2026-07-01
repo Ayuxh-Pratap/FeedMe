@@ -302,6 +302,138 @@ extension bootstrap
 extension report submission
 ```
 
+## Implementation Progress
+
+Keep this section updated as backend slices land. Each slice should list the contract, server modules, API routes, and testing commands.
+
+### Slice 1: Auth And First Workspace
+
+Status:
+
+```txt
+implemented
+```
+
+Scope:
+
+```txt
+email/password signup
+email/password login
+logout
+session lookup
+onboarding state
+profile upsert
+first workspace creation
+first domain creation
+creator owner membership
+protected auth/welcome/dashboard route redirects
+```
+
+Routes:
+
+```txt
+POST /api/auth/signup
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/session
+
+GET  /api/onboarding/state
+POST /api/onboarding/profile
+POST /api/onboarding/workspace
+```
+
+Important implementation note:
+
+```txt
+The app currently uses drizzle-orm/neon-http.
+That driver does not support db.transaction(...).
+For atomic multi-query writes over Neon HTTP, use db.batch(...), which maps to Neon HTTP's non-interactive transaction support.
+```
+
+### Slice 2: Workspace Domain Management
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Admins and owners can manage the exact domains where a workspace can capture feedback.
+All active workspace members can read the domain list.
+```
+
+Routes:
+
+```txt
+GET    /api/workspaces/:workspaceSlug/domains
+POST   /api/workspaces/:workspaceSlug/domains
+DELETE /api/workspaces/:workspaceSlug/domains/:domainId
+```
+
+Server files:
+
+```txt
+src/server/workspaces/domains.ts
+src/server/workspaces/validation.ts
+src/server/workspaces/domain-service.ts
+src/app/api/workspaces/[workspaceSlug]/domains/route.ts
+src/app/api/workspaces/[workspaceSlug]/domains/[domainId]/route.ts
+```
+
+Dashboard wiring:
+
+```txt
+The workspace switcher Domains dialog uses these APIs directly.
+Opening the dialog loads domains.
+Adding a domain calls POST.
+Removing a domain calls DELETE.
+Server errors are shown inside the dialog.
+```
+
+Rules:
+
+```txt
+resolve workspaceSlug to workspaceId
+require signed-in user
+require active workspace membership
+scope every domain query by workspaceId
+allow read for workspace:read
+allow add/delete for workspace:manage_domains
+normalize domains through normalizeDomainHost(input)
+store exact host only
+block localhost and wildcard domains
+enforce max 5 domains per workspace
+return conflict for duplicate domain in the same workspace
+existing reports remain historical if a domain is deleted later
+```
+
+Response examples:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "domains": []
+  }
+}
+```
+
+```json
+{
+  "ok": true,
+  "data": {
+    "domain": {
+      "id": "domain_id",
+      "host": "v2.bump.fm",
+      "status": "active"
+    }
+  }
+}
+```
+
 ## API Contract For The First Flow
 
 ### Signup

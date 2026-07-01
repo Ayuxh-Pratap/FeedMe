@@ -53,3 +53,12 @@ export async function postJson<T>(url: string, body?: unknown) {
 
   return readApiResponse<T>(response)
 }
+
+export async function deleteJson<T>(url: string) {
+  const response = await fetch(url, {
+    method: "DELETE",
+    credentials: "include",
+  })
+
+  return readApiResponse<T>(response)
+}
