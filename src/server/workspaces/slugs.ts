@@ -7,6 +7,7 @@ export const RESERVED_WORKSPACE_SLUGS = new Set([
   "login",
   "signup",
   "welcome",
+  "join",
   "api",
   "admin",
   "settings",

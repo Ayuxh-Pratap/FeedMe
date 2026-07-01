@@ -39,6 +39,14 @@ type WorkspaceResponse = {
   nextPath: string
 }
 
+type ProfileResponse = {
+  onboarding: {
+    nextStep: "profile" | "workspace" | "complete"
+    nextPath: string
+  }
+  nextPath: string
+}
+
 function formValue(formData: FormData, key: string) {
   return String(formData.get(key) ?? "")
 }
@@ -110,11 +118,17 @@ export function WelcomeForm() {
     const formData = new FormData(event.currentTarget)
 
     try {
-      await postJson("/api/onboarding/profile", {
+      const result = await postJson<ProfileResponse>("/api/onboarding/profile", {
         fullName: formValue(formData, "fullName"),
         displayName: formValue(formData, "displayName"),
         title: formValue(formData, "title"),
       })
+
+      if (result.onboarding.nextStep === "complete") {
+        router.push(result.nextPath)
+        router.refresh()
+        return
+      }
 
       setStep("workspace")
     } catch (error) {

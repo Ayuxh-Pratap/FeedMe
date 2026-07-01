@@ -1,10 +1,11 @@
 "use client"
 
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { FormEvent, useState } from "react"
 
 import { AuthButton, FeedMeField } from "@/components/feedme/auth-ui"
 import { ApiClientError, postJson } from "@/lib/api-client"
+import { getSafeNextPath } from "@/lib/safe-next-path"
 
 type SignupResponse = {
   user: {
@@ -20,6 +21,7 @@ function formValue(formData: FormData, key: string) {
 
 export function SignupForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -37,7 +39,7 @@ export function SignupForm() {
         confirmPassword: formValue(formData, "confirmPassword"),
       })
 
-      router.push(result.nextPath)
+      router.push(getSafeNextPath(searchParams.get("next")) ?? result.nextPath)
       router.refresh()
     } catch (error) {
       setErrorMessage(

@@ -71,6 +71,10 @@ src/server/
     slugs.ts
     domains.ts
 
+  invites/
+    validation.ts
+    service.ts
+
   policies/
     actions.ts
     can.ts
@@ -432,6 +436,87 @@ Response examples:
     }
   }
 }
+```
+
+### Slice 3: Invite Links
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Owners and admins can create role-scoped invite links.
+Invite links are not email-bound in MVP.
+Invited users can inspect an invite code, sign in or sign up, accept the invite, and join the workspace.
+```
+
+Routes:
+
+```txt
+GET  /api/workspaces/:workspaceSlug/invites
+POST /api/workspaces/:workspaceSlug/invites
+
+GET  /api/invites/:inviteCode
+POST /api/invites/:inviteCode/accept
+```
+
+UI routes:
+
+```txt
+/join/:inviteCode
+```
+
+Server files:
+
+```txt
+src/server/invites/validation.ts
+src/server/invites/service.ts
+src/app/api/workspaces/[workspaceSlug]/invites/route.ts
+src/app/api/invites/[inviteCode]/route.ts
+src/app/api/invites/[inviteCode]/accept/route.ts
+```
+
+UI files:
+
+```txt
+src/components/feedme/dashboard/invite-member-dialog.tsx
+src/app/join/[inviteCode]/page.tsx
+src/components/feedme/join/join-invite-panel.tsx
+src/lib/safe-next-path.ts
+```
+
+Rules:
+
+```txt
+require signed-in user for creating invite links
+require active workspace membership
+allow create/list through workspace:create_invite
+block invite creation if the workspace has zero active domains
+do not bind invites to email in MVP
+do not send emails in MVP
+invite links carry a default role
+invite links are single-use by default in MVP
+invite creator cannot create owner invites
+accepting an invite creates or reactivates workspace membership
+accepting an invite increments usedCount
+when usedCount reaches maxUses, mark the invite exhausted
+accepting an invite redirects to the workspace dashboard if profile is complete
+accepting an invite redirects to /welcome if profile is incomplete
+```
+
+Dashboard wiring:
+
+```txt
+The Team page invite dialog creates real invite links.
+The role picker controls the invite role.
+Copy code and copy invite link use the generated server invite.
+Email invite sending remains future work.
+Login and signup preserve a safe relative next path so invite links survive auth.
+Switching between login and signup keeps that same next path.
 ```
 
 ## API Contract For The First Flow
