@@ -66,7 +66,9 @@ export default async function WorkspaceLayout({
     name: workspaceAccess.name,
     reportCount,
     user: {
+      avatarUrl: currentSession.profile?.avatarUrl ?? null,
       displayName,
+      email: currentSession.user.email,
       title,
       initials: initialsFromName(displayName) || "U",
     },

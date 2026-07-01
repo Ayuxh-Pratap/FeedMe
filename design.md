@@ -272,7 +272,7 @@ Required mappings:
 - `Dialog` / `Sheet`: dark translucent overlay, raised charcoal panel, strong but soft shadow.
 - `Tabs`: understated labels with blue underline for active state.
 - `Card`: restrained panel with `16px` radius and hairline border.
-- `Avatar`: circular, with optional green presence dot.
+- `Avatar`: circular, with optional green presence dot. Dashboard user identities use the local FeedMe avatar wrapper. Prefer the user's uploaded/profile image when `avatarUrl` exists. When no image exists, fall back to `avvvatars-react` in shape mode by default so identities feel crafted instead of plain initial chips. Use deterministic values such as user email when available, keep FeedMe border/shadow treatment outside the generated avatar, and reserve character mode for future dense surfaces that truly need letter recognition. Non-user placeholders such as unassigned owners stay neutral instead of receiving generated identity colors.
 - `Badge`: compact status indicators using semantic colors only.
 - `Table`: dense but breathable report lists with hover rows and muted metadata.
 - `DropdownMenu` / `Command`: charcoal surfaces, sharp text hierarchy, no bright menu backgrounds.

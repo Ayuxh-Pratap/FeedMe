@@ -52,6 +52,7 @@ import {
   getWorkspaceMemberRoleLabel,
   type WorkspaceTeamMember,
 } from "@/lib/team-members"
+import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import {
   reportBadgeBaseClass,
   reportSeverityPillStyles,
@@ -1061,7 +1062,14 @@ function WorkspaceTopbar({
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <Search className="size-5 text-muted-foreground" />
           <div className="flex items-center gap-1 rounded-md bg-fill-subtle px-2 py-1 text-body-3 text-text-secondary">
-            <UserRound className="size-3.5" />
+            <FeedMeAvatar
+              className="border-border-subtle shadow-none"
+              displayValue={workspace.user.initials}
+              imageUrl={workspace.user.avatarUrl}
+              label={workspace.user.displayName}
+              size={16}
+              value={workspace.user.email ?? workspace.user.displayName}
+            />
             {workspace.user.displayName}
           </div>
           <input
@@ -1148,9 +1156,14 @@ function WorkspaceRightRailContent({
   return (
     <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
       <section className="border-b border-border-hairline px-5 py-6 text-center">
-        <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-primary-soft/50 [background:var(--gradient-primary-premium)] text-heading-3 text-primary-foreground shadow-[var(--elevation-primary-premium)]">
-          {workspace.user.initials}
-        </div>
+        <FeedMeAvatar
+          className="mx-auto border-border-subtle shadow-[var(--elevation-primary-premium)]"
+          displayValue={workspace.user.initials}
+          imageUrl={workspace.user.avatarUrl}
+          label={workspace.user.displayName}
+          size={56}
+          value={workspace.user.email ?? workspace.user.displayName}
+        />
         <h2 className="mt-3 text-heading-3 text-foreground">
           {workspace.user.displayName}
         </h2>
@@ -1620,7 +1633,26 @@ function ReportInspectorRail({
       <section className="grid grid-cols-2 gap-2 border-b border-border-hairline px-4 py-3">
         <ReportRailMeta label="Type" value={report.type} />
         <ReportRailMeta label="Comments" value={report.commentsCount} />
-        <ReportRailMeta label="Owner" value={report.assignee?.name ?? "Unassigned"} />
+        <ReportRailMeta
+          label="Owner"
+          value={
+            report.assignee ? (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <FeedMeAvatar
+                  className="shadow-none"
+                  displayValue={report.assignee.initials}
+                  imageUrl={report.assignee.avatarUrl}
+                  label={report.assignee.name}
+                  size={18}
+                  value={report.assignee.name}
+                />
+                <span className="truncate">{report.assignee.name}</span>
+              </span>
+            ) : (
+              "Unassigned"
+            )
+          }
+        />
         <ReportRailMeta label="Captured" value={report.capturedAgo} />
       </section>
 
@@ -1801,9 +1833,14 @@ function TeamMemberRail({
   return (
     <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
       <section className="border-b border-border-hairline px-5 py-6 text-center">
-        <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-border-hairline bg-fill-subtle text-heading-4 text-foreground shadow-button-secondary">
-          {member.initials}
-        </div>
+        <FeedMeAvatar
+          className="mx-auto border-border-subtle"
+          displayValue={member.initials}
+          imageUrl={member.avatarUrl}
+          label={member.name}
+          size={56}
+          value={member.email}
+        />
         <h2 className="mt-3 truncate text-heading-3 text-foreground">
           {member.name}
         </h2>

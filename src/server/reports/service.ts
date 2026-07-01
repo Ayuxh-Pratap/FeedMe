@@ -52,6 +52,7 @@ type ReportPerson = {
   email: string
   fullName: string | null
   displayName: string | null
+  avatarUrl: string | null
 }
 
 type ReportAssetRow = {
@@ -130,6 +131,7 @@ async function getPeopleById(userIds: string[]) {
       email: users.email,
       fullName: userProfiles.fullName,
       displayName: userProfiles.displayName,
+      avatarUrl: userProfiles.avatarUrl,
     })
     .from(users)
     .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
@@ -323,12 +325,14 @@ function serializeReport(
       message: row.feedbackMessage,
       reporterName,
       reporterEmail: reporter?.email ?? "unknown",
+      reporterAvatarUrl: reporter?.avatarUrl ?? null,
     },
     developerPrompt: buildDeveloperPrompt(row),
     assignee: assignee
       ? {
           name: assigneeName,
           initials: getInitialsFromName(assigneeName),
+          avatarUrl: assignee.avatarUrl,
         }
       : undefined,
     commentsCount: row.commentsCount,

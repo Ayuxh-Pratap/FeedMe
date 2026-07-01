@@ -54,11 +54,13 @@ export type WorkspaceReport = {
     message: string
     reporterName: string
     reporterEmail: string
+    reporterAvatarUrl?: string | null
   }
   developerPrompt: string
   assignee?: {
     name: string
     initials: string
+    avatarUrl?: string | null
   }
   commentsCount: number
 }

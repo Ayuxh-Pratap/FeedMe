@@ -3,6 +3,7 @@
 import { Plus } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
+import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
 import {
   getWorkspaceMemberRoleLabel,
@@ -74,9 +75,13 @@ function RolePill({ role }: { role: WorkspaceTeamMember["role"] }) {
 
 function TeamMemberAvatar({ member }: { member: WorkspaceTeamMember }) {
   return (
-    <span className="flex size-7 items-center justify-center rounded-full border border-border-hairline bg-fill-subtle text-caption text-foreground">
-      {member.initials}
-    </span>
+    <FeedMeAvatar
+      displayValue={member.initials}
+      imageUrl={member.avatarUrl}
+      label={member.name}
+      size={28}
+      value={member.email}
+    />
   )
 }
 

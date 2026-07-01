@@ -12,10 +12,10 @@ import {
   MessageSquare,
   Monitor,
   MousePointer2,
-  UserRound,
   X,
 } from "lucide-react"
 
+import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import {
   Dialog,
   DialogContent,
@@ -325,7 +325,13 @@ export function ReportDetail({ report, workspaceSlug }: ReportDetailProps) {
                 {report.feedback.message}
               </blockquote>
               <div className="mt-4 flex items-center gap-2 text-body-3 text-text-muted">
-                <UserRound className="size-3.5" />
+                <FeedMeAvatar
+                  className="shadow-none"
+                  imageUrl={report.feedback.reporterAvatarUrl}
+                  label={report.feedback.reporterName}
+                  size={22}
+                  value={report.feedback.reporterEmail}
+                />
                 {report.feedback.reporterName} - {report.feedback.reporterEmail}
               </div>
             </section>

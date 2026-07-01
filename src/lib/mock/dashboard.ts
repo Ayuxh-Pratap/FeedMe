@@ -10,7 +10,9 @@ export type MockWorkspace = {
   name: string
   reportCount?: number
   user: {
+    avatarUrl?: string | null
     displayName: string
+    email?: string
     title: string
     initials: string
   }
@@ -67,7 +69,9 @@ export function getMockWorkspace(slug: string): MockWorkspace {
     name: titleFromSlug(slug),
     reportCount: 8,
     user: {
+      avatarUrl: null,
       displayName: "Almostdev",
+      email: "almostdev@feedme.test",
       title: "Product Lead",
       initials: "A",
     },

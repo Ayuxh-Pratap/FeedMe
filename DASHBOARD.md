@@ -283,6 +283,8 @@ Do not put screenshots, selected-element blocks, or developer prompt previews in
 
 The reports list should select the first report by default. Clicking a table row or grid card changes the selected report and updates the right rail. The selection and view mode may be represented in the URL query string so it is shareable and does not require hidden local state.
 
+User identities in report surfaces use the shared FeedMe avatar wrapper. Assignees and reporters should render uploaded/profile images first. If no image exists, fall back to deterministic `avvvatars-react` shape avatars from email when available, or from name when email is unavailable. Unassigned owner states stay neutral and should not look like a real person.
+
 When the right rail is hidden on the reports index, the shell must keep a zero-width second grid column during the transition. Do not collapse the grid to one column while the rail is still rendered, because the rail can wrap below the report cards and create a visible ghost panel.
 
 The right rail on `/[workspaceSlug]/reports` is a selected-report inspector:
@@ -379,6 +381,8 @@ assigned/open work
 reports submitted
 joined date
 ```
+
+Member rows and selected-member right rails use the shared FeedMe avatar wrapper. Prefer `avatarUrl` from the user profile. If no image exists, use `avvvatars-react` shape fallback with member email as the stable value. Keep avatars circular with FeedMe hairline border and subtle dashboard shadow so they feel native to the charcoal shell.
 
 Team does not need a card/grid switch. It is a membership and permissions surface, so the table is the product shape. Do not add an actions column to the table; member actions should live in the right rail after a teammate is selected.
 

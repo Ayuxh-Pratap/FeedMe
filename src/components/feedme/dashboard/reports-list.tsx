@@ -15,6 +15,7 @@ import {
   reportPriorityCodePillStyle,
   reportSeverityPriorityLabels,
 } from "@/components/feedme/dashboard/report-badge-styles"
+import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import {
   isInProgressWorkspaceReport,
   isOpenWorkspaceReport,
@@ -141,6 +142,27 @@ function ReportPriorityCode({
     >
       {children}
     </span>
+  )
+}
+
+function ReportAssigneeAvatar({ report }: { report: WorkspaceReport }) {
+  if (!report.assignee) {
+    return (
+      <span className="flex size-6 items-center justify-center rounded-full border border-border-hairline bg-fill-subtle text-caption text-text-muted">
+        U
+      </span>
+    )
+  }
+
+  return (
+    <FeedMeAvatar
+      className="shadow-none"
+      displayValue={report.assignee.initials}
+      imageUrl={report.assignee.avatarUrl}
+      label={report.assignee.name}
+      size={24}
+      value={report.assignee.name}
+    />
   )
 }
 
@@ -468,9 +490,7 @@ export function ReportTableRow({
       <td className="px-4 py-4 align-top">
         <div className="flex items-center justify-between gap-3 text-body-3 text-text-body">
           <span className="inline-flex items-center gap-2">
-            <span className="flex size-6 items-center justify-center rounded-full border border-border-hairline bg-fill-subtle text-caption text-foreground">
-              {report.assignee?.initials ?? "U"}
-            </span>
+            <ReportAssigneeAvatar report={report} />
             {report.assignee?.name ?? "Unassigned"}
           </span>
           <span className="text-text-muted">{report.capturedAgo}</span>
