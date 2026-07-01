@@ -1,5 +1,6 @@
 import { TeamPage } from "@/components/feedme/dashboard/team-page"
-import { getMockTeamMembers, getMockWorkspace } from "@/lib/mock/dashboard"
+import { requireCurrentSession } from "@/server/auth/current-user"
+import { listWorkspaceMembers } from "@/server/members/service"
 
 type TeamRouteProps = {
   params: Promise<{
@@ -9,8 +10,11 @@ type TeamRouteProps = {
 
 export default async function TeamRoute({ params }: TeamRouteProps) {
   const { workspaceSlug } = await params
-  const workspace = getMockWorkspace(workspaceSlug)
-  const members = getMockTeamMembers(workspaceSlug)
+  const currentSession = await requireCurrentSession()
+  const { members, workspace } = await listWorkspaceMembers(
+    currentSession.user.id,
+    workspaceSlug
+  )
 
   return (
     <TeamPage

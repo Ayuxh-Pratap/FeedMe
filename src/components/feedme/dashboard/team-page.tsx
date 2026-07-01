@@ -3,12 +3,15 @@
 import { Plus } from "lucide-react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
-import type { MockTeamMember } from "@/lib/mock/dashboard"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
+import {
+  getWorkspaceMemberRoleLabel,
+  type WorkspaceTeamMember,
+} from "@/lib/team-members"
 import { cn } from "@/lib/utils"
 
 type TeamPageProps = {
-  members: MockTeamMember[]
+  members: WorkspaceTeamMember[]
   workspaceName: string
   workspaceSlug: string
 }
@@ -21,23 +24,23 @@ type SearchParamsLike = {
 const filters: {
   label: string
   value: TeamFilter
-  match: (member: MockTeamMember) => boolean
+  match: (member: WorkspaceTeamMember) => boolean
 }[] = [
   { label: "All", value: "all", match: () => true },
   {
     label: "Developers",
     value: "developer",
-    match: (member) => member.role === "Developer",
+    match: (member) => member.role === "developer",
   },
   {
     label: "Designers",
     value: "designer",
-    match: (member) => member.role === "Designer",
+    match: (member) => member.role === "designer",
   },
   {
     label: "Reporters",
     value: "reporter",
-    match: (member) => member.role === "Reporter",
+    match: (member) => member.role === "reporter",
   },
   {
     label: "Pending",
@@ -61,15 +64,15 @@ function getFilter(searchParams: SearchParamsLike): TeamFilter {
   return "all"
 }
 
-function RolePill({ role }: { role: MockTeamMember["role"] }) {
+function RolePill({ role }: { role: WorkspaceTeamMember["role"] }) {
   return (
     <span className="inline-flex h-5 items-center rounded-md border border-border-hairline bg-fill-translucent px-1.5 text-caption font-medium text-text-secondary">
-      {role}
+      {getWorkspaceMemberRoleLabel(role)}
     </span>
   )
 }
 
-function TeamMemberAvatar({ member }: { member: MockTeamMember }) {
+function TeamMemberAvatar({ member }: { member: WorkspaceTeamMember }) {
   return (
     <span className="flex size-7 items-center justify-center rounded-full border border-border-hairline bg-fill-subtle text-caption text-foreground">
       {member.initials}
@@ -83,7 +86,7 @@ function TeamFilterTabs({
   onFilterChange,
 }: {
   activeFilter: TeamFilter
-  members: MockTeamMember[]
+  members: WorkspaceTeamMember[]
   onFilterChange: (filter: TeamFilter) => void
 }) {
   return (
@@ -257,7 +260,7 @@ export function TeamPage({
                   {member.reportsCount}
                 </td>
                 <td className="px-4 py-4 align-top text-body-3 text-text-muted">
-                  {member.joinedAt}
+                  {member.joinedAtLabel}
                 </td>
               </tr>
               )

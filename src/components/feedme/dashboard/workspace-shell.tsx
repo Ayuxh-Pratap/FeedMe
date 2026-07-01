@@ -42,11 +42,13 @@ import {
 
 import {
   getMockReports,
-  getMockTeamMembers,
   type MockReportSummary,
-  type MockTeamMember,
   type MockWorkspace,
 } from "@/lib/mock/dashboard"
+import {
+  getWorkspaceMemberRoleLabel,
+  type WorkspaceTeamMember,
+} from "@/lib/team-members"
 import {
   reportBadgeBaseClass,
   reportSeverityPillStyles,
@@ -99,6 +101,10 @@ type WorkspaceDomainsResponse = {
 
 type WorkspaceDomainMutationResponse = {
   domain: WorkspaceDomain
+}
+
+type WorkspaceMembersResponse = {
+  members: WorkspaceTeamMember[]
 }
 
 const navItems: NavItem[] = [
@@ -1492,10 +1498,10 @@ function ReportsContextRail({
   )
 }
 
-function TeamMemberRolePill({ role }: { role: MockTeamMember["role"] }) {
+function TeamMemberRolePill({ role }: { role: WorkspaceTeamMember["role"] }) {
   return (
     <span className="inline-flex h-5 items-center rounded-md border border-border-hairline bg-fill-translucent px-1.5 text-caption font-medium text-text-secondary">
-      {role}
+      {getWorkspaceMemberRoleLabel(role)}
     </span>
   )
 }
@@ -1505,7 +1511,7 @@ function TeamMemberRail({
   member,
 }: {
   className?: string
-  member: MockTeamMember
+  member: WorkspaceTeamMember
 }) {
   return (
     <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
@@ -1530,8 +1536,11 @@ function TeamMemberRail({
       <section className="grid grid-cols-2 gap-2 border-b border-border-hairline px-4 py-3">
         <ReportRailMeta label="Assigned" value={member.assignedCount} />
         <ReportRailMeta label="Reports" value={member.reportsCount} />
-        <ReportRailMeta label="Role" value={member.role} />
-        <ReportRailMeta label="Joined" value={member.joinedAt} />
+        <ReportRailMeta
+          label="Role"
+          value={getWorkspaceMemberRoleLabel(member.role)}
+        />
+        <ReportRailMeta label="Joined" value={member.joinedAtLabel} />
       </section>
 
       <section className="px-4 py-3">
@@ -1556,7 +1565,76 @@ function TeamContextRail({
   workspace: MockWorkspace
 }) {
   const searchParams = useSearchParams()
-  const members = getMockTeamMembers(workspace.slug)
+  const [members, setMembers] = useState<WorkspaceTeamMember[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const membersEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/members`
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadMembers() {
+      setIsLoading(true)
+      setErrorMessage(null)
+
+      try {
+        const result = await getJson<WorkspaceMembersResponse>(membersEndpoint)
+
+        if (isMounted) {
+          setMembers(result.members)
+        }
+      } catch (error) {
+        if (isMounted) {
+          setErrorMessage(
+            error instanceof ApiClientError
+              ? error.message
+              : "Unable to load team members. Please try again."
+          )
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    void loadMembers()
+
+    return () => {
+      isMounted = false
+    }
+  }, [membersEndpoint])
+
+  if (isLoading) {
+    return (
+      <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
+        <section className="border-b border-border-hairline px-4 py-4">
+          <div className="flex size-9 items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary">
+            <UsersRound className="size-4" />
+          </div>
+          <h2 className="mt-3 text-heading-5 text-foreground">Loading team</h2>
+          <p className="mt-1 text-body-3 text-text-body">
+            Member details are being loaded for this workspace.
+          </p>
+        </section>
+      </div>
+    )
+  }
+
+  if (errorMessage) {
+    return (
+      <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
+        <section className="border-b border-border-hairline px-4 py-4">
+          <div className="flex size-9 items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary">
+            <UsersRound className="size-4" />
+          </div>
+          <h2 className="mt-3 text-heading-5 text-foreground">Team unavailable</h2>
+          <p className="mt-1 text-body-3 text-text-body">{errorMessage}</p>
+        </section>
+      </div>
+    )
+  }
+
   const selectedMemberId = searchParams.get("member") ?? members[0]?.id
   const selectedMember = members.find((member) => member.id === selectedMemberId)
 

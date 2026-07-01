@@ -301,6 +301,7 @@ After this flow works end to end, build:
 ```txt
 workspace domains
 invites
+team members
 reports
 extension bootstrap
 extension report submission
@@ -517,6 +518,66 @@ Copy code and copy invite link use the generated server invite.
 Email invite sending remains future work.
 Login and signup preserve a safe relative next path so invite links survive auth.
 Switching between login and signup keeps that same next path.
+```
+
+### Slice 4: Team Members Read Model
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Workspace members can see the real team list from the database.
+Invite acceptance becomes visible in the Team page and right rail.
+Role editing and member removal are intentionally deferred to a later member-management slice.
+```
+
+Routes:
+
+```txt
+GET /api/workspaces/:workspaceSlug/members
+```
+
+Server files:
+
+```txt
+src/server/members/service.ts
+src/app/api/workspaces/[workspaceSlug]/members/route.ts
+src/lib/team-members.ts
+```
+
+UI files:
+
+```txt
+src/app/[workspaceSlug]/team/page.tsx
+src/app/[workspaceSlug]/layout.tsx
+src/components/feedme/dashboard/team-page.tsx
+src/components/feedme/dashboard/workspace-shell.tsx
+```
+
+Rules:
+
+```txt
+require signed-in user
+resolve workspaceSlug to workspaceId through active membership
+allow member listing through workspace:read
+scope every member query by workspaceId
+exclude removed memberships from the live team list
+return canonical DB role and status values
+return UI-ready name, displayName, initials, joinedAtLabel, assignedCount, and reportsCount
+```
+
+Dashboard wiring:
+
+```txt
+The Team page now reads real workspace memberships.
+The Team right rail fetches the same member list from the API.
+The workspace shell member count uses the real membership count.
+Assigned and submitted report counts are already wired to the reports table and will populate once the report slice lands.
 ```
 
 ## API Contract For The First Flow

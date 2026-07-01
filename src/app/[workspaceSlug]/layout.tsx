@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation"
 
 import { WorkspaceShell } from "@/components/feedme/dashboard/workspace-shell"
 import { getCurrentSession } from "@/server/auth/current-user"
+import { getWorkspaceMemberCount } from "@/server/members/service"
 import { getOnboardingStateForUser } from "@/server/onboarding/service"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
 
@@ -48,6 +49,7 @@ export default async function WorkspaceLayout({
     notFound()
   }
 
+  const memberCount = await getWorkspaceMemberCount(workspaceAccess.id)
   const displayName =
     currentSession.profile?.displayName ?? currentSession.user.email.split("@")[0]
   const title = currentSession.profile?.title ?? workspaceAccess.role
@@ -62,12 +64,12 @@ export default async function WorkspaceLayout({
     stats: [
       { label: "Reports", value: "0" },
       { label: "Domains", value: "1" },
-      { label: "Members", value: "1" },
+      { label: "Members", value: memberCount.toString() },
     ],
     trial: {
       daysLeft: 30,
-      seatsUsed: 1,
-      seatsTotal: 3,
+      seatsUsed: memberCount,
+      seatsTotal: Math.max(3, memberCount),
     },
   }
 
