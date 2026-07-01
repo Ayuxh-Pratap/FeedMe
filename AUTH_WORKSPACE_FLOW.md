@@ -54,6 +54,7 @@ Reserved workspace slugs must include:
 login
 signup
 welcome
+workspaces
 api
 admin
 settings
@@ -284,6 +285,39 @@ last active workspace
 ```
 
 The extension later uses its own active workspace selection, but the web app should still remember the last active dashboard workspace.
+
+## Additional Workspace Creation
+
+`/welcome` is first-run onboarding only. Once a user has a complete profile and at least one active workspace membership, `/welcome` redirects to the default dashboard workspace.
+
+Additional workspace creation belongs to:
+
+```txt
+/workspaces/new
+```
+
+The additional workspace form collects:
+
+```txt
+workspace name: required
+first domain: required
+```
+
+It creates:
+
+```txt
+workspace
+owner membership for the creator
+first active workspace domain
+```
+
+Then it redirects to:
+
+```txt
+/:newWorkspaceSlug/reports
+```
+
+This flow does not change onboarding state. It requires onboarding to already be complete.
 
 ## Backend Transaction
 

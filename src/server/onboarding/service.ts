@@ -1,25 +1,17 @@
-import { randomUUID } from "node:crypto"
-
 import { eq } from "drizzle-orm"
 
 import { db } from "@/db"
-import {
-  userProfiles,
-  workspaceDomains,
-  workspaceMemberships,
-  workspaces,
-} from "@/db/schema"
-import { AppError, ValidationError } from "@/server/http/errors"
+import { userProfiles } from "@/db/schema"
+import { ValidationError } from "@/server/http/errors"
 import type {
   ProfileInput,
   WorkspaceOnboardingInput,
 } from "@/server/onboarding/validation"
 import {
+  createOwnedWorkspace,
   getDefaultWorkspaceForUser,
   type WorkspaceSummary,
 } from "@/server/workspaces/service"
-import { normalizeDomainHost } from "@/server/workspaces/domains"
-import { generateUniqueWorkspaceSlug } from "@/server/workspaces/slugs"
 
 export type OnboardingState = {
   profileComplete: boolean
@@ -150,61 +142,12 @@ export async function completeWorkspaceOnboarding(
     })
   }
 
-  const domainHost = normalizeDomainHost(input.firstDomain)
-  const slug = await generateUniqueWorkspaceSlug(input.workspaceName)
-  const workspaceId = randomUUID()
-
-  const [createdWorkspaceRows] = await db.batch([
-    db
-      .insert(workspaces)
-      .values({
-        id: workspaceId,
-        name: input.workspaceName,
-        slug,
-        createdByUserId: userId,
-      })
-      .returning({
-        id: workspaces.id,
-        name: workspaces.name,
-        slug: workspaces.slug,
-        logoUrl: workspaces.logoUrl,
-      }),
-    db.insert(workspaceMemberships).values({
-      workspaceId,
-      userId,
-      role: "owner",
-      status: "active",
-    }),
-    db.insert(workspaceDomains).values({
-      workspaceId,
-      host: domainHost,
-      status: "active",
-      addedByUserId: userId,
-    }),
-    db
-      .update(userProfiles)
-      .set({
-        onboardingCompletedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(userProfiles.userId, userId)),
-  ])
-
-  const workspace = createdWorkspaceRows[0]
-
-  if (!workspace) {
-    throw new AppError({
-      code: "WORKSPACE_CREATE_FAILED",
-      message: "Workspace could not be created. Please try again.",
-      status: 500,
-    })
-  }
+  const workspace = await createOwnedWorkspace(userId, input, {
+    completeOnboarding: true,
+  })
 
   return {
-    workspace: {
-      ...workspace,
-      role: "owner" as const,
-    },
+    workspace,
     nextPath: `/${workspace.slug}/reports`,
   }
 }

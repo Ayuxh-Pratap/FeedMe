@@ -76,8 +76,17 @@ import { cn } from "@/lib/utils"
 import { ApiClientError, deleteJson, getJson, postJson } from "@/lib/api-client"
 
 type WorkspaceShellProps = {
+  availableWorkspaces: WorkspaceSwitcherOption[]
   children: ReactNode
   workspace: MockWorkspace
+}
+
+type WorkspaceSwitcherOption = {
+  id: string
+  name: string
+  slug: string
+  logoUrl: string | null
+  role: "owner" | "admin" | "developer" | "designer" | "reporter" | "viewer"
 }
 
 type NavItem = {
@@ -200,21 +209,27 @@ function IconButton({
   )
 }
 
-function WorkspaceSwitcher({ workspace }: { workspace: MockWorkspace }) {
+function WorkspaceSwitcher({
+  availableWorkspaces,
+  workspace,
+}: {
+  availableWorkspaces: WorkspaceSwitcherOption[]
+  workspace: MockWorkspace
+}) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [isSwitchDialogOpen, setIsSwitchDialogOpen] = useState(false)
   const [isDomainsDialogOpen, setIsDomainsDialogOpen] = useState(false)
   const switchCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const otherWorkspaceOptions = [
-    { name: "Ayush's Workspace", slug: "ayush-workspace" },
-    { name: "Client QA Lab", slug: "client-qa-lab" },
-  ].filter((item) => item.slug !== workspace.slug)
-  const workspaceOptions = [
-    { name: workspace.name, slug: workspace.slug, current: true },
-    ...otherWorkspaceOptions.map((item) => ({ ...item, current: false })),
-  ]
+  const workspaceOptions =
+    availableWorkspaces.length > 0
+      ? availableWorkspaces.map((item) => ({
+          name: item.name,
+          slug: item.slug,
+          current: item.slug === workspace.slug,
+        }))
+      : [{ name: workspace.name, slug: workspace.slug, current: true }]
 
   async function handleLogout() {
     await postJson<{ nextPath: string }>("/api/auth/logout")
@@ -384,6 +399,7 @@ function WorkspaceSwitcher({ workspace }: { workspace: MockWorkspace }) {
       <SwitchWorkspaceDialog
         open={isSwitchDialogOpen}
         onOpenChange={setIsSwitchDialogOpen}
+        availableWorkspaces={availableWorkspaces}
         workspace={workspace}
       />
       <DomainsDialog
@@ -427,14 +443,25 @@ function WorkspaceMenuDisabledItem({ children }: { children: ReactNode }) {
 }
 
 function SwitchWorkspaceDialog({
+  availableWorkspaces,
   onOpenChange,
   open,
   workspace,
 }: {
+  availableWorkspaces: WorkspaceSwitcherOption[]
   onOpenChange: (open: boolean) => void
   open: boolean
   workspace: MockWorkspace
 }) {
+  const workspaceOptions =
+    availableWorkspaces.length > 0
+      ? availableWorkspaces.map((item) => ({
+          name: item.name,
+          slug: item.slug,
+          current: item.slug === workspace.slug,
+        }))
+      : [{ name: workspace.name, slug: workspace.slug, current: true }]
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -461,21 +488,30 @@ function SwitchWorkspaceDialog({
         </div>
 
         <div className="space-y-3 px-5 py-5">
-          <Link
-            href={`/${workspace.slug}/reports`}
-            onClick={() => onOpenChange(false)}
-            className="flex h-10 cursor-pointer items-center gap-3 rounded-lg border border-border-subtle bg-fill-translucent px-3 text-heading-5 text-foreground shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:shadow-button-hover active:scale-[var(--press-scale)]"
-          >
-            <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-            <Check className="size-4 text-text-secondary" />
-          </Link>
+          <div className="space-y-2">
+            {workspaceOptions.map((item) => (
+              <Link
+                key={item.slug}
+                href={`/${item.slug}/reports`}
+                onClick={() => onOpenChange(false)}
+                className="flex h-10 cursor-pointer items-center gap-3 rounded-lg border border-border-subtle bg-fill-translucent px-3 text-heading-5 text-foreground shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:shadow-button-hover active:scale-[var(--press-scale)]"
+              >
+                <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                {item.current ? (
+                  <Check className="size-4 text-text-secondary" />
+                ) : null}
+              </Link>
+            ))}
+          </div>
 
-          <p className="py-5 text-center text-body-2 text-text-body">
-            No other workspaces available
-          </p>
+          {workspaceOptions.length === 1 ? (
+            <p className="py-4 text-center text-body-2 text-text-body">
+              No other workspaces available yet.
+            </p>
+          ) : null}
 
           <Link
-            href="/welcome"
+            href="/workspaces/new"
             onClick={() => onOpenChange(false)}
             className="relative isolate flex h-10 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
           >
@@ -849,10 +885,19 @@ function SidebarInviteButton({ workspace }: { workspace: MockWorkspace }) {
   )
 }
 
-function WorkspaceSidebar({ workspace }: { workspace: MockWorkspace }) {
+function WorkspaceSidebar({
+  availableWorkspaces,
+  workspace,
+}: {
+  availableWorkspaces: WorkspaceSwitcherOption[]
+  workspace: MockWorkspace
+}) {
   return (
     <aside className="hidden h-screen w-sidebar shrink-0 flex-col bg-card p-2.5 lg:flex">
-      <WorkspaceSwitcher workspace={workspace} />
+      <WorkspaceSwitcher
+        availableWorkspaces={availableWorkspaces}
+        workspace={workspace}
+      />
       <SidebarNav workspaceSlug={workspace.slug} />
 
       <div className="mt-auto space-y-2">
@@ -863,7 +908,13 @@ function WorkspaceSidebar({ workspace }: { workspace: MockWorkspace }) {
   )
 }
 
-function MobileNavSheet({ workspace }: { workspace: MockWorkspace }) {
+function MobileNavSheet({
+  availableWorkspaces,
+  workspace,
+}: {
+  availableWorkspaces: WorkspaceSwitcherOption[]
+  workspace: MockWorkspace
+}) {
   return (
     <Sheet>
       <SheetTrigger asChild>
@@ -879,7 +930,10 @@ function MobileNavSheet({ workspace }: { workspace: MockWorkspace }) {
         <SheetTitle className="sr-only">Workspace navigation</SheetTitle>
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
-            <WorkspaceSwitcher workspace={workspace} />
+            <WorkspaceSwitcher
+              availableWorkspaces={availableWorkspaces}
+              workspace={workspace}
+            />
           </div>
           <SheetClose asChild>
             <button
@@ -989,11 +1043,13 @@ function ReportViewToggle({ workspaceSlug }: { workspaceSlug: string }) {
 }
 
 function WorkspaceTopbar({
+  availableWorkspaces,
   isRightRailOpen,
   isRightRailEnabled,
   onToggleRightRail,
   workspace,
 }: {
+  availableWorkspaces: WorkspaceSwitcherOption[]
   isRightRailOpen: boolean
   isRightRailEnabled: boolean
   onToggleRightRail: () => void
@@ -1039,7 +1095,10 @@ function WorkspaceTopbar({
 
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border-hairline bg-fill-translucent px-3 lg:hidden">
         <div className="flex min-w-0 items-center gap-2">
-          <MobileNavSheet workspace={workspace} />
+          <MobileNavSheet
+            availableWorkspaces={availableWorkspaces}
+            workspace={workspace}
+          />
           <span className="min-w-0 truncate text-heading-5 text-foreground">
             {workspace.name}
           </span>
@@ -1402,6 +1461,41 @@ function ReportEvidenceTabs({
   )
 }
 
+function RightRailSkeletonBlock({
+  className,
+  rounded = "rounded-md",
+}: {
+  className?: string
+  rounded?: string
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "block animate-pulse bg-fill-translucent",
+        "shadow-[inset_0_1px_0_color-mix(in_srgb,var(--foreground)_5%,transparent)]",
+        rounded,
+        className
+      )}
+    />
+  )
+}
+
+function RightRailMetaSkeleton({
+  labelWidth,
+  valueWidth,
+}: {
+  labelWidth: string
+  valueWidth: string
+}) {
+  return (
+    <div className="rounded-lg border border-border-hairline bg-fill-translucent px-2.5 py-2">
+      <RightRailSkeletonBlock className={cn("h-2.5", labelWidth)} />
+      <RightRailSkeletonBlock className={cn("mt-2 h-3", valueWidth)} />
+    </div>
+  )
+}
+
 function EmptyReportRail({ className }: { className?: string }) {
   return (
     <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
@@ -1414,6 +1508,80 @@ function EmptyReportRail({ className }: { className?: string }) {
           Report metadata, screenshots, selected element, and developer prompt
           will appear here.
         </p>
+      </section>
+    </div>
+  )
+}
+
+function ReportInspectorRailSkeleton({ className }: { className?: string }) {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Loading report details"
+      className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}
+    >
+      <section className="border-b border-border-hairline px-4 py-4">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <RightRailSkeletonBlock className="h-5 w-14" />
+          <RightRailSkeletonBlock className="h-5 w-20" />
+        </div>
+        <RightRailSkeletonBlock className="mt-3 h-4 w-full" />
+        <RightRailSkeletonBlock className="mt-2 h-4 w-4/5" />
+        <div className="mt-3 space-y-2">
+          <RightRailSkeletonBlock className="h-3 w-full" />
+          <RightRailSkeletonBlock className="h-3 w-11/12" />
+          <RightRailSkeletonBlock className="h-3 w-2/3" />
+        </div>
+      </section>
+
+      <section className="border-b border-border-hairline px-4 py-3">
+        <RightRailSkeletonBlock className="h-2.5 w-8" />
+        <div className="relative mt-2 grid grid-cols-2 rounded-lg border border-border-hairline bg-background p-1">
+          <RightRailSkeletonBlock
+            className="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] shadow-button-hover"
+          />
+          <RightRailSkeletonBlock className="relative z-10 mx-auto h-7 w-10" />
+          <RightRailSkeletonBlock className="relative z-10 mx-auto h-7 w-14" />
+        </div>
+        <div className="relative mt-3 aspect-[16/10] overflow-hidden rounded-lg border border-border-hairline bg-fill-translucent">
+          <div className="absolute inset-0 [background:linear-gradient(145deg,var(--surface-raised),var(--surface-shell))]" />
+          <RightRailSkeletonBlock className="absolute left-3 right-3 top-3 h-4 bg-background/70" />
+          <RightRailSkeletonBlock className="absolute left-3 top-10 h-9 w-24 bg-fill-subtle" />
+          <RightRailSkeletonBlock className="absolute bottom-4 left-3 right-3 h-9 bg-background/70" />
+          <RightRailSkeletonBlock className="absolute bottom-2 right-2 size-7 bg-surface-raised shadow-button-hover" />
+        </div>
+        <RightRailSkeletonBlock className="mt-3 h-8 w-full bg-surface-raised shadow-button-hover" />
+      </section>
+
+      <section className="grid grid-cols-2 gap-2 border-b border-border-hairline px-4 py-3">
+        <RightRailMetaSkeleton labelWidth="w-8" valueWidth="w-12" />
+        <RightRailMetaSkeleton labelWidth="w-14" valueWidth="w-5" />
+        <RightRailMetaSkeleton labelWidth="w-9" valueWidth="w-16" />
+        <RightRailMetaSkeleton labelWidth="w-12" valueWidth="w-14" />
+      </section>
+
+      <section className="border-b border-border-hairline px-4 py-3">
+        <div className="flex items-center gap-2">
+          <RightRailSkeletonBlock className="size-4" rounded="rounded" />
+          <RightRailSkeletonBlock className="h-3.5 w-28" />
+        </div>
+        <div className="mt-2 rounded-lg border border-border-hairline bg-background p-2.5">
+          <RightRailSkeletonBlock className="h-2.5 w-full" />
+          <RightRailSkeletonBlock className="mt-2 h-2.5 w-4/5" />
+        </div>
+      </section>
+
+      <section className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <RightRailSkeletonBlock className="size-4" rounded="rounded" />
+          <RightRailSkeletonBlock className="h-3.5 w-28" />
+        </div>
+        <div className="mt-2 rounded-lg border border-border-hairline bg-background p-2.5">
+          <RightRailSkeletonBlock className="h-2.5 w-full" />
+          <RightRailSkeletonBlock className="mt-2 h-2.5 w-11/12" />
+          <RightRailSkeletonBlock className="mt-2 h-2.5 w-5/6" />
+          <RightRailSkeletonBlock className="mt-2 h-2.5 w-3/5" />
+        </div>
       </section>
     </div>
   )
@@ -1540,7 +1708,7 @@ function ReportsContextRail({
   }, [reportsEndpoint, useRealReports, workspace.slug])
 
   if (useRealReports && isLoading) {
-    return <EmptyReportRail className={className} />
+    return <ReportInspectorRailSkeleton className={className} />
   }
 
   if (useRealReports && errorMessage) {
@@ -1578,6 +1746,48 @@ function TeamMemberRolePill({ role }: { role: WorkspaceTeamMember["role"] }) {
     <span className="inline-flex h-5 items-center rounded-md border border-border-hairline bg-fill-translucent px-1.5 text-caption font-medium text-text-secondary">
       {getWorkspaceMemberRoleLabel(role)}
     </span>
+  )
+}
+
+function TeamMemberRailSkeleton({ className }: { className?: string }) {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Loading teammate details"
+      className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}
+    >
+      <section className="border-b border-border-hairline px-5 py-6 text-center">
+        <RightRailSkeletonBlock
+          className="mx-auto size-14 border border-border-hairline shadow-button-secondary"
+          rounded="rounded-full"
+        />
+        <RightRailSkeletonBlock className="mx-auto mt-3 h-4 w-32" />
+        <RightRailSkeletonBlock className="mx-auto mt-2 h-3 w-40" />
+        <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+          <RightRailSkeletonBlock className="h-5 w-16" />
+          <RightRailSkeletonBlock className="h-5 w-14" />
+        </div>
+      </section>
+
+      <section className="grid grid-cols-2 gap-2 border-b border-border-hairline px-4 py-3">
+        <RightRailMetaSkeleton labelWidth="w-12" valueWidth="w-5" />
+        <RightRailMetaSkeleton labelWidth="w-11" valueWidth="w-5" />
+        <RightRailMetaSkeleton labelWidth="w-8" valueWidth="w-16" />
+        <RightRailMetaSkeleton labelWidth="w-10" valueWidth="w-14" />
+      </section>
+
+      <section className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <RightRailSkeletonBlock className="size-4" rounded="rounded" />
+          <RightRailSkeletonBlock className="h-3.5 w-28" />
+        </div>
+        <div className="mt-2 rounded-lg border border-border-hairline bg-background p-2.5">
+          <RightRailSkeletonBlock className="h-2.5 w-full" />
+          <RightRailSkeletonBlock className="mt-2 h-2.5 w-5/6" />
+          <RightRailSkeletonBlock className="mt-2 h-2.5 w-2/3" />
+        </div>
+      </section>
+    </div>
   )
 }
 
@@ -1681,19 +1891,7 @@ function TeamContextRail({
   }, [membersEndpoint])
 
   if (isLoading) {
-    return (
-      <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
-        <section className="border-b border-border-hairline px-4 py-4">
-          <div className="flex size-9 items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary">
-            <UsersRound className="size-4" />
-          </div>
-          <h2 className="mt-3 text-heading-5 text-foreground">Loading team</h2>
-          <p className="mt-1 text-body-3 text-text-body">
-            Member details are being loaded for this workspace.
-          </p>
-        </section>
-      </div>
-    )
+    return <TeamMemberRailSkeleton className={className} />
   }
 
   if (errorMessage) {
@@ -1763,6 +1961,17 @@ function MobileRightRailSheet({ workspace }: { workspace: MockWorkspace }) {
   )
 }
 
+function getWorkspaceReportCount(workspace: MockWorkspace) {
+  if (typeof workspace.reportCount === "number") {
+    return workspace.reportCount
+  }
+
+  const reportsStat = workspace.stats.find((stat) => stat.label === "Reports")
+  const count = Number(reportsStat?.value ?? 0)
+
+  return Number.isFinite(count) ? count : 0
+}
+
 function WorkspaceRightRail({
   isOpen,
   workspace,
@@ -1785,21 +1994,32 @@ function WorkspaceRightRail({
   )
 }
 
-export function WorkspaceShell({ children, workspace }: WorkspaceShellProps) {
+export function WorkspaceShell({
+  availableWorkspaces,
+  children,
+  workspace,
+}: WorkspaceShellProps) {
   const [isRightRailOpen, setIsRightRailOpen] = useState(true)
   const pathname = usePathname()
   const reportsPath = `/${workspace.slug}/reports`
+  const isReportsIndexRoute = pathname === reportsPath
   const isReportDetailRoute = pathname.startsWith(`${reportsPath}/`)
-  const isRightRailEnabled = !isReportDetailRoute
+  const shouldDisableReportsRail =
+    isReportsIndexRoute && getWorkspaceReportCount(workspace) === 0
+  const isRightRailEnabled = !isReportDetailRoute && !shouldDisableReportsRail
   const shouldShowRightRail = isRightRailEnabled && isRightRailOpen
 
   return (
     <main className="flex h-screen overflow-hidden bg-card text-foreground">
-      <WorkspaceSidebar workspace={workspace} />
+      <WorkspaceSidebar
+        availableWorkspaces={availableWorkspaces}
+        workspace={workspace}
+      />
 
       <section className="min-w-0 flex-1 p-2 lg:pl-0">
         <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border-hairline bg-background shadow-card">
           <WorkspaceTopbar
+            availableWorkspaces={availableWorkspaces}
             isRightRailOpen={isRightRailOpen}
             isRightRailEnabled={isRightRailEnabled}
             onToggleRightRail={() => setIsRightRailOpen((value) => !value)}

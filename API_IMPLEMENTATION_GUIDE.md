@@ -720,6 +720,57 @@ Newly submitted reports appear in the Reports page, report right rail, report de
 My Work remains mock-backed until assignment/report ownership is connected.
 ```
 
+### Slice 6.5: Additional Workspace Creation
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Keep /welcome dedicated to first-run onboarding.
+Let already-onboarded users create more workspaces from the dashboard without being bounced back by onboarding redirects.
+Replace fake workspace switcher options with real active workspace memberships.
+```
+
+Routes:
+
+```txt
+GET  /api/workspaces
+POST /api/workspaces
+/workspaces/new
+```
+
+Server and UI files:
+
+```txt
+src/server/workspaces/service.ts
+src/server/workspaces/validation.ts
+src/server/onboarding/service.ts
+src/server/onboarding/validation.ts
+src/app/api/workspaces/route.ts
+src/app/(auth)/workspaces/new/page.tsx
+src/components/feedme/dashboard/new-workspace-form.tsx
+src/app/[workspaceSlug]/layout.tsx
+src/components/feedme/dashboard/workspace-shell.tsx
+```
+
+Rules:
+
+```txt
+/welcome creates only the first workspace
+completed users who visit /welcome redirect to their default workspace
+additional workspace creation uses /workspaces/new
+additional workspace creation requires an authenticated, fully-onboarded user
+workspace creation always creates workspace, owner membership, and first active domain together
+POST /api/workspaces returns nextPath: /:workspaceSlug/reports
+GET /api/workspaces returns the user's active workspace memberships
+workspace switcher must render real memberships, not mock workspace names
+```
+
 ## API Contract For The First Flow
 
 ### Signup

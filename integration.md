@@ -36,7 +36,19 @@ Avoid splitting the mental model between `organization` and `workspace` for MVP.
 
 ## Workspace Creation Flow
 
-The first user becomes the workspace owner.
+Workspace creation has two entry points:
+
+```txt
+/welcome
+-> first-run onboarding only
+-> creates the user's first workspace
+
+/workspaces/new
+-> dashboard flow for already-onboarded users
+-> creates an additional workspace
+```
+
+The creator of any workspace becomes that workspace owner.
 
 ```txt
 1. User lands on FeedMe.
@@ -52,6 +64,29 @@ The first user becomes the workspace owner.
 5. User is asked to add the first domain.
 6. User enters the workspace dashboard.
 ```
+
+After onboarding is complete, `/welcome` must not be reused for additional workspaces. Completed users who open `/welcome` should be redirected back to their default workspace. The workspace switcher should send "Create new workspace" to `/workspaces/new`.
+
+### Additional Workspace Flow
+
+Already-onboarded users can create another workspace from the dashboard workspace switcher.
+
+```txt
+1. User opens the workspace switcher.
+2. User selects Create new workspace.
+3. User lands on /workspaces/new.
+4. User enters:
+   - workspace name
+   - first capture domain
+5. Backend creates:
+   - workspace
+   - owner membership for the creator
+   - first active workspace domain
+6. User lands on /:newWorkspaceSlug/reports.
+7. Workspace switcher lists all active workspace memberships.
+```
+
+This flow must not modify the user's onboarding state, except that it requires onboarding to already be complete.
 
 ### Domain Step During Welcome
 

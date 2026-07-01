@@ -219,6 +219,8 @@ Dashboard responsiveness has only two shell modes. At `1024px` and above, use th
 
 Preserve strong separation of concerns. Navigation belongs in the sidebar, global actions belong in the top bar, primary page content belongs in the main workspace, and contextual metadata belongs in the right rail.
 
+Right rail loading states should reserve the same geometry as the final contextual panel. Use token-driven skeleton blocks on the final section structure instead of short loading messages, so reports, team member details, domain health, and future inspectors resolve without layout jumps.
+
 Avoid information overload. Reports, teams, domains, inbox, and operations should use dedicated views instead of cramming every metric into one page. Prefer progressive disclosure: overview first, detail after selection.
 
 Onboarding uses a split composition: form on the left, contextual product preview on the right. The left side should have generous negative space and a narrow form column. The right side may show a feedback widget, next-step list, captured report preview, or member collaboration preview.

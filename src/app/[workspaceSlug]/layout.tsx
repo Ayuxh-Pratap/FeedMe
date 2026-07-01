@@ -6,7 +6,10 @@ import { getCurrentSession } from "@/server/auth/current-user"
 import { getWorkspaceMemberCount } from "@/server/members/service"
 import { getOnboardingStateForUser } from "@/server/onboarding/service"
 import { getWorkspaceReportCount } from "@/server/reports/service"
-import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
+import {
+  getWorkspaceForUserBySlug,
+  listWorkspacesForUser,
+} from "@/server/workspaces/service"
 
 function initialsFromName(name: string) {
   return name
@@ -50,7 +53,8 @@ export default async function WorkspaceLayout({
     notFound()
   }
 
-  const [memberCount, reportCount] = await Promise.all([
+  const [availableWorkspaces, memberCount, reportCount] = await Promise.all([
+    listWorkspacesForUser(currentSession.user.id),
     getWorkspaceMemberCount(workspaceAccess.id),
     getWorkspaceReportCount(workspaceAccess.id),
   ])
@@ -60,6 +64,7 @@ export default async function WorkspaceLayout({
   const workspace = {
     slug: workspaceAccess.slug,
     name: workspaceAccess.name,
+    reportCount,
     user: {
       displayName,
       title,
@@ -77,5 +82,9 @@ export default async function WorkspaceLayout({
     },
   }
 
-  return <WorkspaceShell workspace={workspace}>{children}</WorkspaceShell>
+  return (
+    <WorkspaceShell availableWorkspaces={availableWorkspaces} workspace={workspace}>
+      {children}
+    </WorkspaceShell>
+  )
 }

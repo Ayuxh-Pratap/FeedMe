@@ -179,7 +179,8 @@ The right rail is not a generic profile panel. It should change purpose by route
 
 ```txt
 /reports
--> list route: default to the first report, or show selection guidance if there is no report
+-> list route with reports: default to the first report
+-> list route with zero reports: do not render the right rail; the main empty state owns the starting point
 -> selected report: severity, status, screenshots, assignee, browser/device, domain, selected element, prompt preview, open action
 -> detail route: right rail is logically disabled and not rendered; the main canvas owns the full report
 
@@ -297,6 +298,8 @@ developer prompt preview
 Open report action
 ```
 
+While report data is loading, the Reports right rail should reserve the final selected-report inspector layout with a premium skeleton. Match the final badge row, title/summary block, evidence tabs, screenshot frame, open action, metadata grid, selected element block, and developer prompt block so there is no visible jump when the first report resolves.
+
 Opening a report leads to `/[workspaceSlug]/reports/[reportId]`. The detail route should give the main canvas to the report itself: screenshot evidence, full feedback, selected element data, metadata, and the full developer prompt. Avoid adding another internal right-side report panel on the detail page. The workspace shell should not render the right rail or right-rail toggle on report detail routes. Detail screenshot cards use the same expanded evidence viewer pattern as the rail: an image-first dialog with floating controls over a top gradient.
 
 ## My Work Direction
@@ -401,6 +404,8 @@ selected member
 -> reports submitted
 -> recent activity
 ```
+
+While teammate data is loading, the Team right rail should reserve the final selected-member layout with a premium skeleton. Match the final avatar, name/email stack, role pills, metrics grid, and context block so there is no visible jump when the data resolves.
 
 Invite flow should remain simple at this stage:
 

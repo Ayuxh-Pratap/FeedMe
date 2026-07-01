@@ -1,5 +1,10 @@
 import { z } from "zod"
 
+export {
+  createWorkspaceInputSchema as workspaceOnboardingInputSchema,
+  type CreateWorkspaceInput as WorkspaceOnboardingInput,
+} from "@/server/workspaces/validation"
+
 function optionalText(max: number) {
   return z
     .string()
@@ -19,14 +24,4 @@ export const profileInputSchema = z.object({
   title: optionalText(120),
 })
 
-export const workspaceOnboardingInputSchema = z.object({
-  workspaceName: z
-    .string()
-    .trim()
-    .min(1, "Enter a workspace name.")
-    .max(120, "Workspace name is too long."),
-  firstDomain: z.string().trim().min(1, "Enter the first domain."),
-})
-
 export type ProfileInput = z.infer<typeof profileInputSchema>
-export type WorkspaceOnboardingInput = z.infer<typeof workspaceOnboardingInputSchema>

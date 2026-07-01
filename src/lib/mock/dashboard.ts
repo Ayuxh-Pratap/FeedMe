@@ -8,6 +8,7 @@ export type WorkspaceStat = {
 export type MockWorkspace = {
   slug: string
   name: string
+  reportCount?: number
   user: {
     displayName: string
     title: string
@@ -46,6 +47,7 @@ export const reservedWorkspaceSlugs = [
   "settings",
   "team",
   "welcome",
+  "workspaces",
 ]
 
 function titleFromSlug(slug: string) {
@@ -63,6 +65,7 @@ export function getMockWorkspace(slug: string): MockWorkspace {
   return {
     slug,
     name: titleFromSlug(slug),
+    reportCount: 8,
     user: {
       displayName: "Almostdev",
       title: "Product Lead",
