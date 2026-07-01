@@ -67,6 +67,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
+import { postJson } from "@/lib/api-client"
 
 type WorkspaceShellProps = {
   children: ReactNode
@@ -169,6 +170,7 @@ function IconButton({
 }
 
 function WorkspaceSwitcher({ workspace }: { workspace: MockWorkspace }) {
+  const router = useRouter()
   const [open, setOpen] = useState(false)
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [isSwitchDialogOpen, setIsSwitchDialogOpen] = useState(false)
@@ -182,6 +184,12 @@ function WorkspaceSwitcher({ workspace }: { workspace: MockWorkspace }) {
     { name: workspace.name, slug: workspace.slug, current: true },
     ...otherWorkspaceOptions.map((item) => ({ ...item, current: false })),
   ]
+
+  async function handleLogout() {
+    await postJson<{ nextPath: string }>("/api/auth/logout")
+    router.push("/login")
+    router.refresh()
+  }
 
   function clearSwitchCloseTimer() {
     if (switchCloseTimerRef.current) {
@@ -330,10 +338,14 @@ function WorkspaceSwitcher({ workspace }: { workspace: MockWorkspace }) {
               ) : null}
             </div>
 
-            <WorkspaceMenuLink href="/login">
+            <WorkspaceMenuAction
+              onClick={() => {
+                void handleLogout()
+              }}
+            >
               <LogOut className="size-4 text-text-muted" />
               Log out
-            </WorkspaceMenuLink>
+            </WorkspaceMenuAction>
           </div>
         ) : null}
       </div>
@@ -349,24 +361,6 @@ function WorkspaceSwitcher({ workspace }: { workspace: MockWorkspace }) {
         workspace={workspace}
       />
     </>
-  )
-}
-
-function WorkspaceMenuLink({
-  children,
-  href,
-}: {
-  children: ReactNode
-  href: string
-}) {
-  return (
-    <Link
-      href={href}
-      role="menuitem"
-      className="flex h-8 cursor-pointer items-center gap-2 rounded-md px-2.5 text-heading-5 text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
-    >
-      {children}
-    </Link>
   )
 }
 

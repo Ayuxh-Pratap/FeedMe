@@ -1,16 +1,25 @@
+import { redirect } from "next/navigation"
+
 import {
   AuthContentFrame,
   AuthDivider,
   AuthHeading,
-  FeedMeField,
   SocialAuthButtons,
 } from "@/components/feedme/auth-ui"
-import {
-  RouteTransitionButton,
-  RouteTransitionLink,
-} from "@/components/feedme/experience/route-transition-button"
+import { SignupForm } from "@/components/feedme/auth/signup-form"
+import { RouteTransitionLink } from "@/components/feedme/experience/route-transition-button"
+import { getCurrentSession } from "@/server/auth/current-user"
+import { getOnboardingStateForUser } from "@/server/onboarding/service"
 
-export default function SignupPage() {
+export default async function SignupPage() {
+  const currentSession = await getCurrentSession()
+
+  if (currentSession) {
+    const onboarding = await getOnboardingStateForUser(currentSession.user.id)
+
+    redirect(onboarding.nextPath)
+  }
+
   return (
     <AuthContentFrame>
       <section className="w-full">
@@ -25,36 +34,9 @@ export default function SignupPage() {
           <AuthDivider label="or create account with email" />
         </div>
 
-        <form className="space-y-5">
-          <FeedMeField
-            id="signup-email"
-            label="Email"
-            type="email"
-            placeholder="your@workemail.com"
-            autoComplete="email"
-            required
-          />
-          <FeedMeField
-            id="signup-password"
-            label="Password"
-            type="password"
-            placeholder="********"
-            autoComplete="new-password"
-            required
-          />
-          <FeedMeField
-            id="confirm-password"
-            label="Confirm password"
-            type="password"
-            placeholder="********"
-            autoComplete="new-password"
-            required
-          />
+        <SignupForm />
 
-          <RouteTransitionButton href="/welcome" className="w-full">
-            Create account
-          </RouteTransitionButton>
-
+        <div>
           <p className="pt-3 text-center text-body-3 font-medium text-muted-foreground">
             Already have an account?{" "}
             <RouteTransitionLink
@@ -64,7 +46,7 @@ export default function SignupPage() {
               Log in
             </RouteTransitionLink>
           </p>
-        </form>
+        </div>
       </section>
     </AuthContentFrame>
   )

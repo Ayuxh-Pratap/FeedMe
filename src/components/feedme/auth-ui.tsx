@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import type { ComponentProps, ReactNode } from "react"
 import { ArrowRight, Check, Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -78,15 +78,11 @@ export function AuthButton({
   )
 }
 
-type FeedMeFieldProps = {
+type FeedMeFieldProps = Omit<ComponentProps<typeof Input>, "id" | "className"> & {
   id: string
   label?: string
-  type?: string
-  placeholder?: string
-  defaultValue?: string
   helper?: string
-  autoComplete?: string
-  required?: boolean
+  inputClassName?: string
 }
 
 export function FeedMeField({
@@ -98,6 +94,8 @@ export function FeedMeField({
   helper,
   autoComplete,
   required,
+  inputClassName,
+  ...props
 }: FeedMeFieldProps) {
   return (
     <div className="space-y-2">
@@ -115,8 +113,10 @@ export function FeedMeField({
         required={required}
         className={cn(
           "h-10 rounded-md border-border-hairline bg-input px-3 text-body-3 text-foreground",
-          "placeholder:text-muted-foreground focus-visible:border-border-strong focus-visible:ring-0"
+          "placeholder:text-muted-foreground focus-visible:border-border-strong focus-visible:ring-0",
+          inputClassName
         )}
+        {...props}
       />
       {helper ? <p className="text-body-3 text-muted-foreground">{helper}</p> : null}
     </div>

@@ -1,0 +1,32 @@
+import { getCurrentSession } from "@/server/auth/current-user"
+import { errorResponse, ok } from "@/server/http/responses"
+import { getOnboardingStateForUser } from "@/server/onboarding/service"
+
+export const runtime = "nodejs"
+
+export async function GET() {
+  try {
+    const currentSession = await getCurrentSession()
+
+    if (!currentSession) {
+      return ok({
+        authenticated: false,
+        user: null,
+        profile: null,
+        nextPath: "/login",
+      })
+    }
+
+    const onboarding = await getOnboardingStateForUser(currentSession.user.id)
+
+    return ok({
+      authenticated: true,
+      user: currentSession.user,
+      profile: currentSession.profile,
+      onboarding,
+      nextPath: onboarding.nextPath,
+    })
+  } catch (error) {
+    return errorResponse(error)
+  }
+}

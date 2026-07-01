@@ -1,18 +1,25 @@
-import Link from "next/link"
+import { redirect } from "next/navigation"
 
 import {
   AuthContentFrame,
   AuthDivider,
   AuthHeading,
-  FeedMeField,
   SocialAuthButtons,
 } from "@/components/feedme/auth-ui"
-import {
-  RouteTransitionButton,
-  RouteTransitionLink,
-} from "@/components/feedme/experience/route-transition-button"
+import { LoginForm } from "@/components/feedme/auth/login-form"
+import { RouteTransitionLink } from "@/components/feedme/experience/route-transition-button"
+import { getCurrentSession } from "@/server/auth/current-user"
+import { getOnboardingStateForUser } from "@/server/onboarding/service"
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const currentSession = await getCurrentSession()
+
+  if (currentSession) {
+    const onboarding = await getOnboardingStateForUser(currentSession.user.id)
+
+    redirect(onboarding.nextPath)
+  }
+
   return (
     <AuthContentFrame>
       <section className="w-full">
@@ -24,41 +31,9 @@ export default function LoginPage() {
           <AuthDivider label="or log in with email" />
         </div>
 
-        <form className="space-y-5">
-          <FeedMeField
-            id="email"
-            label="Email"
-            type="email"
-            placeholder="your@workemail.com"
-            autoComplete="email"
-            required
-          />
+        <LoginForm />
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label htmlFor="password" className="text-body-3 font-medium text-foreground">
-                Password
-              </label>
-              <Link
-                href="/login"
-                className="text-body-3 text-muted-foreground hover:text-text-secondary"
-              >
-                Forgot password?
-              </Link>
-            </div>
-            <FeedMeField
-              id="password"
-              type="password"
-              placeholder="********"
-              autoComplete="current-password"
-              required
-            />
-          </div>
-
-          <RouteTransitionButton href="/welcome" className="w-full">
-            Log in
-          </RouteTransitionButton>
-
+        <div>
           <p className="pt-3 text-center text-body-3 font-medium text-muted-foreground">
             New to FeedMe?{" "}
             <RouteTransitionLink
@@ -68,7 +43,7 @@ export default function LoginPage() {
               Create account
             </RouteTransitionLink>
           </p>
-        </form>
+        </div>
       </section>
     </AuthContentFrame>
   )
