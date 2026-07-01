@@ -197,11 +197,24 @@ export function InviteMemberDialog({
 
         <div className="space-y-4 px-5 py-5">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border-subtle bg-background px-3">
+            <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border-subtle bg-background py-1 pl-3 pr-1">
               <Ticket className="size-4 shrink-0 text-text-muted" />
               <span className="min-w-0 flex-1 truncate text-body-3 text-text-secondary">
                 {invite ? invite.code : "No invite link created yet"}
               </span>
+              <button
+                type="button"
+                aria-label={copiedValue === "code" ? "Invite code copied" : "Copy invite code"}
+                disabled={!invite}
+                onClick={() => copyInvite("code", invite?.code)}
+                className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-secondary shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {copiedValue === "code" ? (
+                  <Check className="size-3.5" />
+                ) : (
+                  <Copy className="size-3.5" />
+                )}
+              </button>
             </div>
 
             <RolePicker
@@ -228,36 +241,8 @@ export function InviteMemberDialog({
             </p>
           ) : null}
 
-          <div className="flex flex-col gap-2 pt-3 sm:flex-row sm:items-center sm:justify-between">
-            <button
-              type="button"
-              onClick={() => {
-                void createInvite()
-              }}
-              disabled={isCreating}
-              className="inline-flex h-8 cursor-pointer items-center justify-center rounded-lg border border-border-hairline bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-border-hairline disabled:hover:brightness-100"
-            >
-              {isCreating
-                ? "Creating..."
-                : invite
-                  ? `Create another ${selectedRoleLabel} link`
-                  : `Create ${selectedRoleLabel} link`}
-            </button>
-
+          <div className="flex flex-col gap-2 pt-3 sm:flex-row sm:items-center sm:justify-end">
             <div className="flex flex-col gap-2 sm:ml-auto sm:flex-row">
-              <button
-                type="button"
-                disabled={!invite}
-                onClick={() => copyInvite("code", invite?.code)}
-                className="inline-flex h-8 cursor-pointer items-center justify-center gap-2 rounded-lg border border-border-hairline bg-fill-translucent px-3 text-heading-5 text-text-secondary shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                {copiedValue === "code" ? (
-                  <Check className="size-4" />
-                ) : (
-                  <Copy className="size-4" />
-                )}
-                {copiedValue === "code" ? "Copied code" : "Copy code"}
-              </button>
               <button
                 type="button"
                 disabled={!invite}
@@ -270,6 +255,16 @@ export function InviteMemberDialog({
                   <Link2 className="size-4" />
                 )}
                 {copiedValue === "link" ? "Copied link" : "Copy invite link"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void createInvite()
+                }}
+                disabled={isCreating}
+                className="inline-flex h-8 cursor-pointer items-center justify-center rounded-lg border border-border-hairline bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-border-hairline disabled:hover:brightness-100"
+              >
+                {isCreating ? "Creating..." : invite ? "Regenerate" : "Generate link"}
               </button>
             </div>
           </div>
