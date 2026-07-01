@@ -1,12 +1,16 @@
+import { randomUUID } from "node:crypto"
+
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm"
 
 import { db } from "@/db"
 import {
   reportAssets,
   reportComments,
+  reportStatusEvents,
   reports,
   userProfiles,
   users,
+  workspaceDomains,
   type ReportSelectedElement,
   type ReportViewport,
 } from "@/db/schema"
@@ -16,9 +20,11 @@ import {
   type WorkspaceReport,
 } from "@/lib/reports"
 import { getInitialsFromName, getNameFromEmail } from "@/lib/team-members"
-import { NotFoundError } from "@/server/http/errors"
+import { NotFoundError, ValidationError } from "@/server/http/errors"
 import { assertCanWorkspaceRole } from "@/server/policies/can"
+import { normalizeDomainHost } from "@/server/workspaces/domains"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
+import type { CreateReportInput } from "@/server/reports/validation"
 
 type ReportRow = {
   id: string
@@ -95,6 +101,18 @@ async function requireWorkspaceForReportsRead(userId: string, workspaceSlug: str
   }
 
   assertCanWorkspaceRole(workspace.role, "report:read")
+
+  return workspace
+}
+
+async function requireWorkspaceForReportCreate(userId: string, workspaceSlug: string) {
+  const workspace = await getWorkspaceForUserBySlug(userId, workspaceSlug)
+
+  if (!workspace) {
+    throw new NotFoundError("Workspace not found.")
+  }
+
+  assertCanWorkspaceRole(workspace.role, "report:create")
 
   return workspace
 }
@@ -200,6 +218,76 @@ function buildDeveloperPrompt(row: ReportRow) {
   )
 }
 
+function truncateText(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value
+  }
+
+  return `${value.slice(0, maxLength - 1).trimEnd()}...`
+}
+
+function buildReportTitle(input: CreateReportInput, domain: string) {
+  if (input.title) {
+    return input.title
+  }
+
+  const elementLabel =
+    input.selectedElement.text || input.selectedElement.selector || input.selectedElement.tag
+
+  return truncateText(`Feedback on ${elementLabel} at ${domain}`, 180)
+}
+
+function buildReportSummary(input: CreateReportInput) {
+  return input.summary ?? truncateText(input.feedbackMessage, 500)
+}
+
+function buildCreateDeveloperPrompt(input: CreateReportInput, domain: string) {
+  if (input.developerPrompt) {
+    return input.developerPrompt
+  }
+
+  return [
+    `Review feedback captured on ${domain}.`,
+    `URL: ${input.url}`,
+    `Selected element: ${input.selectedElement.selector}`,
+    input.selectedElement.text ? `Element text: ${input.selectedElement.text}` : null,
+    `Feedback: ${input.feedbackMessage}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
+function parseCapturedAt(input: CreateReportInput) {
+  if (!input.capturedAt) {
+    return new Date()
+  }
+
+  return new Date(input.capturedAt)
+}
+
+async function assertWorkspaceAllowsReportDomain(
+  workspaceId: string,
+  domain: string
+) {
+  const [workspaceDomain] = await db
+    .select({ id: workspaceDomains.id })
+    .from(workspaceDomains)
+    .where(
+      and(
+        eq(workspaceDomains.workspaceId, workspaceId),
+        eq(workspaceDomains.host, domain),
+        inArray(workspaceDomains.status, ["active", "verified"])
+      )
+    )
+    .limit(1)
+
+  if (!workspaceDomain) {
+    throw new ValidationError("This URL is not allowed for the workspace.", {
+      url: ["Add this exact domain to the workspace before submitting reports."],
+    })
+  }
+}
+
 function serializeReport(
   row: ReportRow,
   peopleById: Map<string, ReportPerson>,
@@ -301,6 +389,69 @@ export async function listWorkspaceReports(userId: string, workspaceSlug: string
     workspace,
     reports: rows.map((row) => serializeReport(row, peopleById)),
   }
+}
+
+export async function createWorkspaceReport(
+  userId: string,
+  workspaceSlug: string,
+  input: CreateReportInput
+) {
+  const workspace = await requireWorkspaceForReportCreate(userId, workspaceSlug)
+  const domain = normalizeDomainHost(input.url, "url")
+
+  await assertWorkspaceAllowsReportDomain(workspace.id, domain)
+
+  const reportId = randomUUID()
+  const capturedAt = parseCapturedAt(input)
+  const reportInsert = db.insert(reports).values({
+    id: reportId,
+    workspaceId: workspace.id,
+    title: buildReportTitle(input, domain),
+    summary: buildReportSummary(input),
+    severity: input.severity,
+    status: "submitted",
+    type: input.type,
+    domain,
+    url: input.url,
+    browser: input.browser,
+    device: input.device,
+    viewport: input.viewport,
+    selectedElement: input.selectedElement,
+    feedbackMessage: input.feedbackMessage,
+    developerPrompt: buildCreateDeveloperPrompt(input, domain),
+    reporterUserId: userId,
+    capturedAt,
+  })
+  const statusEventInsert = db.insert(reportStatusEvents).values({
+    workspaceId: workspace.id,
+    reportId,
+    actorUserId: userId,
+    fromStatus: null,
+    toStatus: "submitted",
+    note: "Report submitted.",
+  })
+
+  if (input.assets.length > 0) {
+    await db.batch([
+      reportInsert,
+      statusEventInsert,
+      db.insert(reportAssets).values(
+        input.assets.map((asset) => ({
+          workspaceId: workspace.id,
+          reportId,
+          type: asset.type,
+          url: asset.url,
+          mimeType: asset.mimeType,
+          width: asset.width,
+          height: asset.height,
+        }))
+      ),
+    ])
+  } else {
+    await db.batch([reportInsert, statusEventInsert])
+  }
+
+  return getWorkspaceReport(userId, workspaceSlug, reportId)
 }
 
 export async function getWorkspaceReport(

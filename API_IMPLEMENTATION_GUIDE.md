@@ -303,6 +303,7 @@ workspace domains
 invites
 team members
 reports
+report submission foundation
 extension bootstrap
 extension report submission
 ```
@@ -646,6 +647,77 @@ The report detail page now reads a DB report by workspace and report id.
 The report right rail fetches the real report list while on /:workspaceSlug/reports.
 The My Work route still uses mock reports until the assignment/report ownership slice.
 The workspace shell report count uses the real non-archived report count.
+```
+
+### Slice 6: Report Submission Foundation
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Authenticated workspace members can create a report against an allowed workspace domain.
+This gives the DB-backed Reports page real data before the extension is rebuilt.
+The future extension submission endpoint should reuse this service instead of creating a second report-write path.
+```
+
+Routes:
+
+```txt
+POST /api/workspaces/:workspaceSlug/reports
+```
+
+Server files:
+
+```txt
+src/server/reports/service.ts
+src/server/reports/validation.ts
+src/app/api/workspaces/[workspaceSlug]/reports/route.ts
+src/server/policies/can.ts
+```
+
+Rules:
+
+```txt
+require signed-in user
+resolve workspaceSlug to workspaceId through active membership
+allow report creation through report:create
+all active workspace members can submit reports in MVP, including viewer
+derive exact host from submitted url
+block submission unless the exact host is active or verified in workspace_domains
+create report with status submitted
+create the initial report_status_events row in the same db.batch call
+optionally create up to 3 report asset metadata rows with the report
+report writes must include workspaceId on reports, assets, and status events
+```
+
+Input shape:
+
+```txt
+url
+title optional
+summary optional
+severity optional: low | medium | high | urgent
+type optional: bug | ux | design | copy | performance | accessibility
+browser optional
+device optional
+viewport: width, height, devicePixelRatio, scrollX, scrollY
+selectedElement: tag, selector, text optional, attributes optional, boundingBox optional
+feedbackMessage
+developerPrompt optional
+capturedAt optional
+assets optional: page_screenshot | element_screenshot | annotated_screenshot
+```
+
+Dashboard wiring:
+
+```txt
+Newly submitted reports appear in the Reports page, report right rail, report detail page, and workspace report count.
+My Work remains mock-backed until assignment/report ownership is connected.
 ```
 
 ## API Contract For The First Flow

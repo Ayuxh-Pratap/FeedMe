@@ -39,7 +39,7 @@ const rolePermissions: Record<WorkspaceRole, ReadonlySet<PolicyAction>> = {
     "report:read",
     "report:comment",
   ]),
-  viewer: new Set(["workspace:read", "report:read"]),
+  viewer: new Set(["workspace:read", "report:create", "report:read"]),
 }
 
 export function canWorkspaceRole(role: WorkspaceRole, action: PolicyAction) {
