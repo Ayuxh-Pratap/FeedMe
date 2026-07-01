@@ -7,6 +7,7 @@ Read this with:
 - `PROJECT_VISION.md` for product direction.
 - `DASHBOARD.md` for dashboard routes and layout behavior.
 - `design.md` for visual tokens and UI language.
+- `API_IMPLEMENTATION_GUIDE.md` for modular backend/API coding rules.
 
 ## Core Principle
 
