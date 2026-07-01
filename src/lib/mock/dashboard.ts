@@ -1,3 +1,5 @@
+import type { WorkspaceReport } from "@/lib/reports"
+
 export type WorkspaceStat = {
   label: string
   value: string
@@ -19,43 +21,7 @@ export type MockWorkspace = {
   }
 }
 
-export type MockReportSummary = {
-  id: string
-  title: string
-  summary: string
-  severity: "low" | "medium" | "high" | "urgent"
-  status: "open" | "triaged" | "in_progress" | "resolved"
-  type: "bug" | "ux" | "copy" | "performance" | "accessibility"
-  domain: string
-  url: string
-  browser: string
-  device: string
-  viewport: string
-  capturedAt: string
-  capturedAgo: string
-  screenshots: {
-    id: string
-    label: string
-    kind: "page" | "annotated"
-  }[]
-  selectedElement: {
-    tag: string
-    selector: string
-    text?: string
-    attributes: Record<string, string>
-  }
-  feedback: {
-    message: string
-    reporterName: string
-    reporterEmail: string
-  }
-  developerPrompt: string
-  assignee?: {
-    name: string
-    initials: string
-  }
-  commentsCount: number
-}
+export type MockReportSummary = WorkspaceReport
 
 export type MockTeamMember = {
   id: string
@@ -122,7 +88,7 @@ const mockReports: MockReportSummary[] = [
     summary:
       "The primary checkout button sits over the coupon input around tablet width, making the coupon field feel broken.",
     severity: "urgent",
-    status: "open",
+    status: "submitted",
     type: "bug",
     domain: "checkout.feedme.test",
     url: "https://checkout.feedme.test/cart",
@@ -164,7 +130,7 @@ const mockReports: MockReportSummary[] = [
     summary:
       "The starter plan says unlimited reports but the comparison table below mentions monthly limits.",
     severity: "medium",
-    status: "triaged",
+    status: "reviewing",
     type: "copy",
     domain: "feedme.test",
     url: "https://feedme.test/pricing",
@@ -245,7 +211,7 @@ const mockReports: MockReportSummary[] = [
     summary:
       "The upload target appears inactive because the contrast is too low beside the workspace name field.",
     severity: "low",
-    status: "open",
+    status: "submitted",
     type: "ux",
     domain: "app.feedme.test",
     url: "https://app.feedme.test/welcome",
@@ -282,7 +248,7 @@ const mockReports: MockReportSummary[] = [
     summary:
       "The active Reports item on mobile looks too close to the inactive items when the sheet is opened.",
     severity: "medium",
-    status: "triaged",
+    status: "reviewing",
     type: "ux",
     domain: "m.feedme.test",
     url: "https://m.feedme.test/menu",
@@ -324,7 +290,7 @@ const mockReports: MockReportSummary[] = [
     summary:
       "The destructive dialog makes the cancel and delete choices feel too visually similar.",
     severity: "high",
-    status: "open",
+    status: "submitted",
     type: "ux",
     domain: "app.feedme.test",
     url: "https://app.feedme.test/bump/projects",
@@ -406,7 +372,7 @@ const mockReports: MockReportSummary[] = [
     summary:
       "The invite form shows the role menu too subtly, so admins miss which access level is being sent.",
     severity: "medium",
-    status: "triaged",
+    status: "reviewing",
     type: "accessibility",
     domain: "app.feedme.test",
     url: "https://app.feedme.test/bump/team",

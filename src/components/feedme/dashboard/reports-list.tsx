@@ -10,16 +10,20 @@ import {
   Globe2,
 } from "lucide-react"
 
-import type { MockReportSummary } from "@/lib/mock/dashboard"
 import {
   reportPriorityCodeBaseClass,
   reportPriorityCodePillStyle,
   reportSeverityPriorityLabels,
 } from "@/components/feedme/dashboard/report-badge-styles"
+import {
+  isInProgressWorkspaceReport,
+  isOpenWorkspaceReport,
+  type WorkspaceReport,
+} from "@/lib/reports"
 import { cn } from "@/lib/utils"
 
 type ReportsListProps = {
-  reports: MockReportSummary[]
+  reports: WorkspaceReport[]
   workspaceSlug: string
 }
 
@@ -33,14 +37,14 @@ type SearchParamsLike = {
 const filters: {
   label: string
   value: StatusFilter
-  match: (report: MockReportSummary) => boolean
+  match: (report: WorkspaceReport) => boolean
 }[] = [
   { label: "All", value: "all", match: () => true },
-  { label: "Open", value: "open", match: (report) => report.status === "open" },
+  { label: "Open", value: "open", match: isOpenWorkspaceReport },
   {
     label: "In progress",
     value: "in_progress",
-    match: (report) => report.status === "in_progress",
+    match: isInProgressWorkspaceReport,
   },
   { label: "Closed", value: "resolved", match: (report) => report.status === "resolved" },
 ]
@@ -55,7 +59,7 @@ const sortOptions: {
   { label: "Most comments", value: "comments" },
 ]
 
-const severitySortRank: Record<MockReportSummary["severity"], number> = {
+const severitySortRank: Record<WorkspaceReport["severity"], number> = {
   urgent: 0,
   high: 1,
   medium: 2,
@@ -86,13 +90,13 @@ function getReportSort(searchParams: SearchParamsLike): ReportSort {
   return "newest"
 }
 
-function getCapturedTimestamp(report: MockReportSummary) {
-  const timestamp = Date.parse(report.capturedAt)
+function getCapturedTimestamp(report: WorkspaceReport) {
+  const timestamp = Date.parse(report.capturedAtIso ?? report.capturedAt)
 
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
-function sortReports(reports: MockReportSummary[], sort: ReportSort) {
+function sortReports(reports: WorkspaceReport[], sort: ReportSort) {
   return [...reports].sort((first, second) => {
     const newestFirst =
       getCapturedTimestamp(second) - getCapturedTimestamp(first)
@@ -140,7 +144,7 @@ function ReportPriorityCode({
   )
 }
 
-function ReportEvidenceImage({ report }: { report: MockReportSummary }) {
+function ReportEvidenceImage({ report }: { report: WorkspaceReport }) {
   return (
     <div className="absolute inset-0 overflow-hidden bg-surface-card">
       {report.id === "checkout-cta-overlap" ? (
@@ -214,7 +218,7 @@ function ReportsHeader({
   activeFilter: StatusFilter
   onFilterChange: (filter: StatusFilter) => void
   onSortChange: (sort: ReportSort) => void
-  reports: MockReportSummary[]
+  reports: WorkspaceReport[]
   sort: ReportSort
 }) {
   return (
@@ -341,7 +345,7 @@ export function ReportCard({
 }: {
   isSelected: boolean
   onSelect: () => void
-  report: MockReportSummary
+  report: WorkspaceReport
   workspaceSlug: string
 }) {
   return (
@@ -418,7 +422,7 @@ export function ReportTableRow({
 }: {
   isSelected: boolean
   onSelect: () => void
-  report: MockReportSummary
+  report: WorkspaceReport
   workspaceSlug: string
 }) {
   function handleKeyDown(event: KeyboardEvent<HTMLTableRowElement>) {

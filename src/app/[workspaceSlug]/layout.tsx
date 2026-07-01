@@ -5,6 +5,7 @@ import { WorkspaceShell } from "@/components/feedme/dashboard/workspace-shell"
 import { getCurrentSession } from "@/server/auth/current-user"
 import { getWorkspaceMemberCount } from "@/server/members/service"
 import { getOnboardingStateForUser } from "@/server/onboarding/service"
+import { getWorkspaceReportCount } from "@/server/reports/service"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
 
 function initialsFromName(name: string) {
@@ -49,7 +50,10 @@ export default async function WorkspaceLayout({
     notFound()
   }
 
-  const memberCount = await getWorkspaceMemberCount(workspaceAccess.id)
+  const [memberCount, reportCount] = await Promise.all([
+    getWorkspaceMemberCount(workspaceAccess.id),
+    getWorkspaceReportCount(workspaceAccess.id),
+  ])
   const displayName =
     currentSession.profile?.displayName ?? currentSession.user.email.split("@")[0]
   const title = currentSession.profile?.title ?? workspaceAccess.role
@@ -62,7 +66,7 @@ export default async function WorkspaceLayout({
       initials: initialsFromName(displayName) || "U",
     },
     stats: [
-      { label: "Reports", value: "0" },
+      { label: "Reports", value: reportCount.toString() },
       { label: "Domains", value: "1" },
       { label: "Members", value: memberCount.toString() },
     ],

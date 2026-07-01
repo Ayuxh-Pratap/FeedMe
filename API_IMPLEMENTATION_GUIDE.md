@@ -580,6 +580,74 @@ The workspace shell member count uses the real membership count.
 Assigned and submitted report counts are already wired to the reports table and will populate once the report slice lands.
 ```
 
+### Slice 5: Reports Read Model
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Workspace reports can be read from the database through tenant-scoped APIs.
+The Reports page, report detail page, report right rail, and workspace report count now use real report rows.
+Report creation, assignment, comments, and status mutations are intentionally deferred to later slices.
+```
+
+Routes:
+
+```txt
+GET /api/workspaces/:workspaceSlug/reports
+GET /api/workspaces/:workspaceSlug/reports/:reportId
+```
+
+Server files:
+
+```txt
+src/server/reports/service.ts
+src/server/reports/validation.ts
+src/app/api/workspaces/[workspaceSlug]/reports/route.ts
+src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/route.ts
+src/lib/reports.ts
+```
+
+UI files:
+
+```txt
+src/app/[workspaceSlug]/reports/page.tsx
+src/app/[workspaceSlug]/reports/[reportId]/page.tsx
+src/app/[workspaceSlug]/layout.tsx
+src/components/feedme/dashboard/reports-list.tsx
+src/components/feedme/dashboard/report-detail.tsx
+src/components/feedme/dashboard/workspace-shell.tsx
+src/components/feedme/dashboard/report-badge-styles.ts
+```
+
+Rules:
+
+```txt
+require signed-in user
+resolve workspaceSlug to workspaceId through active membership
+allow report reads through report:read
+scope every report query by workspaceId
+exclude archived reports from the main read model
+validate reportId as UUID for detail reads
+return DB lifecycle statuses directly: submitted, reviewing, assigned, in_progress, ready_for_review, resolved, and related terminal states
+include reporter, assignee, commentsCount, selected element, viewport, feedback, and screenshot metadata in the UI view model
+```
+
+Dashboard wiring:
+
+```txt
+The Reports page now renders DB reports or the empty state.
+The report detail page now reads a DB report by workspace and report id.
+The report right rail fetches the real report list while on /:workspaceSlug/reports.
+The My Work route still uses mock reports until the assignment/report ownership slice.
+The workspace shell report count uses the real non-archived report count.
+```
+
 ## API Contract For The First Flow
 
 ### Signup

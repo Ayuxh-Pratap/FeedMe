@@ -42,9 +42,12 @@ import {
 
 import {
   getMockReports,
-  type MockReportSummary,
   type MockWorkspace,
 } from "@/lib/mock/dashboard"
+import {
+  getReportStatusLabel,
+  type WorkspaceReport,
+} from "@/lib/reports"
 import {
   getWorkspaceMemberRoleLabel,
   type WorkspaceTeamMember,
@@ -84,7 +87,7 @@ type NavItem = {
   planned?: boolean
 }
 
-type ReportScreenshot = MockReportSummary["screenshots"][number]
+type ReportScreenshot = WorkspaceReport["screenshots"][number]
 
 type WorkspaceDomain = {
   id: string
@@ -105,6 +108,10 @@ type WorkspaceDomainMutationResponse = {
 
 type WorkspaceMembersResponse = {
   members: WorkspaceTeamMember[]
+}
+
+type WorkspaceReportsResponse = {
+  reports: WorkspaceReport[]
 }
 
 const navItems: NavItem[] = [
@@ -1066,7 +1073,13 @@ function WorkspaceRightRailContent({
   const isTeamRoute = pathname === teamPath
 
   if (isReportInspectorRoute) {
-    return <ReportsContextRail className={className} workspace={workspace} />
+    return (
+      <ReportsContextRail
+        className={className}
+        useRealReports={pathname === reportsPath}
+        workspace={workspace}
+      />
+    )
   }
 
   if (isTeamRoute) {
@@ -1148,7 +1161,7 @@ function ReportRailMeta({
 }
 
 function getScreenshotDimensions(
-  report: MockReportSummary,
+  report: WorkspaceReport,
   kind: ReportScreenshot["kind"]
 ) {
   const match = report.viewport.match(/(\d+)\s*x\s*(\d+)/i)
@@ -1222,7 +1235,7 @@ function ReportEvidenceViewer({
   onActiveIndexChange: (index: number) => void
   onOpenChange: (open: boolean) => void
   open: boolean
-  report: MockReportSummary
+  report: WorkspaceReport
 }) {
   const total = report.screenshots.length
   const selectedIndex = Math.min(Math.max(activeIndex, 0), total - 1)
@@ -1310,7 +1323,7 @@ function ReportEvidenceTabs({
   report,
   workspaceSlug,
 }: {
-  report: MockReportSummary
+  report: WorkspaceReport
   workspaceSlug: string
 }) {
   const [activeView, setActiveView] = useState<"page" | "element">("page")
@@ -1412,7 +1425,7 @@ function ReportInspectorRail({
   workspaceSlug,
 }: {
   className?: string
-  report: MockReportSummary
+  report: WorkspaceReport
   workspaceSlug: string
 }) {
   return (
@@ -1423,7 +1436,7 @@ function ReportInspectorRail({
             {report.severity}
           </ReportRailBadge>
           <ReportRailBadge className={reportStatusPillStyles[report.status]}>
-            {labelFromToken(report.status)}
+            {getReportStatusLabel(report.status)}
           </ReportRailBadge>
         </div>
         <h2 className="mt-3 line-clamp-2 text-heading-5 text-foreground">
@@ -1475,13 +1488,75 @@ function ReportInspectorRail({
 
 function ReportsContextRail({
   className,
+  useRealReports,
   workspace,
 }: {
   className?: string
+  useRealReports: boolean
   workspace: MockWorkspace
 }) {
   const searchParams = useSearchParams()
-  const reports = getMockReports(workspace.slug)
+  const [realReports, setRealReports] = useState<WorkspaceReport[]>([])
+  const [isLoading, setIsLoading] = useState(useRealReports)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const reportsEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/reports`
+  const reports = useRealReports ? realReports : getMockReports(workspace.slug)
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadReports() {
+      setIsLoading(true)
+      setErrorMessage(null)
+
+      try {
+        const result = await getJson<WorkspaceReportsResponse>(reportsEndpoint)
+
+        if (isMounted) {
+          setRealReports(result.reports)
+        }
+      } catch (error) {
+        if (isMounted) {
+          setErrorMessage(
+            error instanceof ApiClientError
+              ? error.message
+              : "Unable to load reports. Please try again."
+          )
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    if (useRealReports) {
+      void loadReports()
+    }
+
+    return () => {
+      isMounted = false
+    }
+  }, [reportsEndpoint, useRealReports, workspace.slug])
+
+  if (useRealReports && isLoading) {
+    return <EmptyReportRail className={className} />
+  }
+
+  if (useRealReports && errorMessage) {
+    return (
+      <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
+        <section className="border-b border-border-hairline px-4 py-4">
+          <div className="flex size-9 items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary">
+            <ClipboardList className="size-4" />
+          </div>
+          <h2 className="mt-3 text-heading-5 text-foreground">Reports unavailable</h2>
+          <p className="mt-1 text-body-3 text-text-body">{errorMessage}</p>
+        </section>
+      </div>
+    )
+  }
+
   const selectedReportId = searchParams.get("report") ?? reports[0]?.id
   const selectedReport = reports.find((report) => report.id === selectedReportId)
 

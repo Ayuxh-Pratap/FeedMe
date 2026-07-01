@@ -16,7 +16,6 @@ import {
   X,
 } from "lucide-react"
 
-import type { MockReportSummary } from "@/lib/mock/dashboard"
 import {
   Dialog,
   DialogContent,
@@ -29,18 +28,18 @@ import {
   reportSeverityPillStyles,
   reportStatusPillStyles,
 } from "@/components/feedme/dashboard/report-badge-styles"
+import {
+  getReportStatusLabel,
+  type WorkspaceReport,
+} from "@/lib/reports"
 import { cn } from "@/lib/utils"
 
 type ReportDetailProps = {
-  report: MockReportSummary
+  report: WorkspaceReport
   workspaceSlug: string
 }
 
-type ReportScreenshot = MockReportSummary["screenshots"][number]
-
-function labelFromToken(token: string) {
-  return token.replace(/_/g, " ")
-}
+type ReportScreenshot = WorkspaceReport["screenshots"][number]
 
 function DetailBadge({
   children,
@@ -62,7 +61,7 @@ function DetailBadge({
 }
 
 function getScreenshotDimensions(
-  report: MockReportSummary,
+  report: WorkspaceReport,
   kind: ReportScreenshot["kind"]
 ) {
   const match = report.viewport.match(/(\d+)\s*x\s*(\d+)/i)
@@ -113,7 +112,7 @@ function ScreenshotViewer({
   onActiveIndexChange: (index: number) => void
   onOpenChange: (open: boolean) => void
   open: boolean
-  report: MockReportSummary
+  report: WorkspaceReport
 }) {
   const total = report.screenshots.length
   const selectedIndex = Math.min(Math.max(activeIndex, 0), total - 1)
@@ -197,7 +196,7 @@ function ScreenshotViewer({
   )
 }
 
-function ScreenshotPanel({ report }: { report: MockReportSummary }) {
+function ScreenshotPanel({ report }: { report: WorkspaceReport }) {
   const [viewerIndex, setViewerIndex] = useState(0)
   const [isViewerOpen, setIsViewerOpen] = useState(false)
 
@@ -282,7 +281,7 @@ export function ReportDetail({ report, workspaceSlug }: ReportDetailProps) {
               {report.severity}
             </DetailBadge>
             <DetailBadge className={reportStatusPillStyles[report.status]}>
-              {labelFromToken(report.status)}
+              {getReportStatusLabel(report.status)}
             </DetailBadge>
             <DetailBadge className={reportNeutralPillStyle}>
               {report.type}
