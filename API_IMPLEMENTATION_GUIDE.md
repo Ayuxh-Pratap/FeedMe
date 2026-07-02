@@ -889,6 +889,15 @@ manual Chrome instructions: download, unzip, open chrome://extensions, enable
 Developer mode, and Load unpacked. After extension changes, refresh the package
 by creating the WXT Chrome ZIP and copying it into public/downloads with that
 stable filename before deployment.
+
+Production dashboard/API origin:
+https://meefeed.vercel.app
+
+The production extension ZIP must be built with WXT_API_BASE_URL pointing at
+that origin, and its manifest must include the dashboard origin in
+host_permissions so the extension service worker can call FeedMe APIs.
+Production dashboard cookies use SameSite=None; Secure so the extension can
+reuse the signed-in dashboard session from chrome-extension:// requests.
 ```
 
 ### Slice 8: Assignment And My Work

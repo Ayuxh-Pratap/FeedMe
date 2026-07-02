@@ -526,10 +526,21 @@ Both surfaces should open the same install dialog:
 Operational packaging rule:
 
 ```txt
+production dashboard/API origin:
+https://meefeed.vercel.app
+
+extension/.env.production:
+WXT_API_BASE_URL=https://meefeed.vercel.app
+
 extension/.output/feedmeextension-*-chrome.zip
 -> copy/rename to main/public/downloads/feedme-extension.zip
 -> deploy dashboard so users download the current package
 ```
+
+The production extension manifest must include the dashboard origin in
+`host_permissions` for API requests. Production dashboard sessions must be
+issued with `SameSite=None; Secure` so the extension can call the API with the
+same signed-in browser session.
 
 Do not imply one-click installation until the extension is published through an
 official browser store or an enterprise policy-controlled distribution channel.

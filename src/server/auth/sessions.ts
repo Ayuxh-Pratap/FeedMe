@@ -10,6 +10,10 @@ export const SESSION_COOKIE_NAME = "feedme_session"
 
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000
 
+function getSessionCookieSameSite() {
+  return process.env.NODE_ENV === "production" ? "none" : "lax"
+}
+
 export function hashSessionToken(token: string) {
   return createHash("sha256").update(token).digest("hex")
 }
@@ -43,7 +47,7 @@ export async function setSessionCookie(token: string, expiresAt: Date) {
 
   cookieStore.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: getSessionCookieSameSite(),
     secure: process.env.NODE_ENV === "production",
     path: "/",
     expires: expiresAt,
@@ -55,7 +59,7 @@ export async function clearSessionCookie() {
 
   cookieStore.set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: getSessionCookieSameSite(),
     secure: process.env.NODE_ENV === "production",
     path: "/",
     expires: new Date(0),
