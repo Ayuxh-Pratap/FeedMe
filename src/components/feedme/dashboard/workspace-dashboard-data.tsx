@@ -52,6 +52,16 @@ function areArraysEqual(first: string[], second: string[]) {
   )
 }
 
+function areReportListsEqual(
+  first: WorkspaceReport[],
+  second: WorkspaceReport[]
+) {
+  return (
+    first.length === second.length &&
+    first.every((report, index) => report === second[index])
+  )
+}
+
 export function WorkspaceDashboardDataProvider({
   children,
   initialDashboardSearchQuery = "",
@@ -75,7 +85,9 @@ export function WorkspaceDashboardDataProvider({
   const registerReports = useCallback((input: RegisterReportsInput) => {
     setReportRailReady(true)
     setReportRailReports((currentReports) =>
-      currentReports === input.reports ? currentReports : input.reports
+      areReportListsEqual(currentReports, input.reports)
+        ? currentReports
+        : input.reports
     )
     setReportRailVisibleIds((currentIds) =>
       areArraysEqual(currentIds, input.visibleReportIds)

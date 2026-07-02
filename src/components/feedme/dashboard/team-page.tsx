@@ -1,7 +1,7 @@
 "use client"
 
 import { Plus } from "lucide-react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
@@ -10,6 +10,7 @@ import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspa
 import {
   matchesWorkspaceMemberSearch,
 } from "@/lib/dashboard-search"
+import { replaceUrlSearchParams } from "@/lib/dashboard-url"
 import {
   getWorkspaceMemberRoleLabel,
   type WorkspaceTeamMember,
@@ -157,7 +158,6 @@ export function TeamPage({
   workspaceSlug,
 }: TeamPageProps) {
   const pathname = usePathname()
-  const router = useRouter()
   const searchParams = useSearchParams()
   const initialFilter = getFilter(searchParams)
   const [activeFilter, setActiveFilter] = useState(initialFilter)
@@ -196,9 +196,8 @@ export function TeamPage({
     : filteredMembers[0]?.id
 
   const replaceSearchParams = useCallback((nextSearchParams: URLSearchParams) => {
-    const query = nextSearchParams.toString()
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
-  }, [pathname, router])
+    replaceUrlSearchParams(pathname, nextSearchParams)
+  }, [pathname])
 
   const getCurrentSearchParams = useCallback(() => {
     return new URLSearchParams(searchParams.toString())

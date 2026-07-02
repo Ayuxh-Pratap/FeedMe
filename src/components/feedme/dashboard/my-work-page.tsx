@@ -1,6 +1,6 @@
 "use client"
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
@@ -11,6 +11,7 @@ import {
 } from "@/components/feedme/dashboard/reports-list"
 import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
 import { ApiClientError, getJson } from "@/lib/api-client"
+import { replaceUrlSearchParams } from "@/lib/dashboard-url"
 import type {
   WorkspaceReport,
   WorkspaceReportsListResponse,
@@ -212,7 +213,6 @@ export function MyWorkPage({
   workspaceSlug,
 }: MyWorkPageProps) {
   const pathname = usePathname()
-  const router = useRouter()
   const searchParams = useSearchParams()
   const defaultScope = getDefaultScope(currentUserRole)
   const initialScope = getScope(searchParams, defaultScope)
@@ -225,9 +225,10 @@ export function MyWorkPage({
     setReportRailSelectedReportId,
   } = useWorkspaceDashboardData()
   const searchQuery = dashboardSearchQuery
-  const didMountRef = useRef(false)
+  const lastQueryKeyRef = useRef<string | null>(null)
   const isMountedRef = useRef(true)
   const requestSequenceRef = useRef(0)
+  const latestSearchParamsRef = useRef(searchParams)
   const [reportRows, setReportRows] = useState(reports)
   const [currentPageInfo, setCurrentPageInfo] = useState(pageInfo)
   const [isPending, setIsPending] = useState(false)
@@ -265,12 +266,15 @@ export function MyWorkPage({
       return
     }
 
-    const query = nextSearchParams.toString()
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
-  }, [pathname, router])
+    replaceUrlSearchParams(pathname, nextSearchParams)
+  }, [pathname])
 
   const getCurrentSearchParams = useCallback(() => {
     return new URLSearchParams(searchParams.toString())
+  }, [searchParams])
+
+  useEffect(() => {
+    latestSearchParamsRef.current = searchParams
   }, [searchParams])
 
   const loadReportsPage = useCallback(
@@ -309,7 +313,7 @@ export function MyWorkPage({
         )
 
         if (!shouldAppend) {
-          const requestedId = searchParams.get("report")
+          const requestedId = latestSearchParamsRef.current.get("report")
           const nextSelectedReportId = result.reports.some(
             (report) => report.id === requestedId
           )
@@ -340,7 +344,6 @@ export function MyWorkPage({
     [
       activeScope,
       searchQuery,
-      searchParams,
       setReportRailSelectedReportId,
       workspaceSlug,
     ]
@@ -381,6 +384,8 @@ export function MyWorkPage({
   }
 
   useEffect(() => {
+    isMountedRef.current = true
+
     return () => {
       isMountedRef.current = false
       requestSequenceRef.current += 1
@@ -388,13 +393,23 @@ export function MyWorkPage({
   }, [])
 
   useEffect(() => {
-    if (!didMountRef.current) {
-      didMountRef.current = true
+    const queryKey = `${activeScope} ${searchQuery}`
+
+    // First render records the query the server already rendered for (also
+    // covers Strict Mode's dev re-mount, which reuses this ref) so plain
+    // navigation never refetches. Only a genuine scope/search change reloads.
+    if (lastQueryKeyRef.current === null) {
+      lastQueryKeyRef.current = queryKey
       return
     }
 
+    if (queryKey === lastQueryKeyRef.current) {
+      return
+    }
+
+    lastQueryKeyRef.current = queryKey
     void loadReportsPage()
-  }, [loadReportsPage])
+  }, [activeScope, loadReportsPage, searchQuery])
 
   useEffect(() => {
     const nextSelectedReportId = effectiveSelectedReportId ?? null

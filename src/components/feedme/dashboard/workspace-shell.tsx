@@ -90,6 +90,7 @@ import {
   patchJson,
   postJson,
 } from "@/lib/api-client"
+import { replaceUrlSearchParams } from "@/lib/dashboard-url"
 
 type WorkspaceShellProps = {
   availableWorkspaces: WorkspaceSwitcherOption[]
@@ -1104,7 +1105,6 @@ function DashboardSearchInput({
   showIcon?: boolean
 }) {
   const pathname = usePathname()
-  const router = useRouter()
   const searchParams = useSearchParams()
   const { setDashboardSearchQuery } = useWorkspaceDashboardData()
   const urlSearchValue = searchParams.get("q") ?? ""
@@ -1155,14 +1155,11 @@ function DashboardSearchInput({
     nextSearchParams.delete("report")
     nextSearchParams.delete("member")
 
-    const query = nextSearchParams.toString()
     const nextPathname = latestPathnameRef.current
 
     committedSearchValueRef.current = normalizedValue
     setDashboardSearchQuery(normalizedValue)
-    router.replace(query ? `${nextPathname}?${query}` : nextPathname, {
-      scroll: false,
-    })
+    replaceUrlSearchParams(nextPathname, nextSearchParams)
   }
 
   function scheduleSearch(nextValue: string) {
@@ -1273,7 +1270,6 @@ function MobileSearchSheet({ workspace }: { workspace: MockWorkspace }) {
 
 function ReportViewToggle({ workspaceSlug }: { workspaceSlug: string }) {
   const pathname = usePathname()
-  const router = useRouter()
   const searchParams = useSearchParams()
   const reportsPath = `/${workspaceSlug}/reports`
   const myWorkPath = `/${workspaceSlug}/my-work`
@@ -1297,8 +1293,7 @@ function ReportViewToggle({ workspaceSlug }: { workspaceSlug: string }) {
       nextSearchParams.set("view", "grid")
     }
 
-    const query = nextSearchParams.toString()
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+    replaceUrlSearchParams(pathname, nextSearchParams)
   }
 
   return (

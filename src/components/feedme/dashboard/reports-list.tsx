@@ -2,7 +2,7 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import {
   useCallback,
   useEffect,
@@ -37,6 +37,7 @@ import {
 import { cn } from "@/lib/utils"
 import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
 import { ApiClientError, getJson } from "@/lib/api-client"
+import { replaceUrlSearchParams } from "@/lib/dashboard-url"
 
 type ReportsListProps = {
   pageInfo: WorkspaceReportsPageInfo
@@ -625,7 +626,6 @@ export function ReportsList({
   workspaceSlug,
 }: ReportsListProps) {
   const pathname = usePathname()
-  const router = useRouter()
   const searchParams = useSearchParams()
   const viewMode = getViewMode(searchParams)
   const initialStatusFilter = getStatusFilter(searchParams)
@@ -637,9 +637,10 @@ export function ReportsList({
     setReportRailSelectedReportId,
   } = useWorkspaceDashboardData()
   const searchQuery = dashboardSearchQuery
-  const didMountRef = useRef(false)
+  const lastQueryKeyRef = useRef<string | null>(null)
   const isMountedRef = useRef(true)
   const requestSequenceRef = useRef(0)
+  const latestSearchParamsRef = useRef(searchParams)
   const [reportRows, setReportRows] = useState(reports)
   const [currentPageInfo, setCurrentPageInfo] = useState(pageInfo)
   const [isPending, setIsPending] = useState(false)
@@ -677,12 +678,15 @@ export function ReportsList({
       return
     }
 
-    const query = nextSearchParams.toString()
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
-  }, [pathname, router])
+    replaceUrlSearchParams(pathname, nextSearchParams)
+  }, [pathname])
 
   const getCurrentSearchParams = useCallback(() => {
     return new URLSearchParams(searchParams.toString())
+  }, [searchParams])
+
+  useEffect(() => {
+    latestSearchParamsRef.current = searchParams
   }, [searchParams])
 
   function selectReport(reportId: string) {
@@ -731,7 +735,7 @@ export function ReportsList({
         )
 
         if (!shouldAppend) {
-          const requestedId = searchParams.get("report")
+          const requestedId = latestSearchParamsRef.current.get("report")
           const nextSelectedReportId = result.reports.some(
             (report) => report.id === requestedId
           )
@@ -761,7 +765,6 @@ export function ReportsList({
     },
     [
       searchQuery,
-      searchParams,
       setReportRailSelectedReportId,
       sort,
       statusFilter,
@@ -810,6 +813,8 @@ export function ReportsList({
   }
 
   useEffect(() => {
+    isMountedRef.current = true
+
     return () => {
       isMountedRef.current = false
       requestSequenceRef.current += 1
@@ -817,13 +822,23 @@ export function ReportsList({
   }, [])
 
   useEffect(() => {
-    if (!didMountRef.current) {
-      didMountRef.current = true
+    const queryKey = `${searchQuery} ${sort} ${statusFilter}`
+
+    // First render records the query the server already rendered for (also
+    // covers Strict Mode's dev re-mount, which reuses this ref) so plain
+    // navigation never refetches. Only a genuine query change reloads.
+    if (lastQueryKeyRef.current === null) {
+      lastQueryKeyRef.current = queryKey
       return
     }
 
+    if (queryKey === lastQueryKeyRef.current) {
+      return
+    }
+
+    lastQueryKeyRef.current = queryKey
     void loadReportsPage()
-  }, [loadReportsPage])
+  }, [loadReportsPage, searchQuery, sort, statusFilter])
 
   useEffect(() => {
     const nextSelectedReportId = effectiveSelectedReportId ?? null
