@@ -403,6 +403,19 @@ Chrome host permission: https://v2.bump.fm/*
 
 Each domain is enabled separately.
 
+Before opening Chrome's native permission prompt, FeedMe should show its own
+short explanation:
+
+```txt
+Allow FeedMe to show capture tools on this exact domain.
+FeedMe captures page context and screenshots only when you submit feedback.
+```
+
+Chrome may still phrase host access as the ability to read/change site data.
+That wording is browser-controlled and cannot be customized. FeedMe should keep
+the product promise precise: exact workspace domains only, no all-sites access,
+and no capture until the user submits a report.
+
 Popup domain state example:
 
 ```txt
@@ -447,6 +460,10 @@ backend domain check passes or cached allow state is valid
 9. Server validates membership and domain.
 10. Report appears in workspace dashboard.
 ```
+
+If screenshot capture is blocked by Chrome, the extension should still submit
+the textual feedback and selected element metadata, mark the screenshot as
+missing, and show a calm message that the report was saved without images.
 
 ## Report Data Shape
 
@@ -516,6 +533,7 @@ Invites
 
 Extension
 -> bootstrap current user/workspaces/domains
+   GET /api/extension/bootstrap
 -> check current tab domain for active workspace
 -> submit captured report
 

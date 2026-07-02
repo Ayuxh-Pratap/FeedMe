@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useState, type KeyboardEvent, type ReactNode } from "react"
@@ -167,6 +168,24 @@ function ReportAssigneeAvatar({ report }: { report: WorkspaceReport }) {
 }
 
 function ReportEvidenceImage({ report }: { report: WorkspaceReport }) {
+  const screenshot = report.screenshots.find((item) => item.url) ?? report.screenshots[0]
+
+  if (screenshot?.url) {
+    return (
+      <div className="absolute inset-0 overflow-hidden bg-surface-card">
+        <Image
+          src={screenshot.url}
+          alt={`${screenshot.label} screenshot evidence`}
+          fill
+          unoptimized
+          sizes="(min-width: 1280px) 25vw, (min-width: 768px) 50vw, 100vw"
+          className="object-cover"
+        />
+        <div className="absolute inset-0 bg-[radial-gradient(360px_170px_at_24%_72%,color-mix(in_srgb,var(--primary-soft)_14%,transparent),transparent_70%)]" />
+      </div>
+    )
+  }
+
   return (
     <div className="absolute inset-0 overflow-hidden bg-surface-card">
       {report.id === "checkout-cta-overlap" ? (

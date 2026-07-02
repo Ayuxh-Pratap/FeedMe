@@ -26,6 +26,8 @@ export type WorkspaceReportScreenshot = {
   label: string
   kind: "page" | "annotated"
   url?: string
+  width?: number | null
+  height?: number | null
 }
 
 export type WorkspaceReport = {

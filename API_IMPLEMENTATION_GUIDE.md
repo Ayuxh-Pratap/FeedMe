@@ -637,6 +637,7 @@ exclude archived reports from the main read model
 validate reportId as UUID for detail reads
 return DB lifecycle statuses directly: submitted, reviewing, assigned, in_progress, ready_for_review, resolved, and related terminal states
 include reporter, assignee, commentsCount, selected element, viewport, feedback, and screenshot metadata in the UI view model
+include report asset URLs and dimensions in list and detail read models so the reports page, grid cards, right rail, and detail page render real screenshots when available
 ```
 
 Dashboard wiring:
@@ -718,6 +719,7 @@ Dashboard wiring:
 ```txt
 Newly submitted reports appear in the Reports page, report right rail, report detail page, and workspace report count.
 My Work remains mock-backed until assignment/report ownership is connected.
+Report assets are saved as screenshot metadata and should be surfaced back through the read model for immediate dashboard evidence rendering.
 ```
 
 ### Slice 6.5: Additional Workspace Creation
@@ -769,6 +771,99 @@ workspace creation always creates workspace, owner membership, and first active 
 POST /api/workspaces returns nextPath: /:workspaceSlug/reports
 GET /api/workspaces returns the user's active workspace memberships
 workspace switcher must render real memberships, not mock workspace names
+```
+
+### Slice 7: Extension Bootstrap
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Give the browser extension one backend-owned source of truth for the signed-in user,
+workspace memberships, workspace domains, default active workspace, and capture permissions.
+This prepares the copied v1 extension for the new workspace/domain flow without rewriting capture UI in the same slice.
+```
+
+Route:
+
+```txt
+GET /api/extension/bootstrap
+```
+
+Server files:
+
+```txt
+src/server/extension/service.ts
+src/app/api/extension/bootstrap/route.ts
+```
+
+Extension files:
+
+```txt
+extension/src/services/bootstrapApi.ts
+extension/src/storage/extensionStorage.ts
+extension/src/popup/PopupApp.tsx
+extension/entrypoints/popup/style.css
+extension/entrypoints/content/index.tsx
+extension/src/content/ContentApp.tsx
+extension/entrypoints/background.ts
+extension/src/services/reportsApi.ts
+extension/src/services/reportSync.ts
+extension/src/shared/feedback.ts
+extension/wxt.config.ts
+```
+
+Response shape:
+
+```txt
+user
+activeWorkspaceSlug
+workspaces[]
+  id
+  name
+  slug
+  logoUrl
+  role
+  isDefault
+  permissions.canCreateReports
+  domains[]
+    id
+    host
+    status
+    captureEnabled
+    permissionPattern
+    verifiedAt
+```
+
+Rules:
+
+```txt
+require signed-in user
+return only active workspace memberships
+exclude archived workspaces
+include domains per workspace
+mark active and verified domains as captureEnabled
+return exact HTTPS host permission patterns for extension permission requests
+do not trust this payload for writes; report submission must validate membership and domain again
+```
+
+Extension note:
+
+```txt
+The popup now uses bootstrap data for signed-in user identity, active workspace selection,
+and per-domain permission state. The content script reads cached bootstrap state and hides the
+floating button unless the current host belongs to the active workspace. Report sync now posts
+through the background script to POST /api/workspaces/:workspaceSlug/reports.
+The copied extension is now self-contained for shared feedback types and no longer depends on
+the old @feedme/shared workspace package.
+The popup uses a two-step exact-domain permission flow so FeedMe explains capture access
+before Chrome shows its browser-controlled host permission wording.
+Screenshot capture failures fall back to saving the report without images.
 ```
 
 ## API Contract For The First Flow

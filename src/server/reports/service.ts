@@ -57,8 +57,11 @@ type ReportPerson = {
 
 type ReportAssetRow = {
   id: string
+  reportId: string
   type: "page_screenshot" | "element_screenshot" | "annotated_screenshot"
   url: string
+  width: number | null
+  height: number | null
 }
 
 function commentsCountSql() {
@@ -201,6 +204,8 @@ function getScreenshotsFromAssets(
         label: "Page",
         kind: "page",
         url: asset.url,
+        width: asset.width,
+        height: asset.height,
       }
     }
 
@@ -209,6 +214,8 @@ function getScreenshotsFromAssets(
       label: asset.type === "element_screenshot" ? "Element" : "Annotated",
       kind: "annotated",
       url: asset.url,
+      width: asset.width,
+      height: asset.height,
     }
   })
 }
@@ -343,8 +350,11 @@ async function getAssetsForReport(workspaceId: string, reportId: string) {
   return db
     .select({
       id: reportAssets.id,
+      reportId: reportAssets.reportId,
       type: reportAssets.type,
       url: reportAssets.url,
+      width: reportAssets.width,
+      height: reportAssets.height,
     })
     .from(reportAssets)
     .where(
@@ -354,6 +364,39 @@ async function getAssetsForReport(workspaceId: string, reportId: string) {
       )
     )
     .orderBy(asc(reportAssets.createdAt))
+}
+
+async function getAssetsByReportId(workspaceId: string, reportIds: string[]) {
+  const uniqueReportIds = Array.from(new Set(reportIds))
+
+  if (uniqueReportIds.length === 0) {
+    return new Map<string, ReportAssetRow[]>()
+  }
+
+  const rows = await db
+    .select({
+      id: reportAssets.id,
+      reportId: reportAssets.reportId,
+      type: reportAssets.type,
+      url: reportAssets.url,
+      width: reportAssets.width,
+      height: reportAssets.height,
+    })
+    .from(reportAssets)
+    .where(
+      and(
+        eq(reportAssets.workspaceId, workspaceId),
+        inArray(reportAssets.reportId, uniqueReportIds)
+      )
+    )
+    .orderBy(asc(reportAssets.createdAt))
+
+  return rows.reduce((assetsByReportId, row) => {
+    const assets = assetsByReportId.get(row.reportId) ?? []
+    assets.push(row)
+    assetsByReportId.set(row.reportId, assets)
+    return assetsByReportId
+  }, new Map<string, ReportAssetRow[]>())
 }
 
 export async function getWorkspaceReportCount(workspaceId: string) {
@@ -385,13 +428,18 @@ export async function listWorkspaceReports(userId: string, workspaceSlug: string
     )
     .orderBy(desc(reports.capturedAt))
 
-  const peopleById = await getPeopleById(
-    compactUserIds(rows.flatMap((row) => [row.reporterUserId, row.assigneeUserId]))
-  )
+  const [peopleById, assetsByReportId] = await Promise.all([
+    getPeopleById(
+      compactUserIds(rows.flatMap((row) => [row.reporterUserId, row.assigneeUserId]))
+    ),
+    getAssetsByReportId(workspace.id, rows.map((row) => row.id)),
+  ])
 
   return {
     workspace,
-    reports: rows.map((row) => serializeReport(row, peopleById)),
+    reports: rows.map((row) =>
+      serializeReport(row, peopleById, assetsByReportId.get(row.id) ?? [])
+    ),
   }
 }
 

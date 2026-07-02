@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import Link from "next/link"
 import { useState, type ReactNode } from "react"
 import {
@@ -62,13 +63,20 @@ function DetailBadge({
 
 function getScreenshotDimensions(
   report: WorkspaceReport,
-  kind: ReportScreenshot["kind"]
+  screenshot: ReportScreenshot
 ) {
+  if (screenshot.width && screenshot.height) {
+    return {
+      width: screenshot.width,
+      height: screenshot.height,
+    }
+  }
+
   const match = report.viewport.match(/(\d+)\s*x\s*(\d+)/i)
   const width = match ? Number(match[1]) : 1440
   const height = match ? Number(match[2]) : 900
 
-  if (kind === "page") {
+  if (screenshot.kind === "page") {
     return { width, height }
   }
 
@@ -85,6 +93,25 @@ function ScreenshotEvidence({
   className?: string
   screenshot: ReportScreenshot
 }) {
+  if (screenshot.url) {
+    return (
+      <div className={cn("relative overflow-hidden bg-surface-card", className)}>
+        <Image
+          src={screenshot.url}
+          alt={`${screenshot.label} screenshot evidence`}
+          fill
+          unoptimized
+          sizes="(min-width: 1024px) 50vw, 100vw"
+          className="object-contain"
+        />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-[linear-gradient(0deg,color-mix(in_srgb,var(--surface-divider)_78%,transparent),transparent)]" />
+        <p className="pointer-events-none absolute bottom-3 left-3 truncate text-caption text-text-secondary">
+          {screenshot.label}
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className={cn("relative overflow-hidden bg-surface-card", className)}>
       <div className="absolute inset-0 [background:linear-gradient(145deg,var(--surface-raised),var(--surface-shell))]" />
@@ -118,7 +145,7 @@ function ScreenshotViewer({
   const selectedIndex = Math.min(Math.max(activeIndex, 0), total - 1)
   const selectedScreenshot = report.screenshots[selectedIndex] ?? report.screenshots[0]
   const dimensions = selectedScreenshot
-    ? getScreenshotDimensions(report, selectedScreenshot.kind)
+    ? getScreenshotDimensions(report, selectedScreenshot)
     : { width: 0, height: 0 }
 
   function move(direction: -1 | 1) {
