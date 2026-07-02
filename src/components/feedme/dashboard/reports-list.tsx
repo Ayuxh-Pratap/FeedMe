@@ -2,8 +2,14 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { useState, type KeyboardEvent, type ReactNode } from "react"
+import { usePathname, useSearchParams } from "next/navigation"
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react"
 import {
   ArrowUpRight,
   Check,
@@ -23,10 +29,10 @@ import {
   type WorkspaceReport,
 } from "@/lib/reports"
 import {
-  getDashboardSearchQuery,
   matchesWorkspaceReportSearch,
 } from "@/lib/dashboard-search"
 import { cn } from "@/lib/utils"
+import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
 
 type ReportsListProps = {
   reports: WorkspaceReport[]
@@ -557,40 +563,73 @@ export function ReportTableRow({
 }
 
 export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
-  const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const viewMode = getViewMode(searchParams)
-  const statusFilter = getStatusFilter(searchParams)
-  const sort = getReportSort(searchParams)
-  const searchQuery = getDashboardSearchQuery(searchParams)
+  const initialStatusFilter = getStatusFilter(searchParams)
+  const initialSort = getReportSort(searchParams)
+  const {
+    dashboardSearchQuery,
+    registerReports,
+    setReportRailSelectedReportId,
+  } = useWorkspaceDashboardData()
+  const searchQuery = dashboardSearchQuery
+  const [statusFilter, setStatusFilter] = useState(initialStatusFilter)
+  const [sort, setSort] = useState(initialSort)
   const activeFilter = filters.find((filter) => filter.value === statusFilter) ?? filters[0]
-  const searchScopedReports = reports.filter((report) =>
-    matchesWorkspaceReportSearch(report, searchQuery)
+  const searchScopedReports = useMemo(
+    () =>
+      reports.filter((report) =>
+        matchesWorkspaceReportSearch(report, searchQuery)
+      ),
+    [reports, searchQuery]
   )
-  const filteredReports = sortReports(searchScopedReports.filter(activeFilter.match), sort)
+  const filteredReports = useMemo(
+    () => sortReports(searchScopedReports.filter(activeFilter.match), sort),
+    [activeFilter, searchScopedReports, sort]
+  )
   const requestedReportId = searchParams.get("report")
-  const selectedReportId = filteredReports.some(
-    (report) => report.id === requestedReportId
+  const initialSelectedReportId = filteredReports.some(
+      (report) => report.id === requestedReportId
+    )
+      ? requestedReportId
+      : filteredReports[0]?.id
+  const [selectedReportId, setSelectedReportId] = useState(
+    initialSelectedReportId
   )
-    ? requestedReportId
+  const effectiveSelectedReportId = filteredReports.some(
+    (report) => report.id === selectedReportId
+  )
+    ? selectedReportId
     : filteredReports[0]?.id
 
   function replaceSearchParams(nextSearchParams: URLSearchParams) {
     const query = nextSearchParams.toString()
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname)
+  }
+
+  function getCurrentSearchParams() {
+    return new URLSearchParams(window.location.search)
   }
 
   function selectReport(reportId: string) {
-    const nextSearchParams = new URLSearchParams(searchParams.toString())
+    setSelectedReportId(reportId)
+    setReportRailSelectedReportId(reportId)
+
+    const nextSearchParams = getCurrentSearchParams()
     nextSearchParams.set("report", reportId)
     replaceSearchParams(nextSearchParams)
   }
 
   function changeFilter(filter: StatusFilter) {
-    const nextSearchParams = new URLSearchParams(searchParams.toString())
+    const nextSearchParams = getCurrentSearchParams()
     const nextFilter = filters.find((item) => item.value === filter) ?? filters[0]
     const nextReports = sortReports(searchScopedReports.filter(nextFilter.match), sort)
+    const nextSelectedReportId = nextReports[0]?.id
+
+    setStatusFilter(filter)
+    setSelectedReportId(nextSelectedReportId)
+    setReportRailSelectedReportId(nextSelectedReportId ?? null)
 
     if (filter === "all") {
       nextSearchParams.delete("status")
@@ -598,8 +637,8 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
       nextSearchParams.set("status", filter)
     }
 
-    if (nextReports[0]) {
-      nextSearchParams.set("report", nextReports[0].id)
+    if (nextSelectedReportId) {
+      nextSearchParams.set("report", nextSelectedReportId)
     } else {
       nextSearchParams.delete("report")
     }
@@ -608,7 +647,9 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
   }
 
   function changeSort(nextSort: ReportSort) {
-    const nextSearchParams = new URLSearchParams(searchParams.toString())
+    setSort(nextSort)
+
+    const nextSearchParams = getCurrentSearchParams()
 
     if (nextSort === "newest") {
       nextSearchParams.delete("sort")
@@ -618,6 +659,23 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
 
     replaceSearchParams(nextSearchParams)
   }
+
+  useEffect(() => {
+    const nextSelectedReportId = effectiveSelectedReportId ?? null
+
+    registerReports({
+      reports,
+      selectedReportId: nextSelectedReportId,
+      visibleReportIds: filteredReports.map((report) => report.id),
+    })
+    setReportRailSelectedReportId(nextSelectedReportId)
+  }, [
+    effectiveSelectedReportId,
+    filteredReports,
+    registerReports,
+    reports,
+    setReportRailSelectedReportId,
+  ])
 
   return (
     <section className="flex h-full min-h-0 flex-col">
@@ -660,7 +718,7 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
               {filteredReports.map((report) => (
                 <ReportTableRow
                   key={report.id}
-                  isSelected={report.id === selectedReportId}
+                  isSelected={report.id === effectiveSelectedReportId}
                   onSelect={() => selectReport(report.id)}
                   report={report}
                   workspaceSlug={workspaceSlug}
@@ -677,7 +735,7 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
             {filteredReports.map((report) => (
               <ReportCard
                 key={report.id}
-                isSelected={report.id === selectedReportId}
+                isSelected={report.id === effectiveSelectedReportId}
                 onSelect={() => selectReport(report.id)}
                 report={report}
                 workspaceSlug={workspaceSlug}

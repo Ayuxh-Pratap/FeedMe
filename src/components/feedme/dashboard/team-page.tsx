@@ -1,12 +1,13 @@
 "use client"
 
 import { Plus } from "lucide-react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
+import { useEffect, useMemo, useState } from "react"
 
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
+import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
 import {
-  getDashboardSearchQuery,
   matchesWorkspaceMemberSearch,
 } from "@/lib/dashboard-search"
 import {
@@ -156,32 +157,61 @@ export function TeamPage({
   workspaceSlug,
 }: TeamPageProps) {
   const pathname = usePathname()
-  const router = useRouter()
   const searchParams = useSearchParams()
-  const activeFilter = getFilter(searchParams)
-  const searchQuery = getDashboardSearchQuery(searchParams)
+  const initialFilter = getFilter(searchParams)
+  const [activeFilter, setActiveFilter] = useState(initialFilter)
+  const {
+    dashboardSearchQuery,
+    registerMembers,
+    setSelectedMemberId,
+  } = useWorkspaceDashboardData()
+  const searchQuery = dashboardSearchQuery
   const activeFilterConfig =
     filters.find((filter) => filter.value === activeFilter) ?? filters[0]
-  const searchScopedMembers = members.filter((member) =>
-    matchesWorkspaceMemberSearch(member, searchQuery)
+  const searchScopedMembers = useMemo(
+    () =>
+      members.filter((member) =>
+        matchesWorkspaceMemberSearch(member, searchQuery)
+      ),
+    [members, searchQuery]
   )
-  const filteredMembers = searchScopedMembers.filter(activeFilterConfig.match)
+  const filteredMembers = useMemo(
+    () => searchScopedMembers.filter(activeFilterConfig.match),
+    [activeFilterConfig, searchScopedMembers]
+  )
   const requestedMemberId = searchParams.get("member")
-  const selectedMemberId = filteredMembers.some(
-    (member) => member.id === requestedMemberId
+  const initialSelectedMemberId = filteredMembers.some(
+      (member) => member.id === requestedMemberId
+    )
+      ? requestedMemberId
+      : filteredMembers[0]?.id
+  const [selectedMemberId, setLocalSelectedMemberId] = useState(
+    initialSelectedMemberId
   )
-    ? requestedMemberId
+  const effectiveSelectedMemberId = filteredMembers.some(
+    (member) => member.id === selectedMemberId
+  )
+    ? selectedMemberId
     : filteredMembers[0]?.id
 
   function replaceSearchParams(nextSearchParams: URLSearchParams) {
     const query = nextSearchParams.toString()
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname)
+  }
+
+  function getCurrentSearchParams() {
+    return new URLSearchParams(window.location.search)
   }
 
   function changeFilter(filter: TeamFilter) {
-    const nextSearchParams = new URLSearchParams(searchParams.toString())
+    const nextSearchParams = getCurrentSearchParams()
     const nextFilter = filters.find((item) => item.value === filter) ?? filters[0]
     const nextMembers = searchScopedMembers.filter(nextFilter.match)
+    const nextSelectedMemberId = nextMembers[0]?.id
+
+    setActiveFilter(filter)
+    setLocalSelectedMemberId(nextSelectedMemberId)
+    setSelectedMemberId(nextSelectedMemberId ?? null)
 
     if (filter === "all") {
       nextSearchParams.delete("role")
@@ -189,8 +219,8 @@ export function TeamPage({
       nextSearchParams.set("role", filter)
     }
 
-    if (nextMembers[0]) {
-      nextSearchParams.set("member", nextMembers[0].id)
+    if (nextSelectedMemberId) {
+      nextSearchParams.set("member", nextSelectedMemberId)
     } else {
       nextSearchParams.delete("member")
     }
@@ -199,10 +229,30 @@ export function TeamPage({
   }
 
   function selectMember(memberId: string) {
-    const nextSearchParams = new URLSearchParams(searchParams.toString())
+    setLocalSelectedMemberId(memberId)
+    setSelectedMemberId(memberId)
+
+    const nextSearchParams = getCurrentSearchParams()
     nextSearchParams.set("member", memberId)
     replaceSearchParams(nextSearchParams)
   }
+
+  useEffect(() => {
+    const nextSelectedMemberId = effectiveSelectedMemberId ?? null
+
+    registerMembers({
+      members,
+      selectedMemberId: nextSelectedMemberId,
+      visibleMemberIds: filteredMembers.map((member) => member.id),
+    })
+    setSelectedMemberId(nextSelectedMemberId)
+  }, [
+    effectiveSelectedMemberId,
+    filteredMembers,
+    members,
+    registerMembers,
+    setSelectedMemberId,
+  ])
 
   return (
     <section className="flex h-full min-h-0 flex-col">
@@ -269,7 +319,7 @@ export function TeamPage({
           </thead>
           <tbody>
             {filteredMembers.map((member) => {
-              const selected = member.id === selectedMemberId
+              const selected = member.id === effectiveSelectedMemberId
 
               return (
               <tr

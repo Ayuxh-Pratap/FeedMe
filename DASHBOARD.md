@@ -181,6 +181,12 @@ Team
 
 If search or filters produce no visible rows, the main canvas owns the empty state and the right rail should not keep showing stale context from an item outside the current result set.
 
+Dashboard interactions must feel local-first. Report row selection, report status filters, My Work scope tabs, Team role filters, and teammate/report selection should update visible UI state immediately and sync the URL with the native History API. Do not use App Router navigation for these micro-interactions because it can refetch server components and make clicks feel dead.
+
+Reports and My Work pages feed their already-loaded report summaries into the workspace shell through the shared dashboard data store. The shell must not refetch the full reports list just to populate the right rail. The right rail uses the visible report IDs and selected report ID from that store, renders summary context immediately, then fetches the selected report detail by ID and caches it for screenshot evidence.
+
+Team pages follow the same rule: the page feeds members into the shell store, and the Team right rail reads that state instead of making a second members request.
+
 On mobile/tablet, search becomes an icon-triggered sheet and the primary capture action remains in the topbar. The sidebar is replaced by a left sheet, and right-rail context is replaced by a right sheet.
 
 Main content

@@ -429,39 +429,6 @@ async function getAssetsForReport(workspaceId: string, reportId: string) {
     .orderBy(asc(reportAssets.createdAt))
 }
 
-async function getAssetsByReportId(workspaceId: string, reportIds: string[]) {
-  const uniqueReportIds = Array.from(new Set(reportIds))
-
-  if (uniqueReportIds.length === 0) {
-    return new Map<string, ReportAssetRow[]>()
-  }
-
-  const rows = await db
-    .select({
-      id: reportAssets.id,
-      reportId: reportAssets.reportId,
-      type: reportAssets.type,
-      url: reportAssets.url,
-      width: reportAssets.width,
-      height: reportAssets.height,
-    })
-    .from(reportAssets)
-    .where(
-      and(
-        eq(reportAssets.workspaceId, workspaceId),
-        inArray(reportAssets.reportId, uniqueReportIds)
-      )
-    )
-    .orderBy(asc(reportAssets.createdAt))
-
-  return rows.reduce((assetsByReportId, row) => {
-    const assets = assetsByReportId.get(row.reportId) ?? []
-    assets.push(row)
-    assetsByReportId.set(row.reportId, assets)
-    return assetsByReportId
-  }, new Map<string, ReportAssetRow[]>())
-}
-
 async function getMutableReportRow(workspaceId: string, reportId: string) {
   const [row] = await db
     .select(reportSelectFields())
@@ -556,18 +523,13 @@ export async function listWorkspaceReports(userId: string, workspaceSlug: string
     )
     .orderBy(desc(reports.capturedAt))
 
-  const [peopleById, assetsByReportId] = await Promise.all([
-    getPeopleById(
-      compactUserIds(rows.flatMap((row) => [row.reporterUserId, row.assigneeUserId]))
-    ),
-    getAssetsByReportId(workspace.id, rows.map((row) => row.id)),
-  ])
+  const peopleById = await getPeopleById(
+    compactUserIds(rows.flatMap((row) => [row.reporterUserId, row.assigneeUserId]))
+  )
 
   return {
     workspace,
-    reports: rows.map((row) =>
-      serializeReport(row, peopleById, assetsByReportId.get(row.id) ?? [])
-    ),
+    reports: rows.map((row) => serializeReport(row, peopleById)),
   }
 }
 

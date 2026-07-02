@@ -1,11 +1,12 @@
 "use client"
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
+import { useEffect, useMemo, useState } from "react"
 
 import { ReportsEmptyState } from "@/components/feedme/dashboard/reports-empty-state"
 import { ReportCard, ReportTableRow } from "@/components/feedme/dashboard/reports-list"
+import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
 import {
-  getDashboardSearchQuery,
   matchesWorkspaceReportSearch,
 } from "@/lib/dashboard-search"
 import type { WorkspaceReport } from "@/lib/reports"
@@ -123,38 +124,68 @@ export function MyWorkPage({
   workspaceSlug,
 }: MyWorkPageProps) {
   const pathname = usePathname()
-  const router = useRouter()
   const searchParams = useSearchParams()
   const defaultScope = getDefaultScope(currentUserRole)
-  const activeScope = getScope(searchParams, defaultScope)
+  const initialScope = getScope(searchParams, defaultScope)
+  const [activeScope, setActiveScope] = useState(initialScope)
   const viewMode = getViewMode(searchParams)
-  const searchQuery = getDashboardSearchQuery(searchParams)
+  const {
+    dashboardSearchQuery,
+    registerReports,
+    setReportRailSelectedReportId,
+  } = useWorkspaceDashboardData()
+  const searchQuery = dashboardSearchQuery
   const activeScopeConfig =
     scopes.find((scope) => scope.value === activeScope) ?? scopes[0]
-  const searchScopedReports = reports.filter((report) =>
-    matchesWorkspaceReportSearch(report, searchQuery)
+  const searchScopedReports = useMemo(
+    () =>
+      reports.filter((report) =>
+        matchesWorkspaceReportSearch(report, searchQuery)
+      ),
+    [reports, searchQuery]
   )
-  const filteredReports = searchScopedReports.filter((report) =>
-    activeScopeConfig.match(report, currentUserId)
+  const filteredReports = useMemo(
+    () =>
+      searchScopedReports.filter((report) =>
+        activeScopeConfig.match(report, currentUserId)
+      ),
+    [activeScopeConfig, currentUserId, searchScopedReports]
   )
   const requestedReportId = searchParams.get("report")
-  const selectedReportId = filteredReports.some(
-    (report) => report.id === requestedReportId
+  const initialSelectedReportId = filteredReports.some(
+      (report) => report.id === requestedReportId
+    )
+      ? requestedReportId
+      : filteredReports[0]?.id
+  const [selectedReportId, setSelectedReportId] = useState(
+    initialSelectedReportId
   )
-    ? requestedReportId
+  const effectiveSelectedReportId = filteredReports.some(
+    (report) => report.id === selectedReportId
+  )
+    ? selectedReportId
     : filteredReports[0]?.id
 
   function replaceSearchParams(nextSearchParams: URLSearchParams) {
     const query = nextSearchParams.toString()
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname)
+  }
+
+  function getCurrentSearchParams() {
+    return new URLSearchParams(window.location.search)
   }
 
   function changeScope(scope: MyWorkScope) {
-    const nextSearchParams = new URLSearchParams(searchParams.toString())
+    const nextSearchParams = getCurrentSearchParams()
     const nextScopeConfig = scopes.find((item) => item.value === scope) ?? scopes[0]
     const nextReports = searchScopedReports.filter((report) =>
       nextScopeConfig.match(report, currentUserId)
     )
+    const nextSelectedReportId = nextReports[0]?.id
+
+    setActiveScope(scope)
+    setSelectedReportId(nextSelectedReportId)
+    setReportRailSelectedReportId(nextSelectedReportId ?? null)
 
     if (scope === defaultScope) {
       nextSearchParams.delete("scope")
@@ -162,8 +193,8 @@ export function MyWorkPage({
       nextSearchParams.set("scope", scope)
     }
 
-    if (nextReports[0]) {
-      nextSearchParams.set("report", nextReports[0].id)
+    if (nextSelectedReportId) {
+      nextSearchParams.set("report", nextSelectedReportId)
     } else {
       nextSearchParams.delete("report")
     }
@@ -172,10 +203,30 @@ export function MyWorkPage({
   }
 
   function selectReport(reportId: string) {
-    const nextSearchParams = new URLSearchParams(searchParams.toString())
+    setSelectedReportId(reportId)
+    setReportRailSelectedReportId(reportId)
+
+    const nextSearchParams = getCurrentSearchParams()
     nextSearchParams.set("report", reportId)
     replaceSearchParams(nextSearchParams)
   }
+
+  useEffect(() => {
+    const nextSelectedReportId = effectiveSelectedReportId ?? null
+
+    registerReports({
+      reports,
+      selectedReportId: nextSelectedReportId,
+      visibleReportIds: filteredReports.map((report) => report.id),
+    })
+    setReportRailSelectedReportId(nextSelectedReportId)
+  }, [
+    effectiveSelectedReportId,
+    filteredReports,
+    registerReports,
+    reports,
+    setReportRailSelectedReportId,
+  ])
 
   return (
     <section className="flex h-full min-h-0 flex-col">
@@ -245,7 +296,7 @@ export function MyWorkPage({
               {filteredReports.map((report) => (
                 <ReportTableRow
                   key={report.id}
-                  isSelected={report.id === selectedReportId}
+                  isSelected={report.id === effectiveSelectedReportId}
                   onSelect={() => selectReport(report.id)}
                   report={report}
                   workspaceSlug={workspaceSlug}
@@ -262,7 +313,7 @@ export function MyWorkPage({
             {filteredReports.map((report) => (
               <ReportCard
                 key={report.id}
-                isSelected={report.id === selectedReportId}
+                isSelected={report.id === effectiveSelectedReportId}
                 onSelect={() => selectReport(report.id)}
                 report={report}
                 workspaceSlug={workspaceSlug}

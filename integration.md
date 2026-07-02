@@ -641,6 +641,15 @@ Reports index:
 - Right rail shows selected report evidence and metadata.
 - Opening a report navigates to `/:workspaceSlug/reports/:reportId`.
 
+Performance rules:
+
+- list pages fetch report summaries, not full screenshot evidence for every row
+- the workspace shell does not refetch the reports list for the right rail
+- Reports and My Work publish visible report IDs and selected report ID to the shared dashboard data store
+- the right rail renders selected summary context immediately
+- full screenshot/detail evidence is fetched only for the selected report and cached
+- row selection and filters update client state first, then sync the URL with native history
+
 Report detail:
 
 - Main canvas owns screenshot evidence, feedback, selected element data, metadata, and developer prompt.

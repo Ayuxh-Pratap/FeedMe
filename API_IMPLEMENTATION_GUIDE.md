@@ -900,6 +900,21 @@ Production dashboard cookies use SameSite=None; Secure so the extension can
 reuse the signed-in dashboard session from chrome-extension:// requests.
 ```
 
+Dashboard performance note:
+
+```txt
+The reports list/read model must stay summary-first. Do not load screenshot
+asset URLs for every report in list endpoints, especially while screenshots are
+stored as data:image payloads. The list page should render rows/cards from
+summary report data, publish visible reports and selected IDs to the workspace
+dashboard data store, and let the right rail fetch only the selected report
+detail through GET /api/workspaces/:workspaceSlug/reports/:reportId.
+
+Row selection, report filters, My Work scope changes, Team role filters, and
+search should update client state first and sync the URL with native history.
+Avoid App Router navigation for these micro-interactions.
+```
+
 ### Slice 8: Assignment And My Work
 
 Status:

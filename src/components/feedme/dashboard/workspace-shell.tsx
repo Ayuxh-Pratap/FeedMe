@@ -53,11 +53,6 @@ import {
   type WorkspaceReport,
 } from "@/lib/reports"
 import {
-  getDashboardSearchQuery,
-  matchesWorkspaceReportSearch,
-  matchesWorkspaceMemberSearch,
-} from "@/lib/dashboard-search"
-import {
   getWorkspaceMemberRoleLabel,
   type WorkspaceTeamMember,
 } from "@/lib/team-members"
@@ -68,6 +63,10 @@ import {
   reportStatusPillStyles,
 } from "@/components/feedme/dashboard/report-badge-styles"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
+import {
+  useWorkspaceDashboardData,
+  WorkspaceDashboardDataProvider,
+} from "@/components/feedme/dashboard/workspace-dashboard-data"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -133,10 +132,6 @@ type WorkspaceDomainMutationResponse = {
 
 type WorkspaceMembersResponse = {
   members: WorkspaceTeamMember[]
-}
-
-type WorkspaceReportsResponse = {
-  reports: WorkspaceReport[]
 }
 
 type ReportMutationResponse = {
@@ -1108,8 +1103,8 @@ function DashboardSearchInput({
   showIcon?: boolean
 }) {
   const pathname = usePathname()
-  const router = useRouter()
   const searchParams = useSearchParams()
+  const { setDashboardSearchQuery } = useWorkspaceDashboardData()
   const urlSearchValue = searchParams.get("q") ?? ""
   const [draftSearchValue, setDraftSearchValue] = useState(urlSearchValue)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1145,7 +1140,7 @@ function DashboardSearchInput({
 
   function commitSearch(nextValue: string) {
     const nextSearchParams = new URLSearchParams(
-      latestSearchParamsRef.current.toString()
+      window.location.search || latestSearchParamsRef.current.toString()
     )
     const normalizedValue = nextValue.trim()
 
@@ -1162,9 +1157,12 @@ function DashboardSearchInput({
     const nextPathname = latestPathnameRef.current
 
     committedSearchValueRef.current = normalizedValue
-    router.replace(query ? `${nextPathname}?${query}` : nextPathname, {
-      scroll: false,
-    })
+    setDashboardSearchQuery(normalizedValue)
+    window.history.replaceState(
+      null,
+      "",
+      query ? `${nextPathname}?${query}` : nextPathname
+    )
   }
 
   function scheduleSearch(nextValue: string) {
@@ -1325,12 +1323,12 @@ function WorkspaceTopbar({
   onOpenExtensionInstall,
   onToggleRightRail,
   onReportChange,
-  reportRailErrorMessage,
   reportRailIsLoading,
   reportRailMembers,
   reportRailMembersErrorMessage,
   reportRailMembersIsLoading,
   reportRailReports,
+  reportRailSelectedReportId,
   workspace,
 }: {
   availableWorkspaces: WorkspaceSwitcherOption[]
@@ -1339,12 +1337,12 @@ function WorkspaceTopbar({
   onOpenExtensionInstall: () => void
   onToggleRightRail: () => void
   onReportChange?: (report: WorkspaceReport) => void
-  reportRailErrorMessage?: string | null
   reportRailIsLoading?: boolean
   reportRailMembers?: WorkspaceTeamMember[]
   reportRailMembersErrorMessage?: string | null
   reportRailMembersIsLoading?: boolean
   reportRailReports?: WorkspaceReport[]
+  reportRailSelectedReportId?: string | null
   workspace: MockWorkspace
 }) {
   return (
@@ -1413,12 +1411,12 @@ function WorkspaceTopbar({
           {isRightRailEnabled ? (
             <MobileRightRailSheet
               onReportChange={onReportChange}
-              reportRailErrorMessage={reportRailErrorMessage}
               reportRailIsLoading={reportRailIsLoading}
               reportRailMembers={reportRailMembers}
               reportRailMembersErrorMessage={reportRailMembersErrorMessage}
               reportRailMembersIsLoading={reportRailMembersIsLoading}
               reportRailReports={reportRailReports}
+              reportRailSelectedReportId={reportRailSelectedReportId}
               workspace={workspace}
             />
           ) : null}
@@ -1431,22 +1429,22 @@ function WorkspaceTopbar({
 function WorkspaceRightRailContent({
   className,
   onReportChange,
-  reportRailErrorMessage,
   reportRailIsLoading,
   reportRailMembers,
   reportRailMembersErrorMessage,
   reportRailMembersIsLoading,
   reportRailReports,
+  reportRailSelectedReportId,
   workspace,
 }: {
   className?: string
   onReportChange?: (report: WorkspaceReport) => void
-  reportRailErrorMessage?: string | null
   reportRailIsLoading?: boolean
   reportRailMembers?: WorkspaceTeamMember[]
   reportRailMembersErrorMessage?: string | null
   reportRailMembersIsLoading?: boolean
   reportRailReports?: WorkspaceReport[]
+  reportRailSelectedReportId?: string | null
   workspace: MockWorkspace
 }) {
   const pathname = usePathname()
@@ -1462,21 +1460,20 @@ function WorkspaceRightRailContent({
     return (
       <ReportsContextRail
         className={className}
-        errorMessage={reportRailErrorMessage ?? null}
         isLoading={Boolean(reportRailIsLoading)}
         members={reportRailMembers ?? []}
         membersErrorMessage={reportRailMembersErrorMessage ?? null}
         membersIsLoading={Boolean(reportRailMembersIsLoading)}
-        mode={isMyWorkRoute ? "my-work" : "reports"}
         onReportChange={onReportChange ?? (() => undefined)}
         reports={reportRailReports ?? []}
+        selectedReportId={reportRailSelectedReportId ?? null}
         workspace={workspace}
       />
     )
   }
 
   if (isTeamRoute) {
-    return <TeamContextRail className={className} workspace={workspace} />
+    return <TeamContextRail className={className} />
   }
 
   return (
@@ -2393,119 +2390,83 @@ function ReportInspectorRail({
   )
 }
 
-type ReportRailMode = "reports" | "my-work"
-type MyWorkScope = "assigned" | "reported"
-
-function getDefaultMyWorkScope(workspace: MockWorkspace): MyWorkScope {
-  return workspace.currentUserRole === "developer" ? "assigned" : "reported"
-}
-
-function getMyWorkScope(
-  searchParams: URLSearchParams,
-  workspace: MockWorkspace
-): MyWorkScope {
-  const scope = searchParams.get("scope")
-
-  if (scope === "assigned" || scope === "reported") {
-    return scope
-  }
-
-  return getDefaultMyWorkScope(workspace)
-}
-
-function getReportRailReports({
-  mode,
-  reports,
-  searchParams,
-  workspace,
-}: {
-  mode: ReportRailMode
-  reports: WorkspaceReport[]
-  searchParams: URLSearchParams
-  workspace: MockWorkspace
-}) {
-  const searchQuery = getDashboardSearchQuery(searchParams)
-  const searchScopedReports = reports.filter((report) =>
-    matchesWorkspaceReportSearch(report, searchQuery)
-  )
-
-  if (mode === "reports") {
-    return searchScopedReports
-  }
-
-  const currentUserId = workspace.currentUserId
-
-  if (!currentUserId) {
-    return []
-  }
-
-  const scope = getMyWorkScope(searchParams, workspace)
-
-  if (scope === "assigned") {
-    return searchScopedReports.filter(
-      (report) => report.assigneeUserId === currentUserId
-    )
-  }
-
-  return searchScopedReports.filter(
-    (report) => report.reporterUserId === currentUserId
-  )
-}
-
 function ReportsContextRail({
   className,
-  errorMessage,
   isLoading,
   members,
   membersErrorMessage,
   membersIsLoading,
-  mode,
   onReportChange,
   reports,
+  selectedReportId,
   workspace,
 }: {
   className?: string
-  errorMessage: string | null
   isLoading: boolean
   members: WorkspaceTeamMember[]
   membersErrorMessage: string | null
   membersIsLoading: boolean
-  mode: ReportRailMode
   onReportChange: (report: WorkspaceReport) => void
   reports: WorkspaceReport[]
+  selectedReportId: string | null
   workspace: MockWorkspace
 }) {
-  const searchParams = useSearchParams()
-  const railReports = getReportRailReports({
-    mode,
-    reports,
-    searchParams: new URLSearchParams(searchParams.toString()),
-    workspace,
-  })
+  const [detailReportsById, setDetailReportsById] = useState<
+    Record<string, WorkspaceReport>
+  >({})
+
+  const selectedSummaryReport =
+    reports.find((report) => report.id === selectedReportId) ?? reports[0]
+  const selectedDetailReport = selectedSummaryReport
+    ? detailReportsById[selectedSummaryReport.id]
+    : undefined
+  const selectedReport = selectedDetailReport ?? selectedSummaryReport
+
+  useEffect(() => {
+    if (
+      isLoading ||
+      !selectedSummaryReport ||
+      detailReportsById[selectedSummaryReport.id]
+    ) {
+      return
+    }
+
+    let isMounted = true
+
+    async function loadSelectedReportDetail() {
+      try {
+        const result = await getJson<ReportMutationResponse>(
+          getReportMutationBaseUrl(workspace.slug, selectedSummaryReport.id)
+        )
+
+        if (isMounted) {
+          setDetailReportsById((currentDetails) => ({
+            ...currentDetails,
+            [result.report.id]: result.report,
+          }))
+          onReportChange(result.report)
+        }
+      } catch {
+        // Keep the fast summary rail visible if full evidence is temporarily unavailable.
+      }
+    }
+
+    void loadSelectedReportDetail()
+
+    return () => {
+      isMounted = false
+    }
+  }, [
+    detailReportsById,
+    isLoading,
+    onReportChange,
+    selectedSummaryReport,
+    workspace.slug,
+  ])
 
   if (isLoading) {
     return <ReportInspectorRailSkeleton className={className} />
   }
-
-  if (errorMessage) {
-    return (
-      <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
-        <section className="border-b border-border-hairline px-4 py-4">
-          <div className="flex size-9 items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary">
-            <ClipboardList className="size-4" />
-          </div>
-          <h2 className="mt-3 text-heading-5 text-foreground">Reports unavailable</h2>
-          <p className="mt-1 text-body-3 text-text-body">{errorMessage}</p>
-        </section>
-      </div>
-    )
-  }
-
-  const requestedReportId = searchParams.get("report")
-  const selectedReportId = railReports.some((report) => report.id === requestedReportId)
-    ? requestedReportId
-    : railReports[0]?.id
-  const selectedReport = railReports.find((report) => report.id === selectedReportId)
 
   if (!selectedReport) {
     return <EmptyReportRail className={className} />
@@ -2632,92 +2593,30 @@ function TeamMemberRail({
 
 function TeamContextRail({
   className,
-  workspace,
 }: {
   className?: string
-  workspace: MockWorkspace
 }) {
   const searchParams = useSearchParams()
-  const [members, setMembers] = useState<WorkspaceTeamMember[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const membersEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/members`
+  const {
+    dashboardSearchQuery,
+    membersReady,
+    selectedMemberId,
+    teamMembers,
+    teamVisibleMemberIds,
+  } = useWorkspaceDashboardData()
 
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadMembers() {
-      setIsLoading(true)
-      setErrorMessage(null)
-
-      try {
-        const result = await getJson<WorkspaceMembersResponse>(membersEndpoint)
-
-        if (isMounted) {
-          setMembers(result.members)
-        }
-      } catch (error) {
-        if (isMounted) {
-          setErrorMessage(
-            error instanceof ApiClientError
-              ? error.message
-              : "Unable to load team members. Please try again."
-          )
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadMembers()
-
-    return () => {
-      isMounted = false
-    }
-  }, [membersEndpoint])
-
-  if (isLoading) {
+  if (!membersReady) {
     return <TeamMemberRailSkeleton className={className} />
   }
 
-  if (errorMessage) {
-    return (
-      <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
-        <section className="border-b border-border-hairline px-4 py-4">
-          <div className="flex size-9 items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary">
-            <UsersRound className="size-4" />
-          </div>
-          <h2 className="mt-3 text-heading-5 text-foreground">Team unavailable</h2>
-          <p className="mt-1 text-body-3 text-text-body">{errorMessage}</p>
-        </section>
-      </div>
-    )
-  }
-
-  const searchQuery = getDashboardSearchQuery(searchParams)
   const roleFilter = searchParams.get("role")
-  const visibleMembers = members
-    .filter((member) => matchesWorkspaceMemberSearch(member, searchQuery))
-    .filter((member) => {
-      if (roleFilter === "developer" || roleFilter === "designer" || roleFilter === "reporter") {
-        return member.role === roleFilter
-      }
-
-      if (roleFilter === "pending") {
-        return member.status === "pending"
-      }
-
-      return true
-    })
-  const requestedMemberId = searchParams.get("member")
-  const selectedMemberId = visibleMembers.some(
-    (member) => member.id === requestedMemberId
-  )
-    ? requestedMemberId
-    : visibleMembers[0]?.id
-  const selectedMember = visibleMembers.find((member) => member.id === selectedMemberId)
+  const membersById = new Map(teamMembers.map((member) => [member.id, member]))
+  const visibleMembers = teamVisibleMemberIds
+    .map((memberId) => membersById.get(memberId))
+    .filter((member): member is WorkspaceTeamMember => Boolean(member))
+  const selectedMember =
+    visibleMembers.find((member) => member.id === selectedMemberId) ??
+    visibleMembers[0]
 
   if (!selectedMember) {
     return (
@@ -2728,7 +2627,7 @@ function TeamContextRail({
           </div>
           <h2 className="mt-3 text-heading-5 text-foreground">Select a teammate</h2>
           <p className="mt-1 text-body-3 text-text-body">
-            {searchQuery || roleFilter
+            {dashboardSearchQuery || roleFilter
               ? "No teammate matches the current search and role filters."
               : "Member role, workload, and recent activity will appear here."}
           </p>
@@ -2742,21 +2641,21 @@ function TeamContextRail({
 
 function MobileRightRailSheet({
   onReportChange,
-  reportRailErrorMessage,
   reportRailIsLoading,
   reportRailMembers,
   reportRailMembersErrorMessage,
   reportRailMembersIsLoading,
   reportRailReports,
+  reportRailSelectedReportId,
   workspace,
 }: {
   onReportChange?: (report: WorkspaceReport) => void
-  reportRailErrorMessage?: string | null
   reportRailIsLoading?: boolean
   reportRailMembers?: WorkspaceTeamMember[]
   reportRailMembersErrorMessage?: string | null
   reportRailMembersIsLoading?: boolean
   reportRailReports?: WorkspaceReport[]
+  reportRailSelectedReportId?: string | null
   workspace: MockWorkspace
 }) {
   return (
@@ -2786,12 +2685,12 @@ function MobileRightRailSheet({
         <WorkspaceRightRailContent
           className="w-full"
           onReportChange={onReportChange}
-          reportRailErrorMessage={reportRailErrorMessage}
           reportRailIsLoading={reportRailIsLoading}
           reportRailMembers={reportRailMembers}
           reportRailMembersErrorMessage={reportRailMembersErrorMessage}
           reportRailMembersIsLoading={reportRailMembersIsLoading}
           reportRailReports={reportRailReports}
+          reportRailSelectedReportId={reportRailSelectedReportId}
           workspace={workspace}
         />
       </SheetContent>
@@ -2802,22 +2701,22 @@ function MobileRightRailSheet({
 function WorkspaceRightRail({
   isOpen,
   onReportChange,
-  reportRailErrorMessage,
   reportRailIsLoading,
   reportRailMembers,
   reportRailMembersErrorMessage,
   reportRailMembersIsLoading,
   reportRailReports,
+  reportRailSelectedReportId,
   workspace,
 }: {
   isOpen: boolean
   onReportChange?: (report: WorkspaceReport) => void
-  reportRailErrorMessage?: string | null
   reportRailIsLoading?: boolean
   reportRailMembers?: WorkspaceTeamMember[]
   reportRailMembersErrorMessage?: string | null
   reportRailMembersIsLoading?: boolean
   reportRailReports?: WorkspaceReport[]
+  reportRailSelectedReportId?: string | null
   workspace: MockWorkspace
 }) {
   return (
@@ -2832,12 +2731,12 @@ function WorkspaceRightRail({
     >
       <WorkspaceRightRailContent
         onReportChange={onReportChange}
-        reportRailErrorMessage={reportRailErrorMessage}
         reportRailIsLoading={reportRailIsLoading}
         reportRailMembers={reportRailMembers}
         reportRailMembersErrorMessage={reportRailMembersErrorMessage}
         reportRailMembersIsLoading={reportRailMembersIsLoading}
         reportRailReports={reportRailReports}
+        reportRailSelectedReportId={reportRailSelectedReportId}
         workspace={workspace}
       />
     </aside>
@@ -2849,74 +2748,56 @@ export function WorkspaceShell({
   children,
   workspace,
 }: WorkspaceShellProps) {
+  return (
+    <WorkspaceDashboardDataProvider>
+      <WorkspaceShellContent
+        availableWorkspaces={availableWorkspaces}
+        workspace={workspace}
+      >
+        {children}
+      </WorkspaceShellContent>
+    </WorkspaceDashboardDataProvider>
+  )
+}
+
+function WorkspaceShellContent({
+  availableWorkspaces,
+  children,
+  workspace,
+}: WorkspaceShellProps) {
   const [isRightRailOpen, setIsRightRailOpen] = useState(true)
   const [isExtensionInstallOpen, setIsExtensionInstallOpen] = useState(false)
-  const [reportRailReports, setReportRailReports] = useState<WorkspaceReport[]>([])
-  const [reportRailIsLoading, setReportRailIsLoading] = useState(true)
-  const [reportRailErrorMessage, setReportRailErrorMessage] = useState<string | null>(null)
   const [reportRailMembers, setReportRailMembers] = useState<WorkspaceTeamMember[]>([])
   const [reportRailMembersIsLoading, setReportRailMembersIsLoading] = useState(
     () => canManageReportAssignments(workspace)
   )
   const [reportRailMembersErrorMessage, setReportRailMembersErrorMessage] =
     useState<string | null>(null)
+  const {
+    reportRailReady,
+    reportRailReports,
+    reportRailSelectedReportId,
+    reportRailVisibleIds,
+    updateReport,
+  } = useWorkspaceDashboardData()
   const pathname = usePathname()
-  const searchParams = useSearchParams()
   const reportsPath = `/${workspace.slug}/reports`
   const myWorkPath = `/${workspace.slug}/my-work`
   const isReportsIndexRoute = pathname === reportsPath
   const isMyWorkRoute = pathname === myWorkPath
   const isReportRailRoute = isReportsIndexRoute || isMyWorkRoute
   const isReportDetailRoute = pathname.startsWith(`${reportsPath}/`)
-  const reportRailEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/reports`
   const reportRailMembersEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/members`
-  const reportRailMode: ReportRailMode = isMyWorkRoute ? "my-work" : "reports"
   const canManageAssignments = canManageReportAssignments(workspace)
+  const reportRailReportsById = new Map(
+    reportRailReports.map((report) => [report.id, report])
+  )
   const scopedReportRailReports = isReportRailRoute
-    ? getReportRailReports({
-        mode: reportRailMode,
-        reports: reportRailReports,
-        searchParams: new URLSearchParams(searchParams.toString()),
-        workspace,
-      })
+    ? reportRailVisibleIds
+        .map((reportId) => reportRailReportsById.get(reportId))
+        .filter((report): report is WorkspaceReport => Boolean(report))
     : []
-
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadReports() {
-      setReportRailIsLoading(true)
-      setReportRailErrorMessage(null)
-
-      try {
-        const result = await getJson<WorkspaceReportsResponse>(reportRailEndpoint)
-
-        if (isMounted) {
-          setReportRailReports(result.reports)
-        }
-      } catch (error) {
-        if (isMounted) {
-          setReportRailErrorMessage(
-            error instanceof ApiClientError
-              ? error.message
-              : "Unable to load reports. Please try again."
-          )
-        }
-      } finally {
-        if (isMounted) {
-          setReportRailIsLoading(false)
-        }
-      }
-    }
-
-    if (isReportRailRoute) {
-      void loadReports()
-    }
-
-    return () => {
-      isMounted = false
-    }
-  }, [isReportRailRoute, reportRailEndpoint])
+  const reportRailIsLoading = isReportRailRoute && !reportRailReady
 
   useEffect(() => {
     let isMounted = true
@@ -2956,22 +2837,16 @@ export function WorkspaceShell({
   }, [canManageAssignments, isReportRailRoute, reportRailMembersEndpoint])
 
   function handleReportChange(nextReport: WorkspaceReport) {
-    setReportRailReports((currentReports) =>
-      currentReports.map((report) =>
-        report.id === nextReport.id ? nextReport : report
-      )
-    )
+    updateReport(nextReport)
   }
 
   const shouldDisableReportsRail =
     isReportsIndexRoute &&
     !reportRailIsLoading &&
-    !reportRailErrorMessage &&
     scopedReportRailReports.length === 0
   const shouldDisableMyWorkRail =
     isMyWorkRoute &&
     !reportRailIsLoading &&
-    !reportRailErrorMessage &&
     scopedReportRailReports.length === 0
   const isRightRailEnabled =
     !isReportDetailRoute && !shouldDisableReportsRail && !shouldDisableMyWorkRail
@@ -2999,12 +2874,12 @@ export function WorkspaceShell({
             onOpenExtensionInstall={() => setIsExtensionInstallOpen(true)}
             onReportChange={handleReportChange}
             onToggleRightRail={() => setIsRightRailOpen((value) => !value)}
-            reportRailErrorMessage={reportRailErrorMessage}
             reportRailIsLoading={isReportRailRoute && reportRailIsLoading}
             reportRailMembers={reportRailMembers}
             reportRailMembersErrorMessage={reportRailMembersErrorMessage}
             reportRailMembersIsLoading={reportRailMembersIsLoading}
             reportRailReports={reportRailReports}
+            reportRailSelectedReportId={reportRailSelectedReportId}
             workspace={workspace}
           />
           <div
@@ -3022,12 +2897,12 @@ export function WorkspaceShell({
               <WorkspaceRightRail
                 isOpen={isRightRailOpen}
                 onReportChange={handleReportChange}
-                reportRailErrorMessage={reportRailErrorMessage}
                 reportRailIsLoading={isReportRailRoute && reportRailIsLoading}
                 reportRailMembers={reportRailMembers}
                 reportRailMembersErrorMessage={reportRailMembersErrorMessage}
                 reportRailMembersIsLoading={reportRailMembersIsLoading}
-                reportRailReports={reportRailReports}
+                reportRailReports={scopedReportRailReports}
+                reportRailSelectedReportId={reportRailSelectedReportId}
                 workspace={workspace}
               />
             ) : null}
