@@ -2,6 +2,29 @@ import { z } from "zod"
 
 export const reportIdParamSchema = z.string().uuid("Invalid report id.")
 
+const optionalTrimmedString = (max: number) =>
+  z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return value
+      }
+
+      const nextValue = value.trim()
+
+      return nextValue.length > 0 ? nextValue : undefined
+    },
+    z.string().trim().max(max).optional()
+  )
+
+export const listReportsInputSchema = z.object({
+  cursor: optionalTrimmedString(500),
+  limit: z.coerce.number().int().min(1).max(50).default(30),
+  q: optionalTrimmedString(120),
+  scope: z.enum(["assigned", "reported"]).optional(),
+  sort: z.enum(["newest", "oldest", "priority", "comments"]).default("newest"),
+  status: z.enum(["all", "open", "in_progress", "resolved"]).default("all"),
+})
+
 export const mutableReportStatusSchema = z.enum([
   "reviewing",
   "accepted",
@@ -72,6 +95,7 @@ export const createReportInputSchema = z.object({
 })
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>
+export type ListReportsInput = z.infer<typeof listReportsInputSchema>
 
 export const assignReportInputSchema = z.object({
   assigneeUserId: z.string().uuid("Choose a valid teammate.").nullable(),

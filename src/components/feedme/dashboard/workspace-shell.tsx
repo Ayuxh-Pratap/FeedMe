@@ -39,6 +39,7 @@ import {
   X,
 } from "lucide-react"
 import {
+  useCallback,
   useRef,
   useEffect,
   useState,
@@ -1982,6 +1983,12 @@ function isAssignedDeveloperReport(workspace: MockWorkspace, report: WorkspaceRe
 const reportRailActionButtonClass =
   "inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-2.5 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-border-subtle disabled:hover:brightness-100 disabled:active:scale-100"
 
+const optimisticUnassignResetStatuses: WorkspaceReport["status"][] = [
+  "assigned",
+  "in_progress",
+  "ready_for_review",
+]
+
 function ReportRailAssignmentPanel({
   members,
   membersErrorMessage,
@@ -1997,7 +2004,6 @@ function ReportRailAssignmentPanel({
   report: WorkspaceReport
   workspace: MockWorkspace
 }) {
-  const router = useRouter()
   const [selectedAssigneeUserId, setSelectedAssigneeUserId] = useState(
     report.assigneeUserId ?? unassignedSelectValue
   )
@@ -2025,21 +2031,44 @@ function ReportRailAssignmentPanel({
     setError(null)
     setMessage(null)
 
+    const nextAssigneeUserId =
+      selectedAssigneeUserId === unassignedSelectValue
+        ? null
+        : selectedAssigneeUserId
+    const optimisticAssignee = nextAssigneeUserId
+      ? developerMembers.find((member) => member.userId === nextAssigneeUserId)
+      : undefined
+    const optimisticReport: WorkspaceReport = {
+      ...report,
+      assignee: optimisticAssignee
+        ? {
+            avatarUrl: optimisticAssignee.avatarUrl,
+            initials: optimisticAssignee.initials,
+            name: optimisticAssignee.name,
+          }
+        : undefined,
+      assigneeUserId: nextAssigneeUserId,
+      status: nextAssigneeUserId
+        ? "assigned"
+        : optimisticUnassignResetStatuses.includes(report.status)
+          ? "reviewing"
+          : report.status,
+    }
+
+    onReportChange(optimisticReport)
+
     try {
       const result = await patchJson<ReportMutationResponse>(
         `${getReportMutationBaseUrl(workspace.slug, report.id)}/assignment`,
         {
-          assigneeUserId:
-            selectedAssigneeUserId === unassignedSelectValue
-              ? null
-              : selectedAssigneeUserId,
+          assigneeUserId: nextAssigneeUserId,
         }
       )
 
       onReportChange(result.report)
       setMessage("Assignment saved.")
-      router.refresh()
     } catch (saveError) {
+      onReportChange(report)
       setError(getMutationErrorMessage(saveError))
     } finally {
       setIsSaving(false)
@@ -2194,7 +2223,6 @@ function ReportRailDeveloperStatusPanel({
   report: WorkspaceReport
   workspace: MockWorkspace
 }) {
-  const router = useRouter()
   const [isSavingStatus, setIsSavingStatus] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -2214,6 +2242,13 @@ function ReportRailDeveloperStatusPanel({
     setMessage(null)
     setError(null)
 
+    const optimisticReport: WorkspaceReport = {
+      ...report,
+      status,
+    }
+
+    onReportChange(optimisticReport)
+
     try {
       const result = await patchJson<ReportMutationResponse>(
         `${getReportMutationBaseUrl(workspace.slug, report.id)}/status`,
@@ -2222,8 +2257,8 @@ function ReportRailDeveloperStatusPanel({
 
       onReportChange(result.report)
       setMessage(successMessage)
-      router.refresh()
     } catch (statusError) {
+      onReportChange(report)
       setError(getMutationErrorMessage(statusError))
     } finally {
       setIsSavingStatus(false)
@@ -2421,6 +2456,16 @@ function ReportsContextRail({
     ? detailReportsById[selectedSummaryReport.id]
     : undefined
   const selectedReport = selectedDetailReport ?? selectedSummaryReport
+  const handleReportChange = useCallback(
+    (nextReport: WorkspaceReport) => {
+      setDetailReportsById((currentDetails) => ({
+        ...currentDetails,
+        [nextReport.id]: nextReport,
+      }))
+      onReportChange(nextReport)
+    },
+    [onReportChange]
+  )
 
   useEffect(() => {
     if (
@@ -2440,11 +2485,7 @@ function ReportsContextRail({
         )
 
         if (isMounted) {
-          setDetailReportsById((currentDetails) => ({
-            ...currentDetails,
-            [result.report.id]: result.report,
-          }))
-          onReportChange(result.report)
+          handleReportChange(result.report)
         }
       } catch {
         // Keep the fast summary rail visible if full evidence is temporarily unavailable.
@@ -2458,8 +2499,8 @@ function ReportsContextRail({
     }
   }, [
     detailReportsById,
+    handleReportChange,
     isLoading,
-    onReportChange,
     selectedSummaryReport,
     workspace.slug,
   ])
@@ -2478,7 +2519,7 @@ function ReportsContextRail({
       members={members}
       membersErrorMessage={membersErrorMessage}
       membersIsLoading={membersIsLoading}
-      onReportChange={onReportChange}
+      onReportChange={handleReportChange}
       report={selectedReport}
       workspace={workspace}
     />
@@ -2836,9 +2877,9 @@ function WorkspaceShellContent({
     }
   }, [canManageAssignments, isReportRailRoute, reportRailMembersEndpoint])
 
-  function handleReportChange(nextReport: WorkspaceReport) {
+  const handleReportChange = useCallback((nextReport: WorkspaceReport) => {
     updateReport(nextReport)
-  }
+  }, [updateReport])
 
   const shouldDisableReportsRail =
     isReportsIndexRoute &&

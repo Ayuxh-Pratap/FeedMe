@@ -69,6 +69,38 @@ export type WorkspaceReport = {
   commentsCount: number
 }
 
+export type WorkspaceReportSummary = WorkspaceReport
+export type WorkspaceReportDetail = WorkspaceReport
+
+export type WorkspaceReportStatusFilter =
+  | "all"
+  | "open"
+  | "in_progress"
+  | "resolved"
+
+export type WorkspaceReportSort =
+  | "newest"
+  | "oldest"
+  | "priority"
+  | "comments"
+
+export type WorkspaceReportScope = "assigned" | "reported"
+
+export type WorkspaceReportsPageInfo = {
+  hasNextPage: boolean
+  limit: number
+  nextCursor: string | null
+}
+
+export type WorkspaceReportsListResponse = {
+  reports: WorkspaceReportSummary[]
+  pageInfo: WorkspaceReportsPageInfo
+}
+
+export type WorkspaceReportDetailResponse = {
+  report: WorkspaceReportDetail
+}
+
 export const activeReportStatuses = new Set<WorkspaceReportStatus>([
   "submitted",
   "reviewing",

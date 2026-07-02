@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto"
 
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm"
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNull,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm"
 
 import { db } from "@/db"
 import {
@@ -16,10 +27,14 @@ import {
   type ReportViewport,
 } from "@/db/schema"
 import {
+  activeReportStatuses,
   formatReportCapturedAgo,
   formatReportCapturedAt,
-  type WorkspaceReportStatus,
+  progressReportStatuses,
   type WorkspaceReport,
+  type WorkspaceReportSort,
+  type WorkspaceReportStatus,
+  type WorkspaceReportsPageInfo,
 } from "@/lib/reports"
 import { getInitialsFromName, getNameFromEmail } from "@/lib/team-members"
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/http/errors"
@@ -29,6 +44,7 @@ import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
 import type {
   AssignReportInput,
   CreateReportInput,
+  ListReportsInput,
   UpdateReportStatusInput,
 } from "@/server/reports/validation"
 
@@ -99,6 +115,127 @@ function commentsCountSql() {
       and ${reportComments.reportId} = ${reports.id}
       and ${reportComments.deletedAt} is null
   )`.mapWith(Number)
+}
+
+function encodeReportsCursor(offset: number) {
+  return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url")
+}
+
+function decodeReportsCursor(cursor?: string) {
+  if (!cursor) {
+    return 0
+  }
+
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8")
+    ) as { offset?: unknown }
+
+    if (
+      typeof decoded.offset === "number" &&
+      Number.isInteger(decoded.offset) &&
+      decoded.offset >= 0
+    ) {
+      return decoded.offset
+    }
+  } catch {
+    // The validation error below keeps the API response consistent.
+  }
+
+  throw new ValidationError("The report page cursor is invalid.", {
+    cursor: ["Refresh the page and try again."],
+  })
+}
+
+function getReportStatusCondition(status: ListReportsInput["status"]) {
+  if (status === "open") {
+    return inArray(reports.status, [...activeReportStatuses])
+  }
+
+  if (status === "in_progress") {
+    return inArray(reports.status, [...progressReportStatuses])
+  }
+
+  if (status === "resolved") {
+    return eq(reports.status, "resolved")
+  }
+
+  return undefined
+}
+
+function getReportScopeCondition(
+  scope: ListReportsInput["scope"],
+  userId: string
+) {
+  if (scope === "assigned") {
+    return eq(reports.assigneeUserId, userId)
+  }
+
+  if (scope === "reported") {
+    return eq(reports.reporterUserId, userId)
+  }
+
+  return undefined
+}
+
+function getReportSearchCondition(query?: string) {
+  if (!query) {
+    return undefined
+  }
+
+  const searchTerm = `%${query}%`
+
+  return or(
+    ilike(reports.title, searchTerm),
+    ilike(reports.summary, searchTerm),
+    ilike(reports.domain, searchTerm),
+    ilike(reports.url, searchTerm),
+    ilike(reports.feedbackMessage, searchTerm)
+  )
+}
+
+function getReportOrderBy(sort: WorkspaceReportSort) {
+  const newestFirst = [desc(reports.capturedAt), desc(reports.id)]
+
+  if (sort === "oldest") {
+    return [asc(reports.capturedAt), asc(reports.id)]
+  }
+
+  if (sort === "priority") {
+    return [
+      sql`case ${reports.severity}
+        when 'urgent' then 0
+        when 'high' then 1
+        when 'medium' then 2
+        else 3
+      end asc`,
+      ...newestFirst,
+    ]
+  }
+
+  if (sort === "comments") {
+    return [desc(commentsCountSql()), ...newestFirst]
+  }
+
+  return newestFirst
+}
+
+function getReportsPageInfo({
+  hasNextPage,
+  limit,
+  offset,
+  pageSize,
+}: {
+  hasNextPage: boolean
+  limit: number
+  offset: number
+  pageSize: number
+}): WorkspaceReportsPageInfo {
+  return {
+    hasNextPage,
+    limit,
+    nextCursor: hasNextPage ? encodeReportsCursor(offset + pageSize) : null,
+  }
 }
 
 function reportSelectFields() {
@@ -510,26 +647,62 @@ export async function getWorkspaceReportCount(workspaceId: string) {
   return row?.count ?? 0
 }
 
-export async function listWorkspaceReports(userId: string, workspaceSlug: string) {
+export async function listWorkspaceReports(
+  userId: string,
+  workspaceSlug: string,
+  input: ListReportsInput = {
+    limit: 30,
+    sort: "newest",
+    status: "all",
+  }
+) {
   const workspace = await requireWorkspaceForReportsRead(userId, workspaceSlug)
+  const offset = decodeReportsCursor(input.cursor)
+  const conditions: SQL[] = [
+    eq(reports.workspaceId, workspace.id),
+    isNull(reports.archivedAt),
+  ]
+  const statusCondition = getReportStatusCondition(input.status)
+  const scopeCondition = getReportScopeCondition(input.scope, userId)
+  const searchCondition = getReportSearchCondition(input.q)
+
+  if (statusCondition) {
+    conditions.push(statusCondition)
+  }
+
+  if (scopeCondition) {
+    conditions.push(scopeCondition)
+  }
+
+  if (searchCondition) {
+    conditions.push(searchCondition)
+  }
+
   const rows = await db
     .select(reportSelectFields())
     .from(reports)
-    .where(
-      and(
-        eq(reports.workspaceId, workspace.id),
-        isNull(reports.archivedAt)
-      )
-    )
-    .orderBy(desc(reports.capturedAt))
+    .where(and(...conditions))
+    .orderBy(...getReportOrderBy(input.sort))
+    .limit(input.limit + 1)
+    .offset(offset)
+  const pageRows = rows.slice(0, input.limit)
+  const hasNextPage = rows.length > input.limit
 
   const peopleById = await getPeopleById(
-    compactUserIds(rows.flatMap((row) => [row.reporterUserId, row.assigneeUserId]))
+    compactUserIds(
+      pageRows.flatMap((row) => [row.reporterUserId, row.assigneeUserId])
+    )
   )
 
   return {
     workspace,
-    reports: rows.map((row) => serializeReport(row, peopleById)),
+    reports: pageRows.map((row) => serializeReport(row, peopleById)),
+    pageInfo: getReportsPageInfo({
+      hasNextPage,
+      limit: input.limit,
+      offset,
+      pageSize: pageRows.length,
+    }),
   }
 }
 

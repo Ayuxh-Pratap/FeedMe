@@ -4,8 +4,10 @@ import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import {
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
@@ -15,6 +17,7 @@ import {
   Check,
   ChevronDown,
   Globe2,
+  Loader2,
 } from "lucide-react"
 
 import {
@@ -27,21 +30,23 @@ import {
   isInProgressWorkspaceReport,
   isOpenWorkspaceReport,
   type WorkspaceReport,
+  type WorkspaceReportSort,
+  type WorkspaceReportsPageInfo,
+  type WorkspaceReportsListResponse,
 } from "@/lib/reports"
-import {
-  matchesWorkspaceReportSearch,
-} from "@/lib/dashboard-search"
 import { cn } from "@/lib/utils"
 import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
+import { ApiClientError, getJson } from "@/lib/api-client"
 
 type ReportsListProps = {
+  pageInfo: WorkspaceReportsPageInfo
   reports: WorkspaceReport[]
   workspaceSlug: string
 }
 
 type ReportViewMode = "grid" | "table"
 type StatusFilter = "all" | "open" | "in_progress" | "resolved"
-type ReportSort = "newest" | "oldest" | "priority" | "comments"
+type ReportSort = WorkspaceReportSort
 type SearchParamsLike = {
   get: (name: string) => string | null
 }
@@ -71,12 +76,7 @@ const sortOptions: {
   { label: "Most comments", value: "comments" },
 ]
 
-const severitySortRank: Record<WorkspaceReport["severity"], number> = {
-  urgent: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-}
+const reportsPageSize = 30
 
 function getViewMode(searchParams: SearchParamsLike): ReportViewMode {
   return searchParams.get("view") === "grid" ? "grid" : "table"
@@ -102,38 +102,61 @@ function getReportSort(searchParams: SearchParamsLike): ReportSort {
   return "newest"
 }
 
-function getCapturedTimestamp(report: WorkspaceReport) {
-  const timestamp = Date.parse(report.capturedAtIso ?? report.capturedAt)
-
-  return Number.isNaN(timestamp) ? 0 : timestamp
-}
-
-function sortReports(reports: WorkspaceReport[], sort: ReportSort) {
-  return [...reports].sort((first, second) => {
-    const newestFirst =
-      getCapturedTimestamp(second) - getCapturedTimestamp(first)
-
-    if (sort === "oldest") {
-      return getCapturedTimestamp(first) - getCapturedTimestamp(second)
-    }
-
-    if (sort === "priority") {
-      return (
-        severitySortRank[first.severity] -
-          severitySortRank[second.severity] || newestFirst
-      )
-    }
-
-    if (sort === "comments") {
-      return second.commentsCount - first.commentsCount || newestFirst
-    }
-
-    return newestFirst
-  })
-}
-
 function getSortLabel(sort: ReportSort) {
   return sortOptions.find((option) => option.value === sort)?.label ?? "Newest first"
+}
+
+function mergeReportsById(
+  currentReports: WorkspaceReport[],
+  nextReports: WorkspaceReport[]
+) {
+  const reportsById = new Map<string, WorkspaceReport>()
+
+  for (const report of currentReports) {
+    reportsById.set(report.id, report)
+  }
+
+  for (const report of nextReports) {
+    reportsById.set(report.id, report)
+  }
+
+  return [...reportsById.values()]
+}
+
+function getReportsListUrl({
+  cursor,
+  searchQuery,
+  sort,
+  status,
+  workspaceSlug,
+}: {
+  cursor?: string | null
+  searchQuery: string
+  sort: ReportSort
+  status: StatusFilter
+  workspaceSlug: string
+}) {
+  const searchParams = new URLSearchParams()
+
+  searchParams.set("limit", String(reportsPageSize))
+
+  if (cursor) {
+    searchParams.set("cursor", cursor)
+  }
+
+  if (searchQuery) {
+    searchParams.set("q", searchQuery)
+  }
+
+  if (sort !== "newest") {
+    searchParams.set("sort", sort)
+  }
+
+  if (status !== "all") {
+    searchParams.set("status", status)
+  }
+
+  return `/api/workspaces/${encodeURIComponent(workspaceSlug)}/reports?${searchParams}`
 }
 
 function ReportPriorityCode({
@@ -261,12 +284,14 @@ function ReportEvidenceImage({ report }: { report: WorkspaceReport }) {
 
 function ReportsHeader({
   activeFilter,
+  hasMoreReports,
   onFilterChange,
   onSortChange,
   reports,
   sort,
 }: {
   activeFilter: StatusFilter
+  hasMoreReports: boolean
   onFilterChange: (filter: StatusFilter) => void
   onSortChange: (sort: ReportSort) => void
   reports: WorkspaceReport[]
@@ -285,8 +310,10 @@ function ReportsHeader({
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1 rounded-lg border border-border-hairline bg-fill-translucent p-1">
             {filters.map((filter) => {
-              const count = reports.filter(filter.match).length
               const active = activeFilter === filter.value
+              const count = active
+                ? `${reports.filter(filter.match).length}${hasMoreReports ? "+" : ""}`
+                : null
 
               return (
                 <button
@@ -301,7 +328,9 @@ function ReportsHeader({
                   )}
                 >
                   {filter.label}
-                  <span className="text-caption text-text-muted">{count}</span>
+                  {count ? (
+                    <span className="text-caption text-text-muted">{count}</span>
+                  ) : null}
                 </button>
               )
             })}
@@ -409,6 +438,34 @@ function ReportSortDropdown({
           })}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function ReportsPaginationFooter({
+  hasNextPage,
+  isLoadingMore,
+  onLoadMore,
+}: {
+  hasNextPage: boolean
+  isLoadingMore: boolean
+  onLoadMore: () => void
+}) {
+  if (!hasNextPage) {
+    return null
+  }
+
+  return (
+    <div className="flex justify-center border-t border-border-hairline px-4 py-3">
+      <button
+        type="button"
+        disabled={isLoadingMore}
+        onClick={onLoadMore}
+        className="inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-subtle disabled:hover:brightness-100 disabled:active:scale-100"
+      >
+        {isLoadingMore ? <Loader2 className="size-3.5 animate-spin" /> : null}
+        Load more reports
+      </button>
     </div>
   )
 }
@@ -562,7 +619,11 @@ export function ReportTableRow({
   )
 }
 
-export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
+export function ReportsList({
+  pageInfo,
+  reports,
+  workspaceSlug,
+}: ReportsListProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const viewMode = getViewMode(searchParams)
@@ -571,46 +632,52 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
   const {
     dashboardSearchQuery,
     registerReports,
+    reportRailReports,
     setReportRailSelectedReportId,
   } = useWorkspaceDashboardData()
   const searchQuery = dashboardSearchQuery
+  const didMountRef = useRef(false)
+  const requestSequenceRef = useRef(0)
+  const [reportRows, setReportRows] = useState(reports)
+  const [currentPageInfo, setCurrentPageInfo] = useState(pageInfo)
+  const [isPending, setIsPending] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState(initialStatusFilter)
   const [sort, setSort] = useState(initialSort)
   const activeFilter = filters.find((filter) => filter.value === statusFilter) ?? filters[0]
-  const searchScopedReports = useMemo(
-    () =>
-      reports.filter((report) =>
-        matchesWorkspaceReportSearch(report, searchQuery)
-      ),
-    [reports, searchQuery]
+  const reportUpdatesById = useMemo(
+    () => new Map(reportRailReports.map((report) => [report.id, report])),
+    [reportRailReports]
   )
-  const filteredReports = useMemo(
-    () => sortReports(searchScopedReports.filter(activeFilter.match), sort),
-    [activeFilter, searchScopedReports, sort]
+  const visibleReports = useMemo(
+    () =>
+      reportRows.map((report) => reportUpdatesById.get(report.id) ?? report),
+    [reportRows, reportUpdatesById]
   )
   const requestedReportId = searchParams.get("report")
-  const initialSelectedReportId = filteredReports.some(
+  const initialSelectedReportId = visibleReports.some(
       (report) => report.id === requestedReportId
     )
       ? requestedReportId
-      : filteredReports[0]?.id
+      : visibleReports[0]?.id
   const [selectedReportId, setSelectedReportId] = useState(
     initialSelectedReportId
   )
-  const effectiveSelectedReportId = filteredReports.some(
+  const effectiveSelectedReportId = visibleReports.some(
     (report) => report.id === selectedReportId
   )
     ? selectedReportId
-    : filteredReports[0]?.id
+    : visibleReports[0]?.id
 
-  function replaceSearchParams(nextSearchParams: URLSearchParams) {
+  const replaceSearchParams = useCallback((nextSearchParams: URLSearchParams) => {
     const query = nextSearchParams.toString()
     window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname)
-  }
+  }, [pathname])
 
-  function getCurrentSearchParams() {
+  const getCurrentSearchParams = useCallback(() => {
     return new URLSearchParams(window.location.search)
-  }
+  }, [])
 
   function selectReport(reportId: string) {
     setSelectedReportId(reportId)
@@ -621,26 +688,100 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
     replaceSearchParams(nextSearchParams)
   }
 
+  const loadReportsPage = useCallback(
+    async ({ cursor = null }: { cursor?: string | null } = {}) => {
+      const requestId = requestSequenceRef.current + 1
+      const shouldAppend = Boolean(cursor)
+
+      requestSequenceRef.current = requestId
+      setErrorMessage(null)
+
+      if (shouldAppend) {
+        setIsLoadingMore(true)
+      } else {
+        setIsPending(true)
+      }
+
+      try {
+        const result = await getJson<WorkspaceReportsListResponse>(
+          getReportsListUrl({
+            cursor,
+            searchQuery,
+            sort,
+            status: statusFilter,
+            workspaceSlug,
+          })
+        )
+
+        if (requestSequenceRef.current !== requestId) {
+          return
+        }
+
+        setCurrentPageInfo(result.pageInfo)
+        setReportRows((currentReports) =>
+          shouldAppend
+            ? mergeReportsById(currentReports, result.reports)
+            : result.reports
+        )
+
+        if (!shouldAppend) {
+          const nextSearchParams = getCurrentSearchParams()
+          const requestedId = nextSearchParams.get("report")
+          const nextSelectedReportId = result.reports.some(
+            (report) => report.id === requestedId
+          )
+            ? requestedId
+            : result.reports[0]?.id ?? null
+
+          setSelectedReportId(nextSelectedReportId)
+          setReportRailSelectedReportId(nextSelectedReportId)
+
+          if (nextSelectedReportId) {
+            nextSearchParams.set("report", nextSelectedReportId)
+          } else {
+            nextSearchParams.delete("report")
+          }
+
+          replaceSearchParams(nextSearchParams)
+        }
+      } catch (error) {
+        if (requestSequenceRef.current === requestId) {
+          setErrorMessage(
+            error instanceof ApiClientError
+              ? error.message
+              : "Unable to load reports. Please try again."
+          )
+        }
+      } finally {
+        if (requestSequenceRef.current === requestId) {
+          if (shouldAppend) {
+            setIsLoadingMore(false)
+          } else {
+            setIsPending(false)
+          }
+        }
+      }
+    },
+    [
+      searchQuery,
+      getCurrentSearchParams,
+      replaceSearchParams,
+      setReportRailSelectedReportId,
+      sort,
+      statusFilter,
+      workspaceSlug,
+    ]
+  )
+
   function changeFilter(filter: StatusFilter) {
     const nextSearchParams = getCurrentSearchParams()
-    const nextFilter = filters.find((item) => item.value === filter) ?? filters[0]
-    const nextReports = sortReports(searchScopedReports.filter(nextFilter.match), sort)
-    const nextSelectedReportId = nextReports[0]?.id
 
     setStatusFilter(filter)
-    setSelectedReportId(nextSelectedReportId)
-    setReportRailSelectedReportId(nextSelectedReportId ?? null)
 
     if (filter === "all") {
       nextSearchParams.delete("status")
     } else {
       nextSearchParams.set("status", filter)
-    }
-
-    if (nextSelectedReportId) {
-      nextSearchParams.set("report", nextSelectedReportId)
-    } else {
-      nextSearchParams.delete("report")
     }
 
     replaceSearchParams(nextSearchParams)
@@ -660,42 +801,76 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
     replaceSearchParams(nextSearchParams)
   }
 
+  function loadMoreReports() {
+    if (!currentPageInfo.nextCursor || isLoadingMore) {
+      return
+    }
+
+    void loadReportsPage({ cursor: currentPageInfo.nextCursor })
+  }
+
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true
+      return
+    }
+
+    void loadReportsPage()
+  }, [loadReportsPage])
+
   useEffect(() => {
     const nextSelectedReportId = effectiveSelectedReportId ?? null
 
     registerReports({
-      reports,
+      reports: visibleReports,
       selectedReportId: nextSelectedReportId,
-      visibleReportIds: filteredReports.map((report) => report.id),
+      visibleReportIds: visibleReports.map((report) => report.id),
     })
     setReportRailSelectedReportId(nextSelectedReportId)
   }, [
     effectiveSelectedReportId,
-    filteredReports,
     registerReports,
-    reports,
     setReportRailSelectedReportId,
+    visibleReports,
   ])
 
   return (
     <section className="flex h-full min-h-0 flex-col">
       <ReportsHeader
         activeFilter={statusFilter}
+        hasMoreReports={currentPageInfo.hasNextPage}
         onFilterChange={changeFilter}
         onSortChange={changeSort}
-        reports={searchScopedReports}
+        reports={visibleReports}
         sort={sort}
       />
 
-      {filteredReports.length === 0 ? (
+      {isPending ? (
+        <div className="h-px shrink-0 overflow-hidden bg-fill-translucent">
+          <div className="h-full w-full animate-pulse bg-primary-soft" />
+        </div>
+      ) : null}
+
+      {errorMessage ? (
+        <div className="border-b border-border-hairline px-4 py-2 text-caption text-error">
+          {errorMessage}
+        </div>
+      ) : null}
+
+      {visibleReports.length === 0 ? (
         <ReportsNoMatches
           activeFilterLabel={activeFilter.label}
           searchQuery={searchQuery}
         />
       ) : null}
 
-      {filteredReports.length > 0 && viewMode === "table" ? (
-        <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto">
+      {visibleReports.length > 0 && viewMode === "table" ? (
+        <div
+          className={cn(
+            "feedme-scrollbar min-h-0 flex-1 overflow-auto transition-opacity duration-base ease-out-soft",
+            isPending && "opacity-60"
+          )}
+        >
           <table className="w-full min-w-[900px] border-collapse text-left">
             <caption className="sr-only">Feedback reports</caption>
             <thead className="sticky top-0 z-10 border-b border-border-hairline bg-background">
@@ -715,7 +890,7 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
               </tr>
             </thead>
             <tbody>
-              {filteredReports.map((report) => (
+              {visibleReports.map((report) => (
                 <ReportTableRow
                   key={report.id}
                   isSelected={report.id === effectiveSelectedReportId}
@@ -726,13 +901,23 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
               ))}
             </tbody>
           </table>
+          <ReportsPaginationFooter
+            hasNextPage={currentPageInfo.hasNextPage}
+            isLoadingMore={isLoadingMore}
+            onLoadMore={loadMoreReports}
+          />
         </div>
       ) : null}
 
-      {filteredReports.length > 0 && viewMode === "grid" ? (
-        <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto p-4">
+      {visibleReports.length > 0 && viewMode === "grid" ? (
+        <div
+          className={cn(
+            "feedme-scrollbar min-h-0 flex-1 overflow-auto p-4 transition-opacity duration-base ease-out-soft",
+            isPending && "opacity-60"
+          )}
+        >
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,310px),1fr))] gap-3">
-            {filteredReports.map((report) => (
+            {visibleReports.map((report) => (
               <ReportCard
                 key={report.id}
                 isSelected={report.id === effectiveSelectedReportId}
@@ -742,6 +927,11 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
               />
             ))}
           </div>
+          <ReportsPaginationFooter
+            hasNextPage={currentPageInfo.hasNextPage}
+            isLoadingMore={isLoadingMore}
+            onLoadMore={loadMoreReports}
+          />
         </div>
       ) : null}
     </section>

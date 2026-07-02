@@ -1125,6 +1125,66 @@ workspace
 nextPath: /:workspaceSlug/reports
 ```
 
+## Report List And Detail Contracts
+
+Reports use two separate read contracts.
+
+List contract:
+
+```txt
+GET /api/workspaces/:workspaceSlug/reports
+```
+
+Query params:
+
+```txt
+q optional
+status all | open | in_progress | resolved
+scope assigned | reported optional
+sort newest | oldest | priority | comments
+cursor optional opaque token
+limit default 30, max 50
+```
+
+Returns:
+
+```txt
+reports: lightweight report summaries
+pageInfo: { hasNextPage, nextCursor, limit }
+```
+
+The list contract is backend-filtered and paginated. The dashboard must not fetch all workspace reports and then filter them in the browser for Reports or My Work. Search, status tabs, My Work scope, sort, and pagination belong to the API query.
+
+Detail contract:
+
+```txt
+GET /api/workspaces/:workspaceSlug/reports/:reportId
+```
+
+Returns:
+
+```txt
+report: full detail with screenshots, selected element, feedback, developer prompt
+```
+
+The list contract should stay fast and avoid screenshot payloads. The detail contract can fetch heavier evidence by report id when the rail or full detail page needs it. Image storage still needs to move away from base64/data URLs in a future storage slice.
+
+Dashboard interaction rules:
+
+```txt
+row selection updates locally immediately
+right rail may show summary first, then hydrate detail
+assignment/status mutations update optimistically
+failed mutations roll back to the previous report
+do not router.refresh() after assignment/status changes
+```
+
+Future follow-up:
+
+```txt
+add a report counts contract for exact tab totals across paginated result sets
+```
+
 ## Dev-Friendly Style
 
 Prefer clear, boring names over clever abstractions.
