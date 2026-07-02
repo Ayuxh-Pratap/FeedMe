@@ -156,6 +156,8 @@ current domains
 
 The extension card should act like a small product teaser, not a generic upsell. It should borrow the active sidebar item surface language, stay gray/charcoal, and use a tonal install CTA that already feels slightly lifted at rest. Avoid icons, playful blue gradient washes, or terminal mockups here. The card should be dismissible with a small top-right close control and persist that dismissal in local storage.
 
+Until FeedMe has a Chrome Web Store listing, the extension card opens the shared extension install dialog. The dialog downloads `public/downloads/feedme-extension.zip` and explains the manual Chrome flow: unzip, open `chrome://extensions`, enable Developer mode, and Load unpacked. The topbar Capture report CTA should open the same dialog so users who try to capture before installing are guided to the extension instead of hitting a dead button.
+
 Topbar
 -> search
 -> primary Capture report CTA

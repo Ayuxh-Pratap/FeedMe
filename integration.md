@@ -499,6 +499,41 @@ Voice dictation can be offered as an input helper for title and description.
 Typing must remain the fallback when the browser does not support speech
 recognition or the user denies microphone access.
 
+## Extension MVP Distribution
+
+FeedMe cannot silently install an unpublished Chrome extension from the
+dashboard. Until a Chrome Web Store developer account and listing exist, the
+dashboard should offer a downloadable extension ZIP and clear manual loading
+steps.
+
+Dashboard install surfaces:
+
+```txt
+sidebar extension card
+topbar Capture report CTA when extension install/help is needed
+```
+
+Both surfaces should open the same install dialog:
+
+```txt
+1. Download extension ZIP.
+2. Unzip the package.
+3. Open chrome://extensions.
+4. Enable Developer mode.
+5. Click Load unpacked and choose the unzipped chrome-mv3 folder.
+```
+
+Operational packaging rule:
+
+```txt
+extension/.output/feedmeextension-*-chrome.zip
+-> copy/rename to main/public/downloads/feedme-extension.zip
+-> deploy dashboard so users download the current package
+```
+
+Do not imply one-click installation until the extension is published through an
+official browser store or an enterprise policy-controlled distribution channel.
+
 ## Report Data Shape
 
 Reports should support dashboard triage and developer handoff.

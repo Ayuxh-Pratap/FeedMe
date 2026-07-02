@@ -879,6 +879,18 @@ registration would prevent FeedMe code from being injected on unrelated HTTPS
 pages at all.
 ```
 
+Dashboard distribution note:
+
+```txt
+Until FeedMe has a Chrome Web Store listing, the dashboard serves the current
+extension package from public/downloads/feedme-extension.zip. The sidebar
+extension card and topbar Capture report CTA open one shared install dialog with
+manual Chrome instructions: download, unzip, open chrome://extensions, enable
+Developer mode, and Load unpacked. After extension changes, refresh the package
+by creating the WXT Chrome ZIP and copying it into public/downloads with that
+stable filename before deployment.
+```
+
 ### Slice 8: Assignment And My Work
 
 Status:

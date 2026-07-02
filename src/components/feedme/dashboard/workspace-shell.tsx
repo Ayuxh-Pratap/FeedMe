@@ -14,6 +14,7 @@ import {
   CircleHelp,
   ClipboardList,
   Code2,
+  Download,
   Globe2,
   Grid2X2,
   Inbox,
@@ -148,6 +149,8 @@ const navItems: NavItem[] = [
 
 const extensionCardDismissedKey = "feedme:extension-card-dismissed"
 const extensionCardDismissedEvent = "feedme:extension-card-dismissed-change"
+const extensionDownloadHref = "/downloads/feedme-extension.zip"
+const chromeExtensionsUrl = "chrome://extensions"
 
 function subscribeToExtensionCardDismissal(onStoreChange: () => void) {
   window.addEventListener("storage", onStoreChange)
@@ -171,14 +174,18 @@ function DashboardPrimaryButton({
   children,
   className,
   ariaLabel,
+  onClick,
 }: {
   children: ReactNode
   className?: string
   ariaLabel?: string
+  onClick?: () => void
 }) {
   return (
     <Button
       aria-label={ariaLabel}
+      type="button"
+      onClick={onClick}
       className={cn(
         "relative isolate h-8 overflow-hidden rounded-lg border-primary-soft/60 px-3.5 text-heading-5",
         "[background:var(--gradient-primary-premium)] text-primary-foreground shadow-[var(--elevation-primary-premium)]",
@@ -766,6 +773,112 @@ function DomainsDialog({
   )
 }
 
+function ExtensionInstallDialog({
+  onOpenChange,
+  open,
+}: {
+  onOpenChange: (open: boolean) => void
+  open: boolean
+}) {
+  const [copied, setCopied] = useState(false)
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
+      setCopied(false)
+    }
+
+    onOpenChange(nextOpen)
+  }
+
+  async function copyChromeUrl() {
+    try {
+      await navigator.clipboard.writeText(chromeExtensionsUrl)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className="w-[min(calc(100vw-2rem),560px)] !max-w-[min(calc(100vw-2rem),560px)] gap-0 overflow-hidden rounded-xl border border-border-hairline bg-surface-card p-0 text-foreground shadow-popover sm:!max-w-[min(calc(100vw-2rem),560px)]"
+      >
+        <div className="flex items-start justify-between gap-4 px-5 pb-4 pt-5">
+          <div className="min-w-0">
+            <div className="mb-3 flex size-9 items-center justify-center rounded-lg border border-primary-soft/60 [background:var(--gradient-primary-premium)] text-primary-foreground shadow-[var(--elevation-primary-premium)]">
+              <Download className="size-4" />
+            </div>
+            <DialogTitle className="text-heading-3 text-foreground">
+              Install FeedMe extension
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-body-3 text-text-body">
+              Download the Chrome package and load it manually while the Web Store
+              listing is not published.
+            </DialogDescription>
+          </div>
+          <button
+            type="button"
+            aria-label="Close extension install dialog"
+            onClick={() => handleOpenChange(false)}
+            className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)]"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4 border-t border-border-hairline px-5 py-5">
+          <ol className="grid gap-2">
+            {[
+              "Download the ZIP and unzip it on your computer.",
+              "Open chrome://extensions and turn on Developer mode.",
+              "Click Load unpacked and choose the unzipped chrome-mv3 folder.",
+            ].map((step, index) => (
+              <li
+                key={step}
+                className="flex min-h-10 items-center gap-3 rounded-lg border border-border-hairline bg-fill-translucent px-3 py-2 text-body-3 text-text-body"
+              >
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-md border border-border-subtle bg-fill-subtle text-caption font-semibold text-foreground">
+                  {index + 1}
+                </span>
+                <span>{step}</span>
+              </li>
+            ))}
+          </ol>
+
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <a
+              href={extensionDownloadHref}
+              download
+              className="relative isolate flex h-10 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg border border-primary-soft/60 px-3 text-heading-5 text-primary-foreground shadow-[var(--elevation-primary-premium)] transition-all duration-base ease-out-soft [background:var(--gradient-primary-premium)] hover:shadow-[var(--elevation-primary-premium-hover)] active:scale-[var(--press-scale)]"
+            >
+              <Download className="size-4" />
+              Download extension ZIP
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                void copyChromeUrl()
+              }}
+              className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
+            >
+              {copied ? <Check className="size-4" /> : <ClipboardList className="size-4" />}
+              {copied ? "Copied" : "Copy Chrome URL"}
+            </button>
+          </div>
+
+          <p className="rounded-lg border border-border-hairline bg-fill-translucent px-3 py-2 text-caption text-text-muted">
+            Chrome does not allow a normal website to install an unpublished
+            extension in one click. This keeps the MVP honest until FeedMe gets
+            a Chrome Web Store listing.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function SidebarNav({
   closeLinks,
   workspaceSlug,
@@ -836,7 +949,7 @@ function SidebarNav({
   )
 }
 
-function ExtensionCard() {
+function ExtensionCard({ onInstall }: { onInstall: () => void }) {
   const dismissed = useSyncExternalStore(
     subscribeToExtensionCardDismissal,
     getExtensionCardDismissalSnapshot,
@@ -876,9 +989,10 @@ function ExtensionCard() {
 
       <button
         type="button"
+        onClick={onInstall}
         className="mt-3 flex h-8 w-full cursor-pointer items-center justify-center rounded-md border border-border-subtle bg-surface-raised text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
       >
-        Install extension
+        Download extension
       </button>
     </section>
   )
@@ -903,9 +1017,11 @@ function SidebarInviteButton({ workspace }: { workspace: MockWorkspace }) {
 
 function WorkspaceSidebar({
   availableWorkspaces,
+  onOpenExtensionInstall,
   workspace,
 }: {
   availableWorkspaces: WorkspaceSwitcherOption[]
+  onOpenExtensionInstall: () => void
   workspace: MockWorkspace
 }) {
   return (
@@ -918,7 +1034,7 @@ function WorkspaceSidebar({
 
       <div className="mt-auto space-y-2">
         <SidebarInviteButton workspace={workspace} />
-        <ExtensionCard />
+        <ExtensionCard onInstall={onOpenExtensionInstall} />
       </div>
     </aside>
   )
@@ -926,9 +1042,11 @@ function WorkspaceSidebar({
 
 function MobileNavSheet({
   availableWorkspaces,
+  onOpenExtensionInstall,
   workspace,
 }: {
   availableWorkspaces: WorkspaceSwitcherOption[]
+  onOpenExtensionInstall: () => void
   workspace: MockWorkspace
 }) {
   return (
@@ -968,7 +1086,7 @@ function MobileNavSheet({
           <div className="mb-2">
             <SidebarInviteButton workspace={workspace} />
           </div>
-          <ExtensionCard />
+          <ExtensionCard onInstall={onOpenExtensionInstall} />
         </div>
       </SheetContent>
     </Sheet>
@@ -1062,6 +1180,7 @@ function WorkspaceTopbar({
   availableWorkspaces,
   isRightRailOpen,
   isRightRailEnabled,
+  onOpenExtensionInstall,
   onToggleRightRail,
   onReportChange,
   reportRailErrorMessage,
@@ -1075,6 +1194,7 @@ function WorkspaceTopbar({
   availableWorkspaces: WorkspaceSwitcherOption[]
   isRightRailOpen: boolean
   isRightRailEnabled: boolean
+  onOpenExtensionInstall: () => void
   onToggleRightRail: () => void
   onReportChange?: (report: WorkspaceReport) => void
   reportRailErrorMessage?: string | null
@@ -1109,7 +1229,7 @@ function WorkspaceTopbar({
         </div>
 
         <div className="flex items-center gap-2 pl-4">
-          <DashboardPrimaryButton>
+          <DashboardPrimaryButton onClick={onOpenExtensionInstall}>
             <Camera className="size-4" />
             Capture report
           </DashboardPrimaryButton>
@@ -1134,6 +1254,7 @@ function WorkspaceTopbar({
         <div className="flex min-w-0 items-center gap-2">
           <MobileNavSheet
             availableWorkspaces={availableWorkspaces}
+            onOpenExtensionInstall={onOpenExtensionInstall}
             workspace={workspace}
           />
           <span className="min-w-0 truncate text-heading-5 text-foreground">
@@ -1143,7 +1264,11 @@ function WorkspaceTopbar({
 
         <div className="flex shrink-0 items-center gap-2 pl-3">
           <MobileSearchSheet workspace={workspace} />
-          <DashboardPrimaryButton ariaLabel="Capture report" className="px-3 sm:px-4">
+          <DashboardPrimaryButton
+            ariaLabel="Capture report"
+            className="px-3 sm:px-4"
+            onClick={onOpenExtensionInstall}
+          >
             <Camera className="size-4" />
             <span className="sr-only sm:not-sr-only">Capture</span>
           </DashboardPrimaryButton>
@@ -2567,6 +2692,7 @@ export function WorkspaceShell({
   workspace,
 }: WorkspaceShellProps) {
   const [isRightRailOpen, setIsRightRailOpen] = useState(true)
+  const [isExtensionInstallOpen, setIsExtensionInstallOpen] = useState(false)
   const [reportRailReports, setReportRailReports] = useState<WorkspaceReport[]>([])
   const [reportRailIsLoading, setReportRailIsLoading] = useState(true)
   const [reportRailErrorMessage, setReportRailErrorMessage] = useState<string | null>(null)
@@ -2691,9 +2817,15 @@ export function WorkspaceShell({
   const shouldShowRightRail = isRightRailEnabled && isRightRailOpen
 
   return (
-    <main className="flex h-screen overflow-hidden bg-card text-foreground">
+    <>
+      <ExtensionInstallDialog
+        open={isExtensionInstallOpen}
+        onOpenChange={setIsExtensionInstallOpen}
+      />
+      <main className="flex h-screen overflow-hidden bg-card text-foreground">
       <WorkspaceSidebar
         availableWorkspaces={availableWorkspaces}
+        onOpenExtensionInstall={() => setIsExtensionInstallOpen(true)}
         workspace={workspace}
       />
 
@@ -2703,6 +2835,7 @@ export function WorkspaceShell({
             availableWorkspaces={availableWorkspaces}
             isRightRailOpen={isRightRailOpen}
             isRightRailEnabled={isRightRailEnabled}
+            onOpenExtensionInstall={() => setIsExtensionInstallOpen(true)}
             onReportChange={handleReportChange}
             onToggleRightRail={() => setIsRightRailOpen((value) => !value)}
             reportRailErrorMessage={reportRailErrorMessage}
@@ -2740,6 +2873,7 @@ export function WorkspaceShell({
           </div>
         </div>
       </section>
-    </main>
+      </main>
+    </>
   )
 }
