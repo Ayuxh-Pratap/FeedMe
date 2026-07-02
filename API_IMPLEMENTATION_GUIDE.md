@@ -694,6 +694,7 @@ create report with status submitted
 create the initial report_status_events row in the same db.batch call
 optionally create up to 3 report asset metadata rows with the report
 report writes must include workspaceId on reports, assets, and status events
+extension-created report writes must include at least one screenshot asset
 ```
 
 Input shape:
@@ -711,7 +712,7 @@ selectedElement: tag, selector, text optional, attributes optional, boundingBox 
 feedbackMessage
 developerPrompt optional
 capturedAt optional
-assets optional: page_screenshot | element_screenshot | annotated_screenshot
+assets required: page_screenshot | element_screenshot | annotated_screenshot
 ```
 
 Dashboard wiring:
@@ -719,7 +720,7 @@ Dashboard wiring:
 ```txt
 Newly submitted reports appear in the Reports page, report right rail, report detail page, and workspace report count.
 My Work remains mock-backed until assignment/report ownership is connected.
-Report assets are saved as screenshot metadata and should be surfaced back through the read model for immediate dashboard evidence rendering.
+Report assets are required for extension-created reports, saved as screenshot metadata, and surfaced back through the read model for immediate dashboard evidence rendering.
 ```
 
 ### Slice 6.5: Additional Workspace Creation
@@ -863,7 +864,19 @@ The copied extension is now self-contained for shared feedback types and no long
 the old @feedme/shared workspace package.
 The popup uses a two-step exact-domain permission flow so FeedMe explains capture access
 before Chrome shows its browser-controlled host permission wording.
-Screenshot capture failures fall back to saving the report without images.
+Screenshot capture is mandatory. If Chrome blocks screenshot capture, the extension keeps
+the report unsaved, shows a blocking message in the bottom status pill, and does not
+create or sync the report. After submit starts, the composer closes and should not
+reopen around screenshot capture. The large extension surfaces are hidden during
+capture, but the bottom status pill may remain visible so the user does not see
+a blank state while FeedMe is working.
+The composer collects a user-authored title, description, category, and severity instead
+of deriving the report title from the browser page title.
+Future hardening: move from manifest-registered `https://*/*` content scripts to
+WXT runtime content-script registration per active allowed domain. The current
+content UI is gated by workspace domain and Chrome host permission, but runtime
+registration would prevent FeedMe code from being injected on unrelated HTTPS
+pages at all.
 ```
 
 ## API Contract For The First Flow

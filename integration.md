@@ -454,16 +454,47 @@ backend domain check passes or cached allow state is valid
    - selected element metadata
    - viewport metadata
    - browser/device metadata
-   - visible screenshot
-   - cropped/annotated element screenshot when possible
+   - issue title
+   - issue description
+   - category
+   - severity
+   - visible page screenshot
+   - cropped element screenshot when possible
+   - annotated screenshot when possible
 8. Extension submits report to workspace API.
 9. Server validates membership and domain.
 10. Report appears in workspace dashboard.
 ```
 
-If screenshot capture is blocked by Chrome, the extension should still submit
-the textual feedback and selected element metadata, mark the screenshot as
-missing, and show a calm message that the report was saved without images.
+Screenshots are mandatory for FeedMe reports. If screenshot capture is blocked
+by Chrome, the extension must not save the report locally or submit it to the
+backend. After submit, close the composer and use the bottom status pill for
+capture progress, save progress, success, and blocking errors. Do not reopen the
+composer after capture starts:
+
+```txt
+Screenshot permission is blocked. FeedMe needs a screenshot to save this report.
+```
+
+Before calling Chrome screenshot capture, the extension should close the composer
+and hide the large FeedMe interaction surfaces for a short capture frame: toolbar,
+hover outline, selected-element label, and any composer panel. The bottom status
+pill may remain visible during capture so the user never sees a blank flash; this
+small artifact is acceptable until a later screenshot pipeline can capture page
+pixels without extension UI.
+
+The composer should ask for:
+
+```txt
+title: short issue title
+description: issue details
+category: bug | ux | design | copy | performance | accessibility
+severity: low | medium | high | urgent
+```
+
+Voice dictation can be offered as an input helper for title and description.
+Typing must remain the fallback when the browser does not support speech
+recognition or the user denies microphone access.
 
 ## Report Data Shape
 
@@ -494,6 +525,8 @@ selectedElement:
   - text
   - attributes
 feedback:
+  - title
+  - description
   - message
   - reporter user id
   - reporter name
@@ -609,5 +642,8 @@ Later versions can add:
 - AI report summarization
 - AI developer prompt generation
 - screenshot/object storage
+- dynamic extension content-script registration per allowed workspace domain, so
+  FeedMe code is not injected on unrelated HTTPS pages before exact host
+  permission is granted
 - billing by workspace, seats, reports, domains, or projects
 - enterprise organization layer above workspaces

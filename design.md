@@ -291,6 +291,24 @@ The auth shell is fixed to the viewport height and must not create page scroll. 
 
 Report pages should prioritize screenshot evidence, issue title, severity, status, assignee, domain, browser/device metadata, comments, and next steps. The reports index can switch between a visual grid and a compact table. Grid view is the default because FeedMe reports are easiest to recognize from captured screenshots; card bodies must stay minimal and let the right rail carry the detail. Table view is the scan mode: compact issue/context/activity rows with one severity marker/tag and no screenshot evidence inside the row. Team pages should prioritize members, roles, presence, workload, invite status, and recent feedback activity. Operations pages should prioritize queue health, unresolved items, integrations, capture sources, and automation status.
 
+Extension capture UI follows the same charcoal, compact, tactile language as the
+dashboard. The floating composer should feel like a focused reporting tool, not
+a chat bubble: short issue title, issue description, category, severity, and a
+clear screenshot-required behavior. Do not spend header space on a persistent
+"screenshot required" chip, and never show a screenshot-optional toggle for
+extension reports. Use icon controls for voice dictation and capture states,
+keep labels and placeholders compact, and set explicit field typography so host
+page styles cannot enlarge the composer. If screenshot capture is blocked, the
+message should be plain and blocking rather than soft-warning: FeedMe needs a
+screenshot before it can save the report. Submitting a report should close the
+composer, move capture progress into the bottom status pill, briefly hide FeedMe
+UI only for the actual screenshot frame, and never reopen the composer after
+capture starts. Keep the small status pill visible during capture to avoid blank
+feedback states, even if it appears in the screenshot. Extension workspace and
+category controls should use FeedMe-styled compact menus instead of native
+browser dropdowns. The content composer and floating toolbar should stay visually
+compact in the viewport while preserving their internal layout proportions.
+
 Generated imagery inside the dashboard should look like product evidence: feedback widgets, browser captures, member collaboration, report triage, and operational queues. Avoid generic stock art, oversized hero illustrations, or purely atmospheric images.
 
 Motion should be quick and tactile:

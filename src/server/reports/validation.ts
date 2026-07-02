@@ -52,7 +52,10 @@ export const createReportInputSchema = z.object({
   feedbackMessage: z.string().trim().min(3).max(5000),
   developerPrompt: z.string().trim().max(8000).optional(),
   capturedAt: z.string().datetime().optional(),
-  assets: z.array(reportAssetInputSchema).max(3).optional().default([]),
+  assets: z
+    .array(reportAssetInputSchema)
+    .min(1, "FeedMe needs a screenshot to save this report.")
+    .max(3),
 })
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>
