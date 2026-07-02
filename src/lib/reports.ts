@@ -32,6 +32,8 @@ export type WorkspaceReportScreenshot = {
 
 export type WorkspaceReport = {
   id: string
+  reporterUserId?: string | null
+  assigneeUserId?: string | null
   title: string
   summary: string
   severity: WorkspaceReportSeverity

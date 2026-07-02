@@ -54,6 +54,19 @@ export async function postJson<T>(url: string, body?: unknown) {
   return readApiResponse<T>(response)
 }
 
+export async function patchJson<T>(url: string, body?: unknown) {
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+    body: JSON.stringify(body ?? {}),
+  })
+
+  return readApiResponse<T>(response)
+}
+
 export async function deleteJson<T>(url: string) {
   const response = await fetch(url, {
     method: "DELETE",

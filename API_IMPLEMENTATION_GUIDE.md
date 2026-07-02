@@ -646,7 +646,7 @@ Dashboard wiring:
 The Reports page now renders DB reports or the empty state.
 The report detail page now reads a DB report by workspace and report id.
 The report right rail fetches the real report list while on /:workspaceSlug/reports.
-The My Work route still uses mock reports until the assignment/report ownership slice.
+The My Work route is connected in the assignment/report ownership slice.
 The workspace shell report count uses the real non-archived report count.
 ```
 
@@ -719,7 +719,7 @@ Dashboard wiring:
 
 ```txt
 Newly submitted reports appear in the Reports page, report right rail, report detail page, and workspace report count.
-My Work remains mock-backed until assignment/report ownership is connected.
+My Work is populated from reporter and assignee ownership in the assignment/report ownership slice.
 Report assets are required for extension-created reports, saved as screenshot metadata, and surfaced back through the read model for immediate dashboard evidence rendering.
 ```
 
@@ -877,6 +877,80 @@ WXT runtime content-script registration per active allowed domain. The current
 content UI is gated by workspace domain and Chrome host permission, but runtime
 registration would prevent FeedMe code from being injected on unrelated HTTPS
 pages at all.
+```
+
+### Slice 8: Assignment And My Work
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Turn report ownership into a usable workflow.
+Admins and owners can assign reports to active developers and resolve reports.
+Developers can see assigned work in My Work and move their assigned reports through implementation statuses.
+Reporters can see the feedback they submitted in My Work.
+```
+
+Routes:
+
+```txt
+PATCH /api/workspaces/:workspaceSlug/reports/:reportId/assignment
+PATCH /api/workspaces/:workspaceSlug/reports/:reportId/status
+```
+
+Server files:
+
+```txt
+src/server/reports/service.ts
+src/server/reports/validation.ts
+src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/assignment/route.ts
+src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/status/route.ts
+src/lib/reports.ts
+```
+
+UI files:
+
+```txt
+src/app/[workspaceSlug]/my-work/page.tsx
+src/components/feedme/dashboard/my-work-page.tsx
+src/app/[workspaceSlug]/reports/[reportId]/page.tsx
+src/components/feedme/dashboard/workspace-shell.tsx
+src/components/feedme/dashboard/report-detail.tsx
+src/lib/api-client.ts
+```
+
+Rules:
+
+```txt
+resolve workspaceSlug through the signed-in user's active membership
+scope all mutations by workspaceId and reportId
+assignment requires report:assign and only accepts active developer members
+assigning a developer moves the report to assigned
+unassigning assigned/in_progress/ready_for_review reports moves them back to reviewing
+developer status updates require the report to be assigned to that developer
+developers can only move assigned work to in_progress or ready_for_review
+owner/admin can resolve reports directly
+resolved status sets resolvedAt; non-resolved status updates clear resolvedAt
+archived status sets archivedAt so archived reports leave the active read model
+every assignment/status mutation writes a report_status_events row
+```
+
+Dashboard wiring:
+
+```txt
+My Work now reads real reports instead of mock report IDs.
+Assigned to me filters by assigneeUserId matching the current user.
+Reported by me filters by reporterUserId matching the current user.
+Developers default to Assigned to me; other roles default to Reported by me.
+The Reports/My Work right rail fetches workspace members for owner/admin users and shows an Assignment control on the selected report.
+The right rail assignment control lists active developers only, saves through PATCH /assignment, updates the selected report locally, and refreshes the route so tables and My Work reflect the new owner.
+For developers, the same right rail shows Start work and Ready for review actions when the selected report is assigned to the signed-in developer. These actions call PATCH /status, update the selected report locally, and refresh the route.
+Report detail shows a workflow panel for admins/owners and assigned developers.
 ```
 
 ## API Contract For The First Flow

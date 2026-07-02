@@ -62,6 +62,8 @@ export default async function WorkspaceLayout({
     currentSession.profile?.displayName ?? currentSession.user.email.split("@")[0]
   const title = currentSession.profile?.title ?? workspaceAccess.role
   const workspace = {
+    currentUserId: currentSession.user.id,
+    currentUserRole: workspaceAccess.role,
     slug: workspaceAccess.slug,
     name: workspaceAccess.name,
     reportCount,

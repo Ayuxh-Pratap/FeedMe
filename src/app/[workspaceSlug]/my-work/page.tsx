@@ -1,5 +1,6 @@
 import { MyWorkPage } from "@/components/feedme/dashboard/my-work-page"
-import { getMockReports } from "@/lib/mock/dashboard"
+import { requireCurrentSession } from "@/server/auth/current-user"
+import { listWorkspaceReports } from "@/server/reports/service"
 
 type MyWorkRouteProps = {
   params: Promise<{
@@ -9,7 +10,18 @@ type MyWorkRouteProps = {
 
 export default async function MyWorkRoute({ params }: MyWorkRouteProps) {
   const { workspaceSlug } = await params
-  const reports = getMockReports(workspaceSlug)
+  const currentSession = await requireCurrentSession()
+  const { reports, workspace } = await listWorkspaceReports(
+    currentSession.user.id,
+    workspaceSlug
+  )
 
-  return <MyWorkPage reports={reports} workspaceSlug={workspaceSlug} />
+  return (
+    <MyWorkPage
+      currentUserId={currentSession.user.id}
+      currentUserRole={workspace.role}
+      reports={reports}
+      workspaceSlug={workspaceSlug}
+    />
+  )
 }

@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   Camera,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -17,6 +18,7 @@ import {
   Grid2X2,
   Inbox,
   ListFilter,
+  Loader2,
   LogOut,
   Maximize2,
   Menu,
@@ -24,11 +26,14 @@ import {
   MousePointer2,
   PanelRightClose,
   PanelRightOpen,
+  Play,
   Plus,
   Search,
+  Send,
   Settings2,
   Table2,
   UserRound,
+  UserRoundCheck,
   UsersRound,
   X,
 } from "lucide-react"
@@ -41,10 +46,7 @@ import {
   type ReactNode,
 } from "react"
 
-import {
-  getMockReports,
-  type MockWorkspace,
-} from "@/lib/mock/dashboard"
+import type { MockWorkspace } from "@/lib/mock/dashboard"
 import {
   getReportStatusLabel,
   type WorkspaceReport,
@@ -75,7 +77,13 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
-import { ApiClientError, deleteJson, getJson, postJson } from "@/lib/api-client"
+import {
+  ApiClientError,
+  deleteJson,
+  getJson,
+  patchJson,
+  postJson,
+} from "@/lib/api-client"
 
 type WorkspaceShellProps = {
   availableWorkspaces: WorkspaceSwitcherOption[]
@@ -124,6 +132,12 @@ type WorkspaceMembersResponse = {
 type WorkspaceReportsResponse = {
   reports: WorkspaceReport[]
 }
+
+type ReportMutationResponse = {
+  report: WorkspaceReport
+}
+
+const unassignedSelectValue = "__unassigned__"
 
 const navItems: NavItem[] = [
   { href: "inbox", icon: Inbox, label: "Inbox", planned: true },
@@ -1049,12 +1063,26 @@ function WorkspaceTopbar({
   isRightRailOpen,
   isRightRailEnabled,
   onToggleRightRail,
+  onReportChange,
+  reportRailErrorMessage,
+  reportRailIsLoading,
+  reportRailMembers,
+  reportRailMembersErrorMessage,
+  reportRailMembersIsLoading,
+  reportRailReports,
   workspace,
 }: {
   availableWorkspaces: WorkspaceSwitcherOption[]
   isRightRailOpen: boolean
   isRightRailEnabled: boolean
   onToggleRightRail: () => void
+  onReportChange?: (report: WorkspaceReport) => void
+  reportRailErrorMessage?: string | null
+  reportRailIsLoading?: boolean
+  reportRailMembers?: WorkspaceTeamMember[]
+  reportRailMembersErrorMessage?: string | null
+  reportRailMembersIsLoading?: boolean
+  reportRailReports?: WorkspaceReport[]
   workspace: MockWorkspace
 }) {
   return (
@@ -1119,7 +1147,18 @@ function WorkspaceTopbar({
             <Camera className="size-4" />
             <span className="sr-only sm:not-sr-only">Capture</span>
           </DashboardPrimaryButton>
-          {isRightRailEnabled ? <MobileRightRailSheet workspace={workspace} /> : null}
+          {isRightRailEnabled ? (
+            <MobileRightRailSheet
+              onReportChange={onReportChange}
+              reportRailErrorMessage={reportRailErrorMessage}
+              reportRailIsLoading={reportRailIsLoading}
+              reportRailMembers={reportRailMembers}
+              reportRailMembersErrorMessage={reportRailMembersErrorMessage}
+              reportRailMembersIsLoading={reportRailMembersIsLoading}
+              reportRailReports={reportRailReports}
+              workspace={workspace}
+            />
+          ) : null}
         </div>
       </header>
     </>
@@ -1128,23 +1167,46 @@ function WorkspaceTopbar({
 
 function WorkspaceRightRailContent({
   className,
+  onReportChange,
+  reportRailErrorMessage,
+  reportRailIsLoading,
+  reportRailMembers,
+  reportRailMembersErrorMessage,
+  reportRailMembersIsLoading,
+  reportRailReports,
   workspace,
 }: {
   className?: string
+  onReportChange?: (report: WorkspaceReport) => void
+  reportRailErrorMessage?: string | null
+  reportRailIsLoading?: boolean
+  reportRailMembers?: WorkspaceTeamMember[]
+  reportRailMembersErrorMessage?: string | null
+  reportRailMembersIsLoading?: boolean
+  reportRailReports?: WorkspaceReport[]
   workspace: MockWorkspace
 }) {
   const pathname = usePathname()
   const reportsPath = `/${workspace.slug}/reports`
   const myWorkPath = `/${workspace.slug}/my-work`
   const teamPath = `/${workspace.slug}/team`
-  const isReportInspectorRoute = pathname === reportsPath || pathname === myWorkPath
+  const isReportsRoute = pathname === reportsPath
+  const isMyWorkRoute = pathname === myWorkPath
+  const isReportInspectorRoute = isReportsRoute || isMyWorkRoute
   const isTeamRoute = pathname === teamPath
 
   if (isReportInspectorRoute) {
     return (
       <ReportsContextRail
         className={className}
-        useRealReports={pathname === reportsPath}
+        errorMessage={reportRailErrorMessage ?? null}
+        isLoading={Boolean(reportRailIsLoading)}
+        members={reportRailMembers ?? []}
+        membersErrorMessage={reportRailMembersErrorMessage ?? null}
+        membersIsLoading={Boolean(reportRailMembersIsLoading)}
+        mode={isMyWorkRoute ? "my-work" : "reports"}
+        onReportChange={onReportChange ?? (() => undefined)}
+        reports={reportRailReports ?? []}
         workspace={workspace}
       />
     )
@@ -1576,13 +1638,18 @@ function ReportInspectorRailSkeleton({ className }: { className?: string }) {
       </section>
 
       <section className="border-b border-border-hairline px-4 py-3">
-        <RightRailSkeletonBlock className="h-2.5 w-8" />
+        <p className="text-caption text-text-muted">View</p>
         <div className="relative mt-2 grid grid-cols-2 rounded-lg border border-border-hairline bg-background p-1">
-          <RightRailSkeletonBlock
-            className="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] shadow-button-hover"
+          <span
+            className="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] animate-pulse rounded-md bg-surface-raised shadow-button-hover"
+            aria-hidden="true"
           />
-          <RightRailSkeletonBlock className="relative z-10 mx-auto h-7 w-10" />
-          <RightRailSkeletonBlock className="relative z-10 mx-auto h-7 w-14" />
+          <span className="relative z-10 flex h-7 items-center justify-center text-heading-5 text-text-secondary">
+            Page
+          </span>
+          <span className="relative z-10 flex h-7 items-center justify-center text-heading-5 text-text-muted">
+            Element
+          </span>
         </div>
         <div className="relative mt-3 aspect-[16/10] overflow-hidden rounded-lg border border-border-hairline bg-fill-translucent">
           <div className="absolute inset-0 [background:linear-gradient(145deg,var(--surface-raised),var(--surface-shell))]" />
@@ -1628,14 +1695,344 @@ function ReportInspectorRailSkeleton({ className }: { className?: string }) {
   )
 }
 
+function getReportMutationBaseUrl(workspaceSlug: string, reportId: string) {
+  return `/api/workspaces/${encodeURIComponent(workspaceSlug)}/reports/${encodeURIComponent(reportId)}`
+}
+
+function getMutationErrorMessage(error: unknown) {
+  if (error instanceof ApiClientError) {
+    return error.message
+  }
+
+  return "Something went wrong. Please try again."
+}
+
+function canManageReportAssignments(workspace: MockWorkspace) {
+  return workspace.currentUserRole === "owner" || workspace.currentUserRole === "admin"
+}
+
+function isAssignedDeveloperReport(workspace: MockWorkspace, report: WorkspaceReport) {
+  return (
+    workspace.currentUserRole === "developer" &&
+    Boolean(workspace.currentUserId) &&
+    report.assigneeUserId === workspace.currentUserId
+  )
+}
+
+const reportRailActionButtonClass =
+  "inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-2.5 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-border-subtle disabled:hover:brightness-100 disabled:active:scale-100"
+
+function ReportRailAssignmentPanel({
+  members,
+  membersErrorMessage,
+  membersIsLoading,
+  onReportChange,
+  report,
+  workspace,
+}: {
+  members: WorkspaceTeamMember[]
+  membersErrorMessage: string | null
+  membersIsLoading: boolean
+  onReportChange: (report: WorkspaceReport) => void
+  report: WorkspaceReport
+  workspace: MockWorkspace
+}) {
+  const router = useRouter()
+  const [selectedAssigneeUserId, setSelectedAssigneeUserId] = useState(
+    report.assigneeUserId ?? unassignedSelectValue
+  )
+  const [assigneeMenuOpen, setAssigneeMenuOpen] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const developerMembers = members.filter(
+    (member) => member.role === "developer" && member.status === "active"
+  )
+  const selectedDeveloper = developerMembers.find(
+    (member) => member.userId === selectedAssigneeUserId
+  )
+  const selectedAssigneeLabel =
+    selectedAssigneeUserId === unassignedSelectValue
+      ? "Unassigned"
+      : selectedDeveloper?.name ?? report.assignee?.name ?? "Unknown developer"
+  const isAssignmentControlDisabled =
+    isSaving || membersIsLoading || Boolean(membersErrorMessage)
+  const hasAssignmentChange =
+    selectedAssigneeUserId !== (report.assigneeUserId ?? unassignedSelectValue)
+
+  async function saveAssignment() {
+    setIsSaving(true)
+    setError(null)
+    setMessage(null)
+
+    try {
+      const result = await patchJson<ReportMutationResponse>(
+        `${getReportMutationBaseUrl(workspace.slug, report.id)}/assignment`,
+        {
+          assigneeUserId:
+            selectedAssigneeUserId === unassignedSelectValue
+              ? null
+              : selectedAssigneeUserId,
+        }
+      )
+
+      onReportChange(result.report)
+      setMessage("Assignment saved.")
+      router.refresh()
+    } catch (saveError) {
+      setError(getMutationErrorMessage(saveError))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <section className="border-b border-border-hairline px-4 py-3">
+      <div className="flex items-center gap-2 text-heading-5 text-foreground">
+        <UserRoundCheck className="size-4 text-text-muted" />
+        Assignment
+      </div>
+      <p className="mt-1 text-caption text-text-muted">
+        Route this report to an active developer.
+      </p>
+
+      <div className="mt-3 space-y-2">
+        <div
+          className="relative"
+          onBlur={(event) => {
+            const nextTarget = event.relatedTarget
+
+            if (
+              !(nextTarget instanceof Node) ||
+              !event.currentTarget.contains(nextTarget)
+            ) {
+              setAssigneeMenuOpen(false)
+            }
+          }}
+        >
+          <button
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded={assigneeMenuOpen}
+            disabled={isAssignmentControlDisabled}
+            onClick={() => setAssigneeMenuOpen((value) => !value)}
+            className={cn(
+              "flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-left text-body-3 text-text-secondary shadow-button-secondary outline-none transition-all duration-base ease-out-soft",
+              "hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover focus:border-border-strong active:scale-[var(--press-scale)]",
+              isAssignmentControlDisabled &&
+                "cursor-not-allowed opacity-50 hover:bg-fill-translucent hover:text-text-secondary hover:shadow-button-secondary active:scale-100"
+            )}
+          >
+            <span className="min-w-0 truncate">
+              {membersIsLoading ? "Loading developers..." : selectedAssigneeLabel}
+            </span>
+            <ChevronDown
+              className={cn(
+                "size-3.5 shrink-0 transition-transform duration-base ease-out-soft",
+                assigneeMenuOpen && "rotate-180 text-text-secondary"
+              )}
+            />
+          </button>
+
+          {assigneeMenuOpen ? (
+            <div
+              role="listbox"
+              aria-label="Assign report"
+              className="absolute left-0 right-0 top-[calc(100%+0.375rem)] z-30 overflow-hidden rounded-lg border border-border-subtle bg-surface-card p-1 text-foreground shadow-popover"
+            >
+              {[
+                {
+                  email: null,
+                  label: "Unassigned",
+                  value: unassignedSelectValue,
+                },
+                ...developerMembers.map((member) => ({
+                  email: member.email,
+                  label: member.name,
+                  value: member.userId,
+                })),
+              ].map((option) => {
+                const selected = selectedAssigneeUserId === option.value
+
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => {
+                      setSelectedAssigneeUserId(option.value)
+                      setAssigneeMenuOpen(false)
+                      setMessage(null)
+                      setError(null)
+                    }}
+                    className={cn(
+                      "flex min-h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-body-3 transition-colors duration-base ease-out-soft",
+                      selected
+                        ? "bg-surface-raised text-foreground shadow-button-hover"
+                        : "text-text-body hover:bg-fill-subtle hover:text-foreground"
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate">{option.label}</span>
+                      {option.email ? (
+                        <span className="block truncate text-caption text-text-muted">
+                          {option.email}
+                        </span>
+                      ) : null}
+                    </span>
+                    {selected ? (
+                      <Check className="size-3.5 shrink-0 text-text-secondary" />
+                    ) : null}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
+        </div>
+
+        <button
+          type="button"
+          disabled={
+            isSaving ||
+            membersIsLoading ||
+            Boolean(membersErrorMessage) ||
+            !hasAssignmentChange
+          }
+          onClick={saveAssignment}
+          className={reportRailActionButtonClass}
+        >
+          {isSaving ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Send className="size-3.5" />
+          )}
+          Save assignment
+        </button>
+      </div>
+
+      {membersErrorMessage ? (
+        <p className="mt-2 text-caption text-error">{membersErrorMessage}</p>
+      ) : null}
+      {!membersIsLoading && !membersErrorMessage && developerMembers.length === 0 ? (
+        <p className="mt-2 text-caption text-text-muted">
+          Invite an active developer before assigning reports.
+        </p>
+      ) : null}
+      {message ? <p className="mt-2 text-caption text-success">{message}</p> : null}
+      {error ? <p className="mt-2 text-caption text-error">{error}</p> : null}
+    </section>
+  )
+}
+
+function ReportRailDeveloperStatusPanel({
+  onReportChange,
+  report,
+  workspace,
+}: {
+  onReportChange: (report: WorkspaceReport) => void
+  report: WorkspaceReport
+  workspace: MockWorkspace
+}) {
+  const router = useRouter()
+  const [isSavingStatus, setIsSavingStatus] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const canStartWork = report.status === "assigned"
+  const canMarkReady =
+    report.status === "assigned" || report.status === "in_progress"
+
+  if (!isAssignedDeveloperReport(workspace, report)) {
+    return null
+  }
+
+  async function updateStatus(
+    status: WorkspaceReport["status"],
+    successMessage: string
+  ) {
+    setIsSavingStatus(true)
+    setMessage(null)
+    setError(null)
+
+    try {
+      const result = await patchJson<ReportMutationResponse>(
+        `${getReportMutationBaseUrl(workspace.slug, report.id)}/status`,
+        { status }
+      )
+
+      onReportChange(result.report)
+      setMessage(successMessage)
+      router.refresh()
+    } catch (statusError) {
+      setError(getMutationErrorMessage(statusError))
+    } finally {
+      setIsSavingStatus(false)
+    }
+  }
+
+  return (
+    <section className="border-b border-border-hairline px-4 py-3">
+      <div className="flex items-center gap-2 text-heading-5 text-foreground">
+        <ListFilter className="size-4 text-text-muted" />
+        Work status
+      </div>
+      <p className="mt-1 text-caption text-text-muted">
+        Move your assigned report through implementation.
+      </p>
+
+      <div className="mt-3 grid gap-2">
+        <button
+          type="button"
+          disabled={!canStartWork || isSavingStatus}
+          onClick={() => updateStatus("in_progress", "Work marked in progress.")}
+          className={reportRailActionButtonClass}
+        >
+          {isSavingStatus && canStartWork ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Play className="size-3.5" />
+          )}
+          Start work
+        </button>
+        <button
+          type="button"
+          disabled={!canMarkReady || isSavingStatus}
+          onClick={() =>
+            updateStatus("ready_for_review", "Report marked ready for review.")
+          }
+          className={reportRailActionButtonClass}
+        >
+          {isSavingStatus && canMarkReady ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <CheckCircle2 className="size-3.5" />
+          )}
+          Ready for review
+        </button>
+      </div>
+
+      {message ? <p className="mt-2 text-caption text-success">{message}</p> : null}
+      {error ? <p className="mt-2 text-caption text-error">{error}</p> : null}
+    </section>
+  )
+}
+
 function ReportInspectorRail({
   className,
+  members,
+  membersErrorMessage,
+  membersIsLoading,
+  onReportChange,
   report,
-  workspaceSlug,
+  workspace,
 }: {
   className?: string
+  members: WorkspaceTeamMember[]
+  membersErrorMessage: string | null
+  membersIsLoading: boolean
+  onReportChange: (report: WorkspaceReport) => void
   report: WorkspaceReport
-  workspaceSlug: string
+  workspace: MockWorkspace
 }) {
   return (
     <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
@@ -1656,7 +2053,26 @@ function ReportInspectorRail({
         </p>
       </section>
 
-      <ReportEvidenceTabs report={report} workspaceSlug={workspaceSlug} />
+      <ReportEvidenceTabs report={report} workspaceSlug={workspace.slug} />
+
+      {canManageReportAssignments(workspace) ? (
+        <ReportRailAssignmentPanel
+          key={`${report.id}:${report.assigneeUserId ?? "unassigned"}`}
+          members={members}
+          membersErrorMessage={membersErrorMessage}
+          membersIsLoading={membersIsLoading}
+          onReportChange={onReportChange}
+          report={report}
+          workspace={workspace}
+        />
+      ) : null}
+
+      <ReportRailDeveloperStatusPanel
+        key={`${report.id}:${report.status}`}
+        onReportChange={onReportChange}
+        report={report}
+        workspace={workspace}
+      />
 
       <section className="grid grid-cols-2 gap-2 border-b border-border-hairline px-4 py-3">
         <ReportRailMeta label="Type" value={report.type} />
@@ -1706,72 +2122,100 @@ function ReportInspectorRail({
           <Code2 className="size-4 text-text-muted" />
           Developer prompt
         </div>
-        <p className="mt-2 line-clamp-5 rounded-lg border border-border-hairline bg-background p-2.5 text-caption text-text-body">
+        <div className="feedme-scrollbar mt-2 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border-hairline bg-background p-2.5 text-caption text-text-body">
           {report.developerPrompt}
-        </p>
+        </div>
       </section>
     </div>
   )
 }
 
+type ReportRailMode = "reports" | "my-work"
+type MyWorkScope = "assigned" | "reported"
+
+function getDefaultMyWorkScope(workspace: MockWorkspace): MyWorkScope {
+  return workspace.currentUserRole === "developer" ? "assigned" : "reported"
+}
+
+function getMyWorkScope(
+  searchParams: URLSearchParams,
+  workspace: MockWorkspace
+): MyWorkScope {
+  const scope = searchParams.get("scope")
+
+  if (scope === "assigned" || scope === "reported") {
+    return scope
+  }
+
+  return getDefaultMyWorkScope(workspace)
+}
+
+function getReportRailReports({
+  mode,
+  reports,
+  searchParams,
+  workspace,
+}: {
+  mode: ReportRailMode
+  reports: WorkspaceReport[]
+  searchParams: URLSearchParams
+  workspace: MockWorkspace
+}) {
+  if (mode === "reports") {
+    return reports
+  }
+
+  const currentUserId = workspace.currentUserId
+
+  if (!currentUserId) {
+    return []
+  }
+
+  const scope = getMyWorkScope(searchParams, workspace)
+
+  if (scope === "assigned") {
+    return reports.filter((report) => report.assigneeUserId === currentUserId)
+  }
+
+  return reports.filter((report) => report.reporterUserId === currentUserId)
+}
+
 function ReportsContextRail({
   className,
-  useRealReports,
+  errorMessage,
+  isLoading,
+  members,
+  membersErrorMessage,
+  membersIsLoading,
+  mode,
+  onReportChange,
+  reports,
   workspace,
 }: {
   className?: string
-  useRealReports: boolean
+  errorMessage: string | null
+  isLoading: boolean
+  members: WorkspaceTeamMember[]
+  membersErrorMessage: string | null
+  membersIsLoading: boolean
+  mode: ReportRailMode
+  onReportChange: (report: WorkspaceReport) => void
+  reports: WorkspaceReport[]
   workspace: MockWorkspace
 }) {
   const searchParams = useSearchParams()
-  const [realReports, setRealReports] = useState<WorkspaceReport[]>([])
-  const [isLoading, setIsLoading] = useState(useRealReports)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const reportsEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/reports`
-  const reports = useRealReports ? realReports : getMockReports(workspace.slug)
+  const railReports = getReportRailReports({
+    mode,
+    reports,
+    searchParams: new URLSearchParams(searchParams.toString()),
+    workspace,
+  })
 
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadReports() {
-      setIsLoading(true)
-      setErrorMessage(null)
-
-      try {
-        const result = await getJson<WorkspaceReportsResponse>(reportsEndpoint)
-
-        if (isMounted) {
-          setRealReports(result.reports)
-        }
-      } catch (error) {
-        if (isMounted) {
-          setErrorMessage(
-            error instanceof ApiClientError
-              ? error.message
-              : "Unable to load reports. Please try again."
-          )
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    if (useRealReports) {
-      void loadReports()
-    }
-
-    return () => {
-      isMounted = false
-    }
-  }, [reportsEndpoint, useRealReports, workspace.slug])
-
-  if (useRealReports && isLoading) {
+  if (isLoading) {
     return <ReportInspectorRailSkeleton className={className} />
   }
 
-  if (useRealReports && errorMessage) {
+  if (errorMessage) {
     return (
       <div className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}>
         <section className="border-b border-border-hairline px-4 py-4">
@@ -1785,8 +2229,11 @@ function ReportsContextRail({
     )
   }
 
-  const selectedReportId = searchParams.get("report") ?? reports[0]?.id
-  const selectedReport = reports.find((report) => report.id === selectedReportId)
+  const requestedReportId = searchParams.get("report")
+  const selectedReportId = railReports.some((report) => report.id === requestedReportId)
+    ? requestedReportId
+    : railReports[0]?.id
+  const selectedReport = railReports.find((report) => report.id === selectedReportId)
 
   if (!selectedReport) {
     return <EmptyReportRail className={className} />
@@ -1795,8 +2242,12 @@ function ReportsContextRail({
   return (
     <ReportInspectorRail
       className={className}
+      members={members}
+      membersErrorMessage={membersErrorMessage}
+      membersIsLoading={membersIsLoading}
+      onReportChange={onReportChange}
       report={selectedReport}
-      workspaceSlug={workspace.slug}
+      workspace={workspace}
     />
   )
 }
@@ -1995,7 +2446,25 @@ function TeamContextRail({
   return <TeamMemberRail className={className} member={selectedMember} />
 }
 
-function MobileRightRailSheet({ workspace }: { workspace: MockWorkspace }) {
+function MobileRightRailSheet({
+  onReportChange,
+  reportRailErrorMessage,
+  reportRailIsLoading,
+  reportRailMembers,
+  reportRailMembersErrorMessage,
+  reportRailMembersIsLoading,
+  reportRailReports,
+  workspace,
+}: {
+  onReportChange?: (report: WorkspaceReport) => void
+  reportRailErrorMessage?: string | null
+  reportRailIsLoading?: boolean
+  reportRailMembers?: WorkspaceTeamMember[]
+  reportRailMembersErrorMessage?: string | null
+  reportRailMembersIsLoading?: boolean
+  reportRailReports?: WorkspaceReport[]
+  workspace: MockWorkspace
+}) {
   return (
     <Sheet>
       <SheetTrigger asChild>
@@ -2020,7 +2489,17 @@ function MobileRightRailSheet({ workspace }: { workspace: MockWorkspace }) {
             </button>
           </SheetClose>
         </div>
-        <WorkspaceRightRailContent className="w-full" workspace={workspace} />
+        <WorkspaceRightRailContent
+          className="w-full"
+          onReportChange={onReportChange}
+          reportRailErrorMessage={reportRailErrorMessage}
+          reportRailIsLoading={reportRailIsLoading}
+          reportRailMembers={reportRailMembers}
+          reportRailMembersErrorMessage={reportRailMembersErrorMessage}
+          reportRailMembersIsLoading={reportRailMembersIsLoading}
+          reportRailReports={reportRailReports}
+          workspace={workspace}
+        />
       </SheetContent>
     </Sheet>
   )
@@ -2039,9 +2518,23 @@ function getWorkspaceReportCount(workspace: MockWorkspace) {
 
 function WorkspaceRightRail({
   isOpen,
+  onReportChange,
+  reportRailErrorMessage,
+  reportRailIsLoading,
+  reportRailMembers,
+  reportRailMembersErrorMessage,
+  reportRailMembersIsLoading,
+  reportRailReports,
   workspace,
 }: {
   isOpen: boolean
+  onReportChange?: (report: WorkspaceReport) => void
+  reportRailErrorMessage?: string | null
+  reportRailIsLoading?: boolean
+  reportRailMembers?: WorkspaceTeamMember[]
+  reportRailMembersErrorMessage?: string | null
+  reportRailMembersIsLoading?: boolean
+  reportRailReports?: WorkspaceReport[]
   workspace: MockWorkspace
 }) {
   return (
@@ -2054,7 +2547,16 @@ function WorkspaceRightRail({
           : "translate-x-4 border-l-transparent opacity-0 blur-[1px]"
       )}
     >
-      <WorkspaceRightRailContent workspace={workspace} />
+      <WorkspaceRightRailContent
+        onReportChange={onReportChange}
+        reportRailErrorMessage={reportRailErrorMessage}
+        reportRailIsLoading={reportRailIsLoading}
+        reportRailMembers={reportRailMembers}
+        reportRailMembersErrorMessage={reportRailMembersErrorMessage}
+        reportRailMembersIsLoading={reportRailMembersIsLoading}
+        reportRailReports={reportRailReports}
+        workspace={workspace}
+      />
     </aside>
   )
 }
@@ -2065,13 +2567,127 @@ export function WorkspaceShell({
   workspace,
 }: WorkspaceShellProps) {
   const [isRightRailOpen, setIsRightRailOpen] = useState(true)
+  const [reportRailReports, setReportRailReports] = useState<WorkspaceReport[]>([])
+  const [reportRailIsLoading, setReportRailIsLoading] = useState(true)
+  const [reportRailErrorMessage, setReportRailErrorMessage] = useState<string | null>(null)
+  const [reportRailMembers, setReportRailMembers] = useState<WorkspaceTeamMember[]>([])
+  const [reportRailMembersIsLoading, setReportRailMembersIsLoading] = useState(
+    () => canManageReportAssignments(workspace)
+  )
+  const [reportRailMembersErrorMessage, setReportRailMembersErrorMessage] =
+    useState<string | null>(null)
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const reportsPath = `/${workspace.slug}/reports`
+  const myWorkPath = `/${workspace.slug}/my-work`
   const isReportsIndexRoute = pathname === reportsPath
+  const isMyWorkRoute = pathname === myWorkPath
+  const isReportRailRoute = isReportsIndexRoute || isMyWorkRoute
   const isReportDetailRoute = pathname.startsWith(`${reportsPath}/`)
+  const reportRailEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/reports`
+  const reportRailMembersEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/members`
+  const reportRailMode: ReportRailMode = isMyWorkRoute ? "my-work" : "reports"
+  const canManageAssignments = canManageReportAssignments(workspace)
+  const scopedReportRailReports = isReportRailRoute
+    ? getReportRailReports({
+        mode: reportRailMode,
+        reports: reportRailReports,
+        searchParams: new URLSearchParams(searchParams.toString()),
+        workspace,
+      })
+    : []
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadReports() {
+      setReportRailIsLoading(true)
+      setReportRailErrorMessage(null)
+
+      try {
+        const result = await getJson<WorkspaceReportsResponse>(reportRailEndpoint)
+
+        if (isMounted) {
+          setReportRailReports(result.reports)
+        }
+      } catch (error) {
+        if (isMounted) {
+          setReportRailErrorMessage(
+            error instanceof ApiClientError
+              ? error.message
+              : "Unable to load reports. Please try again."
+          )
+        }
+      } finally {
+        if (isMounted) {
+          setReportRailIsLoading(false)
+        }
+      }
+    }
+
+    if (isReportRailRoute) {
+      void loadReports()
+    }
+
+    return () => {
+      isMounted = false
+    }
+  }, [isReportRailRoute, reportRailEndpoint])
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadMembers() {
+      setReportRailMembersIsLoading(true)
+      setReportRailMembersErrorMessage(null)
+
+      try {
+        const result = await getJson<WorkspaceMembersResponse>(reportRailMembersEndpoint)
+
+        if (isMounted) {
+          setReportRailMembers(result.members)
+        }
+      } catch (error) {
+        if (isMounted) {
+          setReportRailMembersErrorMessage(
+            error instanceof ApiClientError
+              ? error.message
+              : "Unable to load team members. Please try again."
+          )
+        }
+      } finally {
+        if (isMounted) {
+          setReportRailMembersIsLoading(false)
+        }
+      }
+    }
+
+    if (isReportRailRoute && canManageAssignments) {
+      void loadMembers()
+    }
+
+    return () => {
+      isMounted = false
+    }
+  }, [canManageAssignments, isReportRailRoute, reportRailMembersEndpoint])
+
+  function handleReportChange(nextReport: WorkspaceReport) {
+    setReportRailReports((currentReports) =>
+      currentReports.map((report) =>
+        report.id === nextReport.id ? nextReport : report
+      )
+    )
+  }
+
   const shouldDisableReportsRail =
     isReportsIndexRoute && getWorkspaceReportCount(workspace) === 0
-  const isRightRailEnabled = !isReportDetailRoute && !shouldDisableReportsRail
+  const shouldDisableMyWorkRail =
+    isMyWorkRoute &&
+    !reportRailIsLoading &&
+    !reportRailErrorMessage &&
+    scopedReportRailReports.length === 0
+  const isRightRailEnabled =
+    !isReportDetailRoute && !shouldDisableReportsRail && !shouldDisableMyWorkRail
   const shouldShowRightRail = isRightRailEnabled && isRightRailOpen
 
   return (
@@ -2087,7 +2703,14 @@ export function WorkspaceShell({
             availableWorkspaces={availableWorkspaces}
             isRightRailOpen={isRightRailOpen}
             isRightRailEnabled={isRightRailEnabled}
+            onReportChange={handleReportChange}
             onToggleRightRail={() => setIsRightRailOpen((value) => !value)}
+            reportRailErrorMessage={reportRailErrorMessage}
+            reportRailIsLoading={isReportRailRoute && reportRailIsLoading}
+            reportRailMembers={reportRailMembers}
+            reportRailMembersErrorMessage={reportRailMembersErrorMessage}
+            reportRailMembersIsLoading={reportRailMembersIsLoading}
+            reportRailReports={reportRailReports}
             workspace={workspace}
           />
           <div
@@ -2102,7 +2725,17 @@ export function WorkspaceShell({
           >
             <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
             {isRightRailEnabled ? (
-              <WorkspaceRightRail isOpen={isRightRailOpen} workspace={workspace} />
+              <WorkspaceRightRail
+                isOpen={isRightRailOpen}
+                onReportChange={handleReportChange}
+                reportRailErrorMessage={reportRailErrorMessage}
+                reportRailIsLoading={isReportRailRoute && reportRailIsLoading}
+                reportRailMembers={reportRailMembers}
+                reportRailMembersErrorMessage={reportRailMembersErrorMessage}
+                reportRailMembersIsLoading={reportRailMembersIsLoading}
+                reportRailReports={reportRailReports}
+                workspace={workspace}
+              />
             ) : null}
           </div>
         </div>

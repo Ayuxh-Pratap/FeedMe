@@ -256,6 +256,9 @@ Developer behavior:
 - A developer can work on assigned reports.
 - A developer can mark assigned reports as `ready_for_review`.
 - A developer does not need to be the final resolver.
+- Developer status changes are only allowed on reports assigned to that developer.
+- Admins/owners assign reports to active developers and can resolve directly.
+- My Work uses `assigneeUserId` for Assigned to me and `reporterUserId` for Reported by me.
 
 Reporter-facing labels can stay simpler:
 

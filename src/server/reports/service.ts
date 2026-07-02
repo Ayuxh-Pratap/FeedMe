@@ -11,20 +11,26 @@ import {
   userProfiles,
   users,
   workspaceDomains,
+  workspaceMemberships,
   type ReportSelectedElement,
   type ReportViewport,
 } from "@/db/schema"
 import {
   formatReportCapturedAgo,
   formatReportCapturedAt,
+  type WorkspaceReportStatus,
   type WorkspaceReport,
 } from "@/lib/reports"
 import { getInitialsFromName, getNameFromEmail } from "@/lib/team-members"
-import { NotFoundError, ValidationError } from "@/server/http/errors"
+import { ForbiddenError, NotFoundError, ValidationError } from "@/server/http/errors"
 import { assertCanWorkspaceRole } from "@/server/policies/can"
 import { normalizeDomainHost } from "@/server/workspaces/domains"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
-import type { CreateReportInput } from "@/server/reports/validation"
+import type {
+  AssignReportInput,
+  CreateReportInput,
+  UpdateReportStatusInput,
+} from "@/server/reports/validation"
 
 type ReportRow = {
   id: string
@@ -62,6 +68,27 @@ type ReportAssetRow = {
   url: string
   width: number | null
   height: number | null
+}
+
+const developerMutableStatuses = new Set<WorkspaceReportStatus>([
+  "in_progress",
+  "ready_for_review",
+])
+
+const statusRequiresAssignee = new Set<WorkspaceReportStatus>([
+  "assigned",
+  "in_progress",
+  "ready_for_review",
+])
+
+const statusResetsWhenUnassigned = new Set<WorkspaceReportStatus>([
+  "assigned",
+  "in_progress",
+  "ready_for_review",
+])
+
+function canAdministerReports(role: string) {
+  return role === "owner" || role === "admin"
 }
 
 function commentsCountSql() {
@@ -117,6 +144,40 @@ async function requireWorkspaceForReportCreate(userId: string, workspaceSlug: st
   }
 
   assertCanWorkspaceRole(workspace.role, "report:create")
+
+  return workspace
+}
+
+async function requireWorkspaceForReportAssign(userId: string, workspaceSlug: string) {
+  const workspace = await getWorkspaceForUserBySlug(userId, workspaceSlug)
+
+  if (!workspace) {
+    throw new NotFoundError("Workspace not found.")
+  }
+
+  assertCanWorkspaceRole(workspace.role, "report:assign")
+
+  return workspace
+}
+
+async function requireWorkspaceForReportStatusUpdate(
+  userId: string,
+  workspaceSlug: string,
+  status: WorkspaceReportStatus
+) {
+  const workspace = await getWorkspaceForUserBySlug(userId, workspaceSlug)
+
+  if (!workspace) {
+    throw new NotFoundError("Workspace not found.")
+  }
+
+  if (status === "resolved" || status === "archived") {
+    assertCanWorkspaceRole(workspace.role, "report:resolve")
+  } else if (status === "ready_for_review") {
+    assertCanWorkspaceRole(workspace.role, "report:mark_ready_for_review")
+  } else {
+    assertCanWorkspaceRole(workspace.role, "report:update_status")
+  }
 
   return workspace
 }
@@ -313,6 +374,8 @@ function serializeReport(
 
   return {
     id: row.id,
+    reporterUserId: row.reporterUserId,
+    assigneeUserId: row.assigneeUserId,
     title: row.title,
     summary: row.summary,
     severity: row.severity,
@@ -397,6 +460,71 @@ async function getAssetsByReportId(workspaceId: string, reportIds: string[]) {
     assetsByReportId.set(row.reportId, assets)
     return assetsByReportId
   }, new Map<string, ReportAssetRow[]>())
+}
+
+async function getMutableReportRow(workspaceId: string, reportId: string) {
+  const [row] = await db
+    .select(reportSelectFields())
+    .from(reports)
+    .where(
+      and(
+        eq(reports.workspaceId, workspaceId),
+        eq(reports.id, reportId),
+        isNull(reports.archivedAt)
+      )
+    )
+    .limit(1)
+
+  if (!row) {
+    throw new NotFoundError("Report not found.")
+  }
+
+  return row
+}
+
+async function assertAssignableDeveloper(workspaceId: string, userId: string) {
+  const [member] = await db
+    .select({ id: workspaceMemberships.id })
+    .from(workspaceMemberships)
+    .where(
+      and(
+        eq(workspaceMemberships.workspaceId, workspaceId),
+        eq(workspaceMemberships.userId, userId),
+        eq(workspaceMemberships.role, "developer"),
+        eq(workspaceMemberships.status, "active")
+      )
+    )
+    .limit(1)
+
+  if (!member) {
+    throw new ValidationError("Reports can only be assigned to active developers.", {
+      assigneeUserId: ["Choose an active developer in this workspace."],
+    })
+  }
+}
+
+function getAssignmentStatus(
+  currentStatus: WorkspaceReportStatus,
+  nextAssigneeUserId: string | null,
+  didChangeAssignee: boolean
+) {
+  if (!didChangeAssignee) {
+    return currentStatus
+  }
+
+  if (nextAssigneeUserId) {
+    return "assigned"
+  }
+
+  if (statusResetsWhenUnassigned.has(currentStatus)) {
+    return "reviewing"
+  }
+
+  return currentStatus
+}
+
+function getResolvedAtForStatus(status: WorkspaceReportStatus) {
+  return status === "resolved" ? new Date() : null
 }
 
 export async function getWorkspaceReportCount(workspaceId: string) {
@@ -502,6 +630,125 @@ export async function createWorkspaceReport(
   } else {
     await db.batch([reportInsert, statusEventInsert])
   }
+
+  return getWorkspaceReport(userId, workspaceSlug, reportId)
+}
+
+export async function assignWorkspaceReport(
+  userId: string,
+  workspaceSlug: string,
+  reportId: string,
+  input: AssignReportInput
+) {
+  const workspace = await requireWorkspaceForReportAssign(userId, workspaceSlug)
+  const row = await getMutableReportRow(workspace.id, reportId)
+  const nextAssigneeUserId = input.assigneeUserId
+
+  if (nextAssigneeUserId) {
+    await assertAssignableDeveloper(workspace.id, nextAssigneeUserId)
+  }
+
+  const didChangeAssignee = row.assigneeUserId !== nextAssigneeUserId
+  const nextStatus = getAssignmentStatus(
+    row.status,
+    nextAssigneeUserId,
+    didChangeAssignee
+  )
+  const didChangeStatus = nextStatus !== row.status
+
+  if (!didChangeAssignee && !didChangeStatus && !input.note) {
+    return getWorkspaceReport(userId, workspaceSlug, reportId)
+  }
+
+  const updateValues: Partial<typeof reports.$inferInsert> = {
+    assigneeUserId: nextAssigneeUserId,
+    status: nextStatus,
+  }
+
+  if (didChangeStatus) {
+    updateValues.resolvedAt = getResolvedAtForStatus(nextStatus)
+  }
+
+  const note =
+    input.note ??
+    (nextAssigneeUserId
+      ? "Report assigned to a developer."
+      : "Report unassigned.")
+
+  await db.batch([
+    db
+      .update(reports)
+      .set(updateValues)
+      .where(and(eq(reports.workspaceId, workspace.id), eq(reports.id, reportId))),
+    db.insert(reportStatusEvents).values({
+      workspaceId: workspace.id,
+      reportId,
+      actorUserId: userId,
+      fromStatus: row.status,
+      toStatus: nextStatus,
+      note,
+    }),
+  ])
+
+  return getWorkspaceReport(userId, workspaceSlug, reportId)
+}
+
+export async function updateWorkspaceReportStatus(
+  userId: string,
+  workspaceSlug: string,
+  reportId: string,
+  input: UpdateReportStatusInput
+) {
+  const workspace = await requireWorkspaceForReportStatusUpdate(
+    userId,
+    workspaceSlug,
+    input.status
+  )
+  const row = await getMutableReportRow(workspace.id, reportId)
+  const isReportAdmin = canAdministerReports(workspace.role)
+
+  if (!isReportAdmin) {
+    if (workspace.role !== "developer") {
+      throw new ForbiddenError()
+    }
+
+    if (row.assigneeUserId !== userId) {
+      throw new ForbiddenError("Only the assigned developer can update this report.")
+    }
+
+    if (!developerMutableStatuses.has(input.status)) {
+      throw new ForbiddenError("Developers can only start work or mark it ready.")
+    }
+  }
+
+  if (statusRequiresAssignee.has(input.status) && !row.assigneeUserId) {
+    throw new ValidationError("Assign a developer before moving this report forward.", {
+      status: ["A developer assignee is required for this status."],
+    })
+  }
+
+  if (row.status === input.status && !input.note) {
+    return getWorkspaceReport(userId, workspaceSlug, reportId)
+  }
+
+  await db.batch([
+    db
+      .update(reports)
+      .set({
+        archivedAt: input.status === "archived" ? new Date() : null,
+        status: input.status,
+        resolvedAt: getResolvedAtForStatus(input.status),
+      })
+      .where(and(eq(reports.workspaceId, workspace.id), eq(reports.id, reportId))),
+    db.insert(reportStatusEvents).values({
+      workspaceId: workspace.id,
+      reportId,
+      actorUserId: userId,
+      fromStatus: row.status,
+      toStatus: input.status,
+      note: input.note ?? `Status changed to ${input.status.replace(/_/g, " ")}.`,
+    }),
+  ])
 
   return getWorkspaceReport(userId, workspaceSlug, reportId)
 }

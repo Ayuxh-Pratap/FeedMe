@@ -2,12 +2,16 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
-import type { MockReportSummary } from "@/lib/mock/dashboard"
+import { ReportsEmptyState } from "@/components/feedme/dashboard/reports-empty-state"
 import { ReportCard, ReportTableRow } from "@/components/feedme/dashboard/reports-list"
+import type { WorkspaceReport } from "@/lib/reports"
+import type { WorkspaceMemberRole } from "@/lib/team-members"
 import { cn } from "@/lib/utils"
 
 type MyWorkPageProps = {
-  reports: MockReportSummary[]
+  currentUserId: string
+  currentUserRole: WorkspaceMemberRole
+  reports: WorkspaceReport[]
   workspaceSlug: string
 }
 
@@ -17,39 +21,46 @@ type SearchParamsLike = {
   get: (name: string) => string | null
 }
 
-const assignedReportIds = new Set([
-  "checkout-cta-overlap",
-  "dashboard-search-focus",
-  "mobile-nav-active-state",
-  "team-invite-role-dropdown",
-])
-
-const reportedReportIds = new Set([
-  "pricing-card-copy",
-  "onboarding-upload-empty",
-  "delete-project-warning",
-  "domain-filter-empty-copy",
-])
-
 const scopes: {
   label: string
   value: MyWorkScope
-  match: (report: MockReportSummary) => boolean
+  emptyTitle: string
+  emptyDescription: string
+  match: (report: WorkspaceReport, currentUserId: string) => boolean
 }[] = [
   {
     label: "Assigned to me",
     value: "assigned",
-    match: (report) => assignedReportIds.has(report.id),
+    emptyTitle: "No assigned reports yet",
+    emptyDescription:
+      "Reports assigned to you will appear here once an admin routes work to you.",
+    match: (report, currentUserId) => report.assigneeUserId === currentUserId,
   },
   {
     label: "Reported by me",
     value: "reported",
-    match: (report) => reportedReportIds.has(report.id),
+    emptyTitle: "No submitted reports yet",
+    emptyDescription:
+      "Reports you submit from the dashboard or extension will appear here.",
+    match: (report, currentUserId) => report.reporterUserId === currentUserId,
   },
 ]
 
-function getScope(searchParams: SearchParamsLike): MyWorkScope {
-  return searchParams.get("scope") === "reported" ? "reported" : "assigned"
+function getDefaultScope(role: WorkspaceMemberRole): MyWorkScope {
+  return role === "developer" ? "assigned" : "reported"
+}
+
+function getScope(
+  searchParams: SearchParamsLike,
+  defaultScope: MyWorkScope
+): MyWorkScope {
+  const scope = searchParams.get("scope")
+
+  if (scope === "assigned" || scope === "reported") {
+    return scope
+  }
+
+  return defaultScope
 }
 
 function getViewMode(searchParams: SearchParamsLike): ReportViewMode {
@@ -60,10 +71,12 @@ function ScopeTabs({
   activeScope,
   onScopeChange,
   reports,
+  currentUserId,
 }: {
   activeScope: MyWorkScope
   onScopeChange: (scope: MyWorkScope) => void
-  reports: MockReportSummary[]
+  reports: WorkspaceReport[]
+  currentUserId: string
 }) {
   return (
     <div className="relative grid w-full grid-cols-2 rounded-lg border border-border-hairline bg-background p-1 sm:w-[21rem]">
@@ -76,7 +89,7 @@ function ScopeTabs({
       />
       {scopes.map((scope) => {
         const active = activeScope === scope.value
-        const count = reports.filter(scope.match).length
+        const count = reports.filter((report) => scope.match(report, currentUserId)).length
 
         return (
           <button
@@ -99,16 +112,29 @@ function ScopeTabs({
   )
 }
 
-export function MyWorkPage({ reports, workspaceSlug }: MyWorkPageProps) {
+export function MyWorkPage({
+  currentUserId,
+  currentUserRole,
+  reports,
+  workspaceSlug,
+}: MyWorkPageProps) {
   const pathname = usePathname()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const activeScope = getScope(searchParams)
+  const defaultScope = getDefaultScope(currentUserRole)
+  const activeScope = getScope(searchParams, defaultScope)
   const viewMode = getViewMode(searchParams)
   const activeScopeConfig =
     scopes.find((scope) => scope.value === activeScope) ?? scopes[0]
-  const filteredReports = reports.filter(activeScopeConfig.match)
-  const selectedReportId = searchParams.get("report") ?? filteredReports[0]?.id
+  const filteredReports = reports.filter((report) =>
+    activeScopeConfig.match(report, currentUserId)
+  )
+  const requestedReportId = searchParams.get("report")
+  const selectedReportId = filteredReports.some(
+    (report) => report.id === requestedReportId
+  )
+    ? requestedReportId
+    : filteredReports[0]?.id
 
   function replaceSearchParams(nextSearchParams: URLSearchParams) {
     const query = nextSearchParams.toString()
@@ -118,9 +144,11 @@ export function MyWorkPage({ reports, workspaceSlug }: MyWorkPageProps) {
   function changeScope(scope: MyWorkScope) {
     const nextSearchParams = new URLSearchParams(searchParams.toString())
     const nextScopeConfig = scopes.find((item) => item.value === scope) ?? scopes[0]
-    const nextReports = reports.filter(nextScopeConfig.match)
+    const nextReports = reports.filter((report) =>
+      nextScopeConfig.match(report, currentUserId)
+    )
 
-    if (scope === "assigned") {
+    if (scope === defaultScope) {
       nextSearchParams.delete("scope")
     } else {
       nextSearchParams.set("scope", scope)
@@ -154,13 +182,26 @@ export function MyWorkPage({ reports, workspaceSlug }: MyWorkPageProps) {
 
           <ScopeTabs
             activeScope={activeScope}
+            currentUserId={currentUserId}
             onScopeChange={changeScope}
             reports={reports}
           />
         </div>
       </header>
 
-      {viewMode === "table" ? (
+      {filteredReports.length === 0 ? (
+        <div className="min-h-0 flex-1">
+          <ReportsEmptyState
+            description={activeScopeConfig.emptyDescription}
+            primaryActionHref={`/${workspaceSlug}/reports`}
+            primaryActionLabel="View all reports"
+            showSecondaryAction={false}
+            title={activeScopeConfig.emptyTitle}
+          />
+        </div>
+      ) : null}
+
+      {filteredReports.length > 0 && viewMode === "table" ? (
         <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto">
           <table className="w-full min-w-[900px] border-collapse text-left">
             <caption className="sr-only">My work reports</caption>
@@ -193,7 +234,9 @@ export function MyWorkPage({ reports, workspaceSlug }: MyWorkPageProps) {
             </tbody>
           </table>
         </div>
-      ) : (
+      ) : null}
+
+      {filteredReports.length > 0 && viewMode === "grid" ? (
         <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto p-4">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,310px),1fr))] gap-3">
             {filteredReports.map((report) => (
@@ -207,7 +250,7 @@ export function MyWorkPage({ reports, workspaceSlug }: MyWorkPageProps) {
             ))}
           </div>
         </div>
-      )}
+      ) : null}
     </section>
   )
 }

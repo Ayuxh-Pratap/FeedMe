@@ -2,6 +2,19 @@ import { z } from "zod"
 
 export const reportIdParamSchema = z.string().uuid("Invalid report id.")
 
+export const mutableReportStatusSchema = z.enum([
+  "reviewing",
+  "accepted",
+  "needs_info",
+  "duplicate",
+  "rejected",
+  "assigned",
+  "in_progress",
+  "ready_for_review",
+  "resolved",
+  "archived",
+])
+
 const reportViewportInputSchema = z.object({
   width: z.number().int().positive().max(10000),
   height: z.number().int().positive().max(10000),
@@ -59,3 +72,16 @@ export const createReportInputSchema = z.object({
 })
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>
+
+export const assignReportInputSchema = z.object({
+  assigneeUserId: z.string().uuid("Choose a valid teammate.").nullable(),
+  note: z.string().trim().max(1000).optional(),
+})
+
+export const updateReportStatusInputSchema = z.object({
+  status: mutableReportStatusSchema,
+  note: z.string().trim().max(1000).optional(),
+})
+
+export type AssignReportInput = z.infer<typeof assignReportInputSchema>
+export type UpdateReportStatusInput = z.infer<typeof updateReportStatusInputSchema>

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation"
 import { ReportDetail } from "@/components/feedme/dashboard/report-detail"
 import { requireCurrentSession } from "@/server/auth/current-user"
 import { NotFoundError } from "@/server/http/errors"
+import { listWorkspaceMembers } from "@/server/members/service"
 import { getWorkspaceReport } from "@/server/reports/service"
 import { reportIdParamSchema } from "@/server/reports/validation"
 
@@ -22,16 +23,22 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
   }
 
   let report: Awaited<ReturnType<typeof getWorkspaceReport>>["report"] | null = null
+  let role: Awaited<ReturnType<typeof getWorkspaceReport>>["workspace"]["role"] | null =
+    null
+  let members: Awaited<ReturnType<typeof listWorkspaceMembers>>["members"] = []
+  let currentUserId = ""
 
   try {
     const currentSession = await requireCurrentSession()
-    const result = await getWorkspaceReport(
-      currentSession.user.id,
-      workspaceSlug,
-      parsedReportId.data
-    )
+    currentUserId = currentSession.user.id
+    const [reportResult, membersResult] = await Promise.all([
+      getWorkspaceReport(currentSession.user.id, workspaceSlug, parsedReportId.data),
+      listWorkspaceMembers(currentSession.user.id, workspaceSlug),
+    ])
 
-    report = result.report
+    report = reportResult.report
+    role = reportResult.workspace.role
+    members = membersResult.members
   } catch (error) {
     if (error instanceof NotFoundError) {
       notFound()
@@ -44,5 +51,17 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
     notFound()
   }
 
-  return <ReportDetail report={report} workspaceSlug={workspaceSlug} />
+  if (!role) {
+    notFound()
+  }
+
+  return (
+    <ReportDetail
+      currentUserId={currentUserId}
+      currentUserRole={role}
+      members={members}
+      report={report}
+      workspaceSlug={workspaceSlug}
+    />
+  )
 }

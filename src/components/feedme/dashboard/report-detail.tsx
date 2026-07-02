@@ -2,17 +2,25 @@
 
 import Image from "next/image"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useState, type ReactNode } from "react"
 import {
   ArrowLeft,
+  Check,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
   Code2,
   ExternalLink,
+  CheckCircle2,
+  Loader2,
   Maximize2,
   MessageSquare,
   Monitor,
   MousePointer2,
+  Play,
+  Send,
+  UserRoundCheck,
   X,
 } from "lucide-react"
 
@@ -32,10 +40,16 @@ import {
 import {
   getReportStatusLabel,
   type WorkspaceReport,
+  type WorkspaceReportStatus,
 } from "@/lib/reports"
+import type { WorkspaceMemberRole, WorkspaceTeamMember } from "@/lib/team-members"
+import { ApiClientError, patchJson } from "@/lib/api-client"
 import { cn } from "@/lib/utils"
 
 type ReportDetailProps = {
+  currentUserId: string
+  currentUserRole: WorkspaceMemberRole
+  members: WorkspaceTeamMember[]
   report: WorkspaceReport
   workspaceSlug: string
 }
@@ -290,7 +304,335 @@ function MetadataItem({
   )
 }
 
-export function ReportDetail({ report, workspaceSlug }: ReportDetailProps) {
+const unassignedSelectValue = "__unassigned__"
+
+type ReportMutationResponse = {
+  report: WorkspaceReport
+}
+
+function getReportMutationBaseUrl(workspaceSlug: string, reportId: string) {
+  return `/api/workspaces/${encodeURIComponent(workspaceSlug)}/reports/${encodeURIComponent(reportId)}`
+}
+
+function getMutationErrorMessage(error: unknown) {
+  if (error instanceof ApiClientError) {
+    return error.message
+  }
+
+  return "Something went wrong. Please try again."
+}
+
+function ReportWorkflowPanel({
+  currentUserId,
+  currentUserRole,
+  members,
+  report,
+  workspaceSlug,
+}: ReportDetailProps) {
+  const router = useRouter()
+  const [selectedAssigneeUserId, setSelectedAssigneeUserId] = useState(
+    report.assigneeUserId ?? unassignedSelectValue
+  )
+  const [assigneeMenuOpen, setAssigneeMenuOpen] = useState(false)
+  const [mutation, setMutation] = useState<"assignment" | "status" | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const developerMembers = members.filter(
+    (member) => member.role === "developer" && member.status === "active"
+  )
+  const selectedDeveloper = developerMembers.find(
+    (member) => member.userId === selectedAssigneeUserId
+  )
+  const canManageReport =
+    currentUserRole === "owner" || currentUserRole === "admin"
+  const isAssignedDeveloper =
+    currentUserRole === "developer" && report.assigneeUserId === currentUserId
+  const selectedAssigneeLabel =
+    selectedAssigneeUserId === unassignedSelectValue
+      ? "Unassigned"
+      : selectedDeveloper?.name ?? report.assignee?.name ?? "Unknown developer"
+  const hasAssignmentChange =
+    selectedAssigneeUserId !== (report.assigneeUserId ?? unassignedSelectValue)
+  const canStartWork = isAssignedDeveloper && report.status === "assigned"
+  const canMarkReady =
+    isAssignedDeveloper &&
+    (report.status === "assigned" || report.status === "in_progress")
+  const canResolve =
+    canManageReport &&
+    report.status !== "resolved" &&
+    report.status !== "archived"
+  const shouldShowPanel = canManageReport || isAssignedDeveloper
+
+  if (!shouldShowPanel) {
+    return null
+  }
+
+  async function updateAssignment() {
+    setMutation("assignment")
+    setError(null)
+    setMessage(null)
+
+    try {
+      await patchJson<ReportMutationResponse>(
+        `${getReportMutationBaseUrl(workspaceSlug, report.id)}/assignment`,
+        {
+          assigneeUserId:
+            selectedAssigneeUserId === unassignedSelectValue
+              ? null
+              : selectedAssigneeUserId,
+        }
+      )
+      setMessage("Assignment updated.")
+      router.refresh()
+    } catch (updateError) {
+      setError(getMutationErrorMessage(updateError))
+    } finally {
+      setMutation(null)
+    }
+  }
+
+  async function updateStatus(status: WorkspaceReportStatus, successMessage: string) {
+    setMutation("status")
+    setError(null)
+    setMessage(null)
+
+    try {
+      await patchJson<ReportMutationResponse>(
+        `${getReportMutationBaseUrl(workspaceSlug, report.id)}/status`,
+        { status }
+      )
+      setMessage(successMessage)
+      router.refresh()
+    } catch (updateError) {
+      setError(getMutationErrorMessage(updateError))
+    } finally {
+      setMutation(null)
+    }
+  }
+
+  const isMutating = mutation !== null
+  const secondaryActionClass =
+    "inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-2.5 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-border-subtle disabled:hover:brightness-100 disabled:active:scale-100"
+
+  return (
+    <section className="overflow-visible rounded-xl border border-border-hairline bg-fill-translucent">
+      <div className="flex flex-col gap-3 border-b border-border-hairline px-4 py-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-heading-5 text-foreground">
+            <UserRoundCheck className="size-4 text-text-muted" />
+            Workflow
+          </div>
+          <p className="mt-1 text-body-3 text-text-body">
+            Assign this report to a developer and move it through review.
+          </p>
+        </div>
+
+        <DetailBadge className={reportStatusPillStyles[report.status]}>
+          {getReportStatusLabel(report.status)}
+        </DetailBadge>
+      </div>
+
+      <div className="p-3">
+        {canManageReport ? (
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <div
+              className="relative"
+              onBlur={(event) => {
+                const nextTarget = event.relatedTarget
+
+                if (
+                  !(nextTarget instanceof Node) ||
+                  !event.currentTarget.contains(nextTarget)
+                ) {
+                  setAssigneeMenuOpen(false)
+                }
+              }}
+            >
+              <button
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={assigneeMenuOpen}
+                disabled={mutation === "assignment"}
+                onClick={() => setAssigneeMenuOpen((value) => !value)}
+                className={cn(
+                  "flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-left text-body-3 text-text-secondary shadow-button-secondary outline-none transition-all duration-base ease-out-soft",
+                  "hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover focus:border-border-strong active:scale-[var(--press-scale)]",
+                  mutation === "assignment" &&
+                    "cursor-not-allowed opacity-50 hover:bg-fill-translucent hover:text-text-secondary hover:shadow-button-secondary active:scale-100"
+                )}
+              >
+                <span className="min-w-0 truncate">{selectedAssigneeLabel}</span>
+                <ChevronDown
+                  className={cn(
+                    "size-3.5 shrink-0 transition-transform duration-base ease-out-soft",
+                    assigneeMenuOpen && "rotate-180 text-text-secondary"
+                  )}
+                />
+              </button>
+
+              {assigneeMenuOpen ? (
+                <div
+                  role="listbox"
+                  aria-label="Assign report"
+                  className="absolute left-0 right-0 top-[calc(100%+0.375rem)] z-30 overflow-hidden rounded-lg border border-border-subtle bg-surface-card p-1 text-foreground shadow-popover"
+                >
+                  {[
+                    {
+                      email: null,
+                      label: "Unassigned",
+                      value: unassignedSelectValue,
+                    },
+                    ...developerMembers.map((member) => ({
+                      email: member.email,
+                      label: member.name,
+                      value: member.userId,
+                    })),
+                  ].map((option) => {
+                    const selected = selectedAssigneeUserId === option.value
+
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        onClick={() => {
+                          setSelectedAssigneeUserId(option.value)
+                          setAssigneeMenuOpen(false)
+                          setMessage(null)
+                          setError(null)
+                        }}
+                        className={cn(
+                          "flex min-h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-body-3 transition-colors duration-base ease-out-soft",
+                          selected
+                            ? "bg-surface-raised text-foreground shadow-button-hover"
+                            : "text-text-body hover:bg-fill-subtle hover:text-foreground"
+                        )}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate">{option.label}</span>
+                          {option.email ? (
+                            <span className="block truncate text-caption text-text-muted">
+                              {option.email}
+                            </span>
+                          ) : null}
+                        </span>
+                        {selected ? (
+                          <Check className="size-3.5 shrink-0 text-text-secondary" />
+                        ) : null}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              disabled={!hasAssignmentChange || mutation === "assignment"}
+              onClick={updateAssignment}
+              className={secondaryActionClass}
+            >
+              {mutation === "assignment" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Send className="size-3.5" />
+              )}
+              Save assignment
+            </button>
+            {canResolve ? (
+              <button
+                type="button"
+                disabled={isMutating}
+                onClick={() => updateStatus("resolved", "Report resolved.")}
+                className={secondaryActionClass}
+              >
+                {mutation === "status" ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="size-3.5" />
+                )}
+                Resolve
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {developerMembers.length === 0 && canManageReport ? (
+          <p className="mt-2 text-caption text-text-muted">
+            Invite an active developer before assigning work.
+          </p>
+        ) : null}
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          {isAssignedDeveloper ? (
+            <>
+              <button
+                type="button"
+                disabled={!canStartWork || isMutating}
+                onClick={() => updateStatus("in_progress", "Work marked in progress.")}
+                className={secondaryActionClass}
+              >
+                {mutation === "status" && canStartWork ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Play className="size-3.5" />
+                )}
+                Start work
+              </button>
+              <button
+                type="button"
+                disabled={!canMarkReady || isMutating}
+                onClick={() =>
+                  updateStatus("ready_for_review", "Report marked ready for review.")
+                }
+                className={secondaryActionClass}
+              >
+                {mutation === "status" && canMarkReady ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="size-3.5" />
+                )}
+                Ready for review
+              </button>
+            </>
+          ) : null}
+
+          {!canManageReport && canResolve ? (
+            <button
+              type="button"
+              disabled={isMutating}
+              onClick={() => updateStatus("resolved", "Report resolved.")}
+              className={secondaryActionClass}
+            >
+              {mutation === "status" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <CheckCircle2 className="size-3.5" />
+              )}
+              Resolve
+            </button>
+          ) : null}
+        </div>
+
+        {message ? (
+          <p className="mt-3 text-caption text-success">{message}</p>
+        ) : null}
+        {error ? (
+          <p className="mt-3 text-caption text-error">{error}</p>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
+export function ReportDetail({
+  currentUserId,
+  currentUserRole,
+  members,
+  report,
+  workspaceSlug,
+}: ReportDetailProps) {
   return (
     <section className="feedme-scrollbar h-full min-h-0 overflow-auto">
       <div className="mx-auto max-w-6xl px-4 py-4">
@@ -340,6 +682,14 @@ export function ReportDetail({ report, workspaceSlug }: ReportDetailProps) {
         </div>
 
         <div className="mt-4 space-y-4">
+          <ReportWorkflowPanel
+            currentUserId={currentUserId}
+            currentUserRole={currentUserRole}
+            members={members}
+            report={report}
+            workspaceSlug={workspaceSlug}
+          />
+
           <ScreenshotPanel report={report} />
 
           <div className="grid gap-4 xl:grid-cols-2">

@@ -6,6 +6,14 @@ export type WorkspaceStat = {
 }
 
 export type MockWorkspace = {
+  currentUserId?: string
+  currentUserRole?:
+    | "owner"
+    | "admin"
+    | "developer"
+    | "designer"
+    | "reporter"
+    | "viewer"
   slug: string
   name: string
   reportCount?: number
