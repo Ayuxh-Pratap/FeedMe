@@ -664,13 +664,15 @@ export function ReportDetail({
                 {report.summary}
               </p>
             </div>
-            <a
+            <Link
               href={report.url}
+              target="_blank"
+              rel="noreferrer"
               className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
             >
               Open URL
               <ExternalLink className="size-3.5" />
-            </a>
+            </Link>
           </div>
         </header>
 

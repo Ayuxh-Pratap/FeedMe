@@ -1104,6 +1104,7 @@ function DashboardSearchInput({
   showIcon?: boolean
 }) {
   const pathname = usePathname()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const { setDashboardSearchQuery } = useWorkspaceDashboardData()
   const urlSearchValue = searchParams.get("q") ?? ""
@@ -1141,7 +1142,7 @@ function DashboardSearchInput({
 
   function commitSearch(nextValue: string) {
     const nextSearchParams = new URLSearchParams(
-      window.location.search || latestSearchParamsRef.current.toString()
+      latestSearchParamsRef.current.toString()
     )
     const normalizedValue = nextValue.trim()
 
@@ -1159,11 +1160,9 @@ function DashboardSearchInput({
 
     committedSearchValueRef.current = normalizedValue
     setDashboardSearchQuery(normalizedValue)
-    window.history.replaceState(
-      null,
-      "",
-      query ? `${nextPathname}?${query}` : nextPathname
-    )
+    router.replace(query ? `${nextPathname}?${query}` : nextPathname, {
+      scroll: false,
+    })
   }
 
   function scheduleSearch(nextValue: string) {
@@ -2789,8 +2788,12 @@ export function WorkspaceShell({
   children,
   workspace,
 }: WorkspaceShellProps) {
+  const searchParams = useSearchParams()
+
   return (
-    <WorkspaceDashboardDataProvider>
+    <WorkspaceDashboardDataProvider
+      initialDashboardSearchQuery={searchParams.get("q")?.trim() ?? ""}
+    >
       <WorkspaceShellContent
         availableWorkspaces={availableWorkspaces}
         workspace={workspace}

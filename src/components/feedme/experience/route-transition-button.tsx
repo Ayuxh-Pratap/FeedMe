@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import type { AnchorHTMLAttributes, MouseEvent, ReactNode } from "react"
 
@@ -83,8 +84,8 @@ export function RouteTransitionLink({
   }
 
   return (
-    <a href={href} onClick={handleClick} target={target} {...props}>
+    <Link href={href} onClick={handleClick} target={target} {...props}>
       {children}
-    </a>
+    </Link>
   )
 }

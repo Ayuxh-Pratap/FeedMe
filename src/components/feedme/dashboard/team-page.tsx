@@ -1,8 +1,8 @@
 "use client"
 
 import { Plus } from "lucide-react"
-import { usePathname, useSearchParams } from "next/navigation"
-import { useEffect, useMemo, useState } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
@@ -157,6 +157,7 @@ export function TeamPage({
   workspaceSlug,
 }: TeamPageProps) {
   const pathname = usePathname()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const initialFilter = getFilter(searchParams)
   const [activeFilter, setActiveFilter] = useState(initialFilter)
@@ -194,14 +195,14 @@ export function TeamPage({
     ? selectedMemberId
     : filteredMembers[0]?.id
 
-  function replaceSearchParams(nextSearchParams: URLSearchParams) {
+  const replaceSearchParams = useCallback((nextSearchParams: URLSearchParams) => {
     const query = nextSearchParams.toString()
-    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname)
-  }
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }, [pathname, router])
 
-  function getCurrentSearchParams() {
-    return new URLSearchParams(window.location.search)
-  }
+  const getCurrentSearchParams = useCallback(() => {
+    return new URLSearchParams(searchParams.toString())
+  }, [searchParams])
 
   function changeFilter(filter: TeamFilter) {
     const nextSearchParams = getCurrentSearchParams()

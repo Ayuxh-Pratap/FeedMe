@@ -1,6 +1,6 @@
 "use client"
 
-import { usePathname, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
@@ -212,6 +212,7 @@ export function MyWorkPage({
   workspaceSlug,
 }: MyWorkPageProps) {
   const pathname = usePathname()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const defaultScope = getDefaultScope(currentUserRole)
   const initialScope = getScope(searchParams, defaultScope)
@@ -225,6 +226,7 @@ export function MyWorkPage({
   } = useWorkspaceDashboardData()
   const searchQuery = dashboardSearchQuery
   const didMountRef = useRef(false)
+  const isMountedRef = useRef(true)
   const requestSequenceRef = useRef(0)
   const [reportRows, setReportRows] = useState(reports)
   const [currentPageInfo, setCurrentPageInfo] = useState(pageInfo)
@@ -259,13 +261,17 @@ export function MyWorkPage({
     : visibleReports[0]?.id
 
   const replaceSearchParams = useCallback((nextSearchParams: URLSearchParams) => {
+    if (!isMountedRef.current) {
+      return
+    }
+
     const query = nextSearchParams.toString()
-    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname)
-  }, [pathname])
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }, [pathname, router])
 
   const getCurrentSearchParams = useCallback(() => {
-    return new URLSearchParams(window.location.search)
-  }, [])
+    return new URLSearchParams(searchParams.toString())
+  }, [searchParams])
 
   const loadReportsPage = useCallback(
     async ({ cursor = null }: { cursor?: string | null } = {}) => {
@@ -291,7 +297,7 @@ export function MyWorkPage({
           })
         )
 
-        if (requestSequenceRef.current !== requestId) {
+        if (!isMountedRef.current || requestSequenceRef.current !== requestId) {
           return
         }
 
@@ -323,7 +329,7 @@ export function MyWorkPage({
           replaceSearchParams(nextSearchParams)
         }
       } catch (error) {
-        if (requestSequenceRef.current === requestId) {
+        if (isMountedRef.current && requestSequenceRef.current === requestId) {
           setErrorMessage(
             error instanceof ApiClientError
               ? error.message
@@ -331,7 +337,7 @@ export function MyWorkPage({
           )
         }
       } finally {
-        if (requestSequenceRef.current === requestId) {
+        if (isMountedRef.current && requestSequenceRef.current === requestId) {
           if (shouldAppend) {
             setIsLoadingMore(false)
           } else {
@@ -380,6 +386,13 @@ export function MyWorkPage({
 
     void loadReportsPage({ cursor: currentPageInfo.nextCursor })
   }
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+      requestSequenceRef.current += 1
+    }
+  }, [])
 
   useEffect(() => {
     if (!didMountRef.current) {

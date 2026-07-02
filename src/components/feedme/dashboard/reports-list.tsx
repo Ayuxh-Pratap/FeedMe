@@ -2,7 +2,7 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { usePathname, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   useCallback,
   useEffect,
@@ -625,6 +625,7 @@ export function ReportsList({
   workspaceSlug,
 }: ReportsListProps) {
   const pathname = usePathname()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const viewMode = getViewMode(searchParams)
   const initialStatusFilter = getStatusFilter(searchParams)
@@ -637,6 +638,7 @@ export function ReportsList({
   } = useWorkspaceDashboardData()
   const searchQuery = dashboardSearchQuery
   const didMountRef = useRef(false)
+  const isMountedRef = useRef(true)
   const requestSequenceRef = useRef(0)
   const [reportRows, setReportRows] = useState(reports)
   const [currentPageInfo, setCurrentPageInfo] = useState(pageInfo)
@@ -671,13 +673,17 @@ export function ReportsList({
     : visibleReports[0]?.id
 
   const replaceSearchParams = useCallback((nextSearchParams: URLSearchParams) => {
+    if (!isMountedRef.current) {
+      return
+    }
+
     const query = nextSearchParams.toString()
-    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname)
-  }, [pathname])
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }, [pathname, router])
 
   const getCurrentSearchParams = useCallback(() => {
-    return new URLSearchParams(window.location.search)
-  }, [])
+    return new URLSearchParams(searchParams.toString())
+  }, [searchParams])
 
   function selectReport(reportId: string) {
     setSelectedReportId(reportId)
@@ -713,7 +719,7 @@ export function ReportsList({
           })
         )
 
-        if (requestSequenceRef.current !== requestId) {
+        if (!isMountedRef.current || requestSequenceRef.current !== requestId) {
           return
         }
 
@@ -745,7 +751,7 @@ export function ReportsList({
           replaceSearchParams(nextSearchParams)
         }
       } catch (error) {
-        if (requestSequenceRef.current === requestId) {
+        if (isMountedRef.current && requestSequenceRef.current === requestId) {
           setErrorMessage(
             error instanceof ApiClientError
               ? error.message
@@ -753,7 +759,7 @@ export function ReportsList({
           )
         }
       } finally {
-        if (requestSequenceRef.current === requestId) {
+        if (isMountedRef.current && requestSequenceRef.current === requestId) {
           if (shouldAppend) {
             setIsLoadingMore(false)
           } else {
@@ -808,6 +814,13 @@ export function ReportsList({
 
     void loadReportsPage({ cursor: currentPageInfo.nextCursor })
   }
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+      requestSequenceRef.current += 1
+    }
+  }, [])
 
   useEffect(() => {
     if (!didMountRef.current) {

@@ -54,16 +54,14 @@ function areArraysEqual(first: string[], second: string[]) {
 
 export function WorkspaceDashboardDataProvider({
   children,
+  initialDashboardSearchQuery = "",
 }: {
   children: ReactNode
+  initialDashboardSearchQuery?: string
 }) {
-  const [dashboardSearchQuery, setDashboardSearchQueryState] = useState(() => {
-    if (typeof window === "undefined") {
-      return ""
-    }
-
-    return new URLSearchParams(window.location.search).get("q")?.trim() ?? ""
-  })
+  const [dashboardSearchQuery, setDashboardSearchQueryState] = useState(
+    initialDashboardSearchQuery.trim()
+  )
   const [reportRailReady, setReportRailReady] = useState(false)
   const [reportRailReports, setReportRailReports] = useState<WorkspaceReport[]>([])
   const [reportRailVisibleIds, setReportRailVisibleIds] = useState<string[]>([])
