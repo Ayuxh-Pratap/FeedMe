@@ -53,6 +53,11 @@ import {
   type WorkspaceReport,
 } from "@/lib/reports"
 import {
+  getDashboardSearchQuery,
+  matchesWorkspaceReportSearch,
+  matchesWorkspaceMemberSearch,
+} from "@/lib/dashboard-search"
+import {
   getWorkspaceMemberRoleLabel,
   type WorkspaceTeamMember,
 } from "@/lib/team-members"
@@ -1093,6 +1098,147 @@ function MobileNavSheet({
   )
 }
 
+function DashboardSearchInput({
+  autoFocus,
+  placeholder,
+  showIcon,
+}: {
+  autoFocus?: boolean
+  placeholder: string
+  showIcon?: boolean
+}) {
+  const pathname = usePathname()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const urlSearchValue = searchParams.get("q") ?? ""
+  const [draftSearchValue, setDraftSearchValue] = useState(urlSearchValue)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const committedSearchValueRef = useRef(urlSearchValue)
+  const latestPathnameRef = useRef(pathname)
+  const latestSearchParamsRef = useRef(searchParams)
+
+  useEffect(() => {
+    latestPathnameRef.current = pathname
+    latestSearchParamsRef.current = searchParams
+  }, [pathname, searchParams])
+
+  useEffect(() => {
+    if (urlSearchValue === committedSearchValueRef.current) {
+      return
+    }
+
+    const syncTimer = setTimeout(() => {
+      committedSearchValueRef.current = urlSearchValue
+      setDraftSearchValue(urlSearchValue)
+    }, 0)
+
+    return () => clearTimeout(syncTimer)
+  }, [urlSearchValue])
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+    }
+  }, [])
+
+  function commitSearch(nextValue: string) {
+    const nextSearchParams = new URLSearchParams(
+      latestSearchParamsRef.current.toString()
+    )
+    const normalizedValue = nextValue.trim()
+
+    if (normalizedValue) {
+      nextSearchParams.set("q", normalizedValue)
+    } else {
+      nextSearchParams.delete("q")
+    }
+
+    nextSearchParams.delete("report")
+    nextSearchParams.delete("member")
+
+    const query = nextSearchParams.toString()
+    const nextPathname = latestPathnameRef.current
+
+    committedSearchValueRef.current = normalizedValue
+    router.replace(query ? `${nextPathname}?${query}` : nextPathname, {
+      scroll: false,
+    })
+  }
+
+  function scheduleSearch(nextValue: string) {
+    setDraftSearchValue(nextValue)
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      commitSearch(nextValue)
+      debounceTimerRef.current = null
+    }, 240)
+  }
+
+  function clearSearch() {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = null
+    }
+
+    setDraftSearchValue("")
+    commitSearch("")
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 flex-1 items-center gap-2 rounded-lg border transition-colors duration-base ease-out-soft",
+        showIcon
+          ? "h-10 border-border-subtle bg-background px-3"
+          : "h-8 border-transparent bg-transparent px-2"
+      )}
+    >
+      {showIcon ? (
+        <Search className="size-4 shrink-0 text-muted-foreground" />
+      ) : null}
+      <input
+        aria-label="Search reports, domains, people"
+        autoFocus={autoFocus}
+        value={draftSearchValue}
+        onChange={(event) => scheduleSearch(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && draftSearchValue) {
+            event.preventDefault()
+            clearSearch()
+          }
+
+          if (event.key === "Enter") {
+            if (debounceTimerRef.current) {
+              clearTimeout(debounceTimerRef.current)
+              debounceTimerRef.current = null
+            }
+
+            commitSearch(draftSearchValue)
+          }
+        }}
+        className="h-full min-w-0 flex-1 border-0 bg-transparent text-body-2 text-foreground outline-none placeholder:text-muted-foreground"
+        placeholder={placeholder}
+      />
+      {draftSearchValue ? (
+        <button
+          type="button"
+          aria-label="Clear search"
+          onClick={clearSearch}
+          className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+        >
+          <X className="size-3.5" />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
 function MobileSearchSheet({ workspace }: { workspace: MockWorkspace }) {
   return (
     <Sheet>
@@ -1108,15 +1254,11 @@ function MobileSearchSheet({ workspace }: { workspace: MockWorkspace }) {
       >
         <SheetTitle className="sr-only">Search FeedMe</SheetTitle>
         <div className="mx-auto flex w-full max-w-2xl items-center gap-2">
-          <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border-subtle bg-background px-3">
-            <Search className="size-4 shrink-0 text-muted-foreground" />
-            <input
-              aria-label="Search reports, domains, people"
-              autoFocus
-              className="h-full min-w-0 flex-1 border-0 bg-transparent text-body-2 text-foreground outline-none placeholder:text-muted-foreground"
-              placeholder={`Search ${workspace.name}...`}
-            />
-          </div>
+          <DashboardSearchInput
+            autoFocus
+            placeholder={`Search ${workspace.name}...`}
+            showIcon
+          />
           <SheetClose asChild>
             <button
               type="button"
@@ -1221,11 +1363,7 @@ function WorkspaceTopbar({
             />
             {workspace.user.displayName}
           </div>
-          <input
-            aria-label="Search reports, domains, people"
-            className="h-8 min-w-0 flex-1 border-0 bg-transparent text-body-2 text-foreground outline-none placeholder:text-muted-foreground"
-            placeholder="Search reports, domains, people..."
-          />
+          <DashboardSearchInput placeholder="Search reports, domains, people..." />
         </div>
 
         <div className="flex items-center gap-2 pl-4">
@@ -2286,8 +2424,13 @@ function getReportRailReports({
   searchParams: URLSearchParams
   workspace: MockWorkspace
 }) {
+  const searchQuery = getDashboardSearchQuery(searchParams)
+  const searchScopedReports = reports.filter((report) =>
+    matchesWorkspaceReportSearch(report, searchQuery)
+  )
+
   if (mode === "reports") {
-    return reports
+    return searchScopedReports
   }
 
   const currentUserId = workspace.currentUserId
@@ -2299,10 +2442,14 @@ function getReportRailReports({
   const scope = getMyWorkScope(searchParams, workspace)
 
   if (scope === "assigned") {
-    return reports.filter((report) => report.assigneeUserId === currentUserId)
+    return searchScopedReports.filter(
+      (report) => report.assigneeUserId === currentUserId
+    )
   }
 
-  return reports.filter((report) => report.reporterUserId === currentUserId)
+  return searchScopedReports.filter(
+    (report) => report.reporterUserId === currentUserId
+  )
 }
 
 function ReportsContextRail({
@@ -2549,8 +2696,28 @@ function TeamContextRail({
     )
   }
 
-  const selectedMemberId = searchParams.get("member") ?? members[0]?.id
-  const selectedMember = members.find((member) => member.id === selectedMemberId)
+  const searchQuery = getDashboardSearchQuery(searchParams)
+  const roleFilter = searchParams.get("role")
+  const visibleMembers = members
+    .filter((member) => matchesWorkspaceMemberSearch(member, searchQuery))
+    .filter((member) => {
+      if (roleFilter === "developer" || roleFilter === "designer" || roleFilter === "reporter") {
+        return member.role === roleFilter
+      }
+
+      if (roleFilter === "pending") {
+        return member.status === "pending"
+      }
+
+      return true
+    })
+  const requestedMemberId = searchParams.get("member")
+  const selectedMemberId = visibleMembers.some(
+    (member) => member.id === requestedMemberId
+  )
+    ? requestedMemberId
+    : visibleMembers[0]?.id
+  const selectedMember = visibleMembers.find((member) => member.id === selectedMemberId)
 
   if (!selectedMember) {
     return (
@@ -2561,7 +2728,9 @@ function TeamContextRail({
           </div>
           <h2 className="mt-3 text-heading-5 text-foreground">Select a teammate</h2>
           <p className="mt-1 text-body-3 text-text-body">
-            Member role, workload, and recent activity will appear here.
+            {searchQuery || roleFilter
+              ? "No teammate matches the current search and role filters."
+              : "Member role, workload, and recent activity will appear here."}
           </p>
         </section>
       </div>
@@ -2628,17 +2797,6 @@ function MobileRightRailSheet({
       </SheetContent>
     </Sheet>
   )
-}
-
-function getWorkspaceReportCount(workspace: MockWorkspace) {
-  if (typeof workspace.reportCount === "number") {
-    return workspace.reportCount
-  }
-
-  const reportsStat = workspace.stats.find((stat) => stat.label === "Reports")
-  const count = Number(reportsStat?.value ?? 0)
-
-  return Number.isFinite(count) ? count : 0
 }
 
 function WorkspaceRightRail({
@@ -2806,7 +2964,10 @@ export function WorkspaceShell({
   }
 
   const shouldDisableReportsRail =
-    isReportsIndexRoute && getWorkspaceReportCount(workspace) === 0
+    isReportsIndexRoute &&
+    !reportRailIsLoading &&
+    !reportRailErrorMessage &&
+    scopedReportRailReports.length === 0
   const shouldDisableMyWorkRail =
     isMyWorkRoute &&
     !reportRailIsLoading &&

@@ -6,6 +6,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
 import {
+  getDashboardSearchQuery,
+  matchesWorkspaceMemberSearch,
+} from "@/lib/dashboard-search"
+import {
   getWorkspaceMemberRoleLabel,
   type WorkspaceTeamMember,
 } from "@/lib/team-members"
@@ -121,6 +125,31 @@ function TeamFilterTabs({
   )
 }
 
+function TeamNoMatches({
+  activeFilterLabel,
+  searchQuery,
+}: {
+  activeFilterLabel: string
+  searchQuery: string
+}) {
+  const hasSearch = Boolean(searchQuery)
+
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center px-8 py-10">
+      <div className="mx-auto max-w-[360px] text-center">
+        <h2 className="text-heading-3 text-foreground">
+          {hasSearch ? "No matching teammates" : "No teammates in this view"}
+        </h2>
+        <p className="mt-2 text-body-2 text-text-body">
+          {hasSearch
+            ? `Nothing matched "${searchQuery}" inside ${activeFilterLabel.toLowerCase()}.`
+            : "Try a different role filter to see more workspace members."}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export function TeamPage({
   members,
   workspaceName,
@@ -130,10 +159,19 @@ export function TeamPage({
   const router = useRouter()
   const searchParams = useSearchParams()
   const activeFilter = getFilter(searchParams)
+  const searchQuery = getDashboardSearchQuery(searchParams)
   const activeFilterConfig =
     filters.find((filter) => filter.value === activeFilter) ?? filters[0]
-  const filteredMembers = members.filter(activeFilterConfig.match)
-  const selectedMemberId = searchParams.get("member") ?? filteredMembers[0]?.id
+  const searchScopedMembers = members.filter((member) =>
+    matchesWorkspaceMemberSearch(member, searchQuery)
+  )
+  const filteredMembers = searchScopedMembers.filter(activeFilterConfig.match)
+  const requestedMemberId = searchParams.get("member")
+  const selectedMemberId = filteredMembers.some(
+    (member) => member.id === requestedMemberId
+  )
+    ? requestedMemberId
+    : filteredMembers[0]?.id
 
   function replaceSearchParams(nextSearchParams: URLSearchParams) {
     const query = nextSearchParams.toString()
@@ -143,7 +181,7 @@ export function TeamPage({
   function changeFilter(filter: TeamFilter) {
     const nextSearchParams = new URLSearchParams(searchParams.toString())
     const nextFilter = filters.find((item) => item.value === filter) ?? filters[0]
-    const nextMembers = members.filter(nextFilter.match)
+    const nextMembers = searchScopedMembers.filter(nextFilter.match)
 
     if (filter === "all") {
       nextSearchParams.delete("role")
@@ -180,7 +218,7 @@ export function TeamPage({
           <div className="flex flex-wrap items-center gap-2">
             <TeamFilterTabs
               activeFilter={activeFilter}
-              members={members}
+              members={searchScopedMembers}
               onFilterChange={changeFilter}
             />
             <InviteMemberDialog
@@ -199,7 +237,15 @@ export function TeamPage({
         </div>
       </header>
 
-      <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto">
+      {filteredMembers.length === 0 ? (
+        <TeamNoMatches
+          activeFilterLabel={activeFilterConfig.label}
+          searchQuery={searchQuery}
+        />
+      ) : null}
+
+      {filteredMembers.length > 0 ? (
+        <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[820px] border-collapse text-left">
           <caption className="sr-only">Workspace team members</caption>
           <thead className="sticky top-0 z-10 border-b border-border-hairline bg-background">
@@ -273,6 +319,7 @@ export function TeamPage({
           </tbody>
         </table>
       </div>
+      ) : null}
     </section>
   )
 }

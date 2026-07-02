@@ -4,6 +4,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { ReportsEmptyState } from "@/components/feedme/dashboard/reports-empty-state"
 import { ReportCard, ReportTableRow } from "@/components/feedme/dashboard/reports-list"
+import {
+  getDashboardSearchQuery,
+  matchesWorkspaceReportSearch,
+} from "@/lib/dashboard-search"
 import type { WorkspaceReport } from "@/lib/reports"
 import type { WorkspaceMemberRole } from "@/lib/team-members"
 import { cn } from "@/lib/utils"
@@ -124,9 +128,13 @@ export function MyWorkPage({
   const defaultScope = getDefaultScope(currentUserRole)
   const activeScope = getScope(searchParams, defaultScope)
   const viewMode = getViewMode(searchParams)
+  const searchQuery = getDashboardSearchQuery(searchParams)
   const activeScopeConfig =
     scopes.find((scope) => scope.value === activeScope) ?? scopes[0]
-  const filteredReports = reports.filter((report) =>
+  const searchScopedReports = reports.filter((report) =>
+    matchesWorkspaceReportSearch(report, searchQuery)
+  )
+  const filteredReports = searchScopedReports.filter((report) =>
     activeScopeConfig.match(report, currentUserId)
   )
   const requestedReportId = searchParams.get("report")
@@ -144,7 +152,7 @@ export function MyWorkPage({
   function changeScope(scope: MyWorkScope) {
     const nextSearchParams = new URLSearchParams(searchParams.toString())
     const nextScopeConfig = scopes.find((item) => item.value === scope) ?? scopes[0]
-    const nextReports = reports.filter((report) =>
+    const nextReports = searchScopedReports.filter((report) =>
       nextScopeConfig.match(report, currentUserId)
     )
 
@@ -184,7 +192,7 @@ export function MyWorkPage({
             activeScope={activeScope}
             currentUserId={currentUserId}
             onScopeChange={changeScope}
-            reports={reports}
+            reports={searchScopedReports}
           />
         </div>
       </header>
@@ -192,11 +200,23 @@ export function MyWorkPage({
       {filteredReports.length === 0 ? (
         <div className="min-h-0 flex-1">
           <ReportsEmptyState
-            description={activeScopeConfig.emptyDescription}
-            primaryActionHref={`/${workspaceSlug}/reports`}
-            primaryActionLabel="View all reports"
+            description={
+              searchQuery
+                ? `Nothing matched "${searchQuery}" inside ${activeScopeConfig.label.toLowerCase()}.`
+                : activeScopeConfig.emptyDescription
+            }
+            primaryActionHref={
+              searchQuery
+                ? `/${workspaceSlug}/reports?q=${encodeURIComponent(searchQuery)}`
+                : `/${workspaceSlug}/reports`
+            }
+            primaryActionLabel={searchQuery ? "Search all reports" : "View all reports"}
             showSecondaryAction={false}
-            title={activeScopeConfig.emptyTitle}
+            title={
+              searchQuery
+                ? `No ${activeScopeConfig.label.toLowerCase()} matches`
+                : activeScopeConfig.emptyTitle
+            }
           />
         </div>
       ) : null}

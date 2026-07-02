@@ -22,6 +22,10 @@ import {
   isOpenWorkspaceReport,
   type WorkspaceReport,
 } from "@/lib/reports"
+import {
+  getDashboardSearchQuery,
+  matchesWorkspaceReportSearch,
+} from "@/lib/dashboard-search"
 import { cn } from "@/lib/utils"
 
 type ReportsListProps = {
@@ -305,6 +309,31 @@ function ReportsHeader({
   )
 }
 
+function ReportsNoMatches({
+  activeFilterLabel,
+  searchQuery,
+}: {
+  activeFilterLabel: string
+  searchQuery: string
+}) {
+  const hasSearch = Boolean(searchQuery)
+
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center px-8 py-10">
+      <div className="mx-auto max-w-[360px] text-center">
+        <h2 className="text-heading-3 text-foreground">
+          {hasSearch ? "No matching reports" : "No reports in this view"}
+        </h2>
+        <p className="mt-2 text-body-2 text-text-body">
+          {hasSearch
+            ? `Nothing matched "${searchQuery}" inside ${activeFilterLabel.toLowerCase()} reports.`
+            : "Try a different status filter to see more captured feedback."}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function ReportSortDropdown({
   onSortChange,
   sort,
@@ -534,9 +563,18 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
   const viewMode = getViewMode(searchParams)
   const statusFilter = getStatusFilter(searchParams)
   const sort = getReportSort(searchParams)
+  const searchQuery = getDashboardSearchQuery(searchParams)
   const activeFilter = filters.find((filter) => filter.value === statusFilter) ?? filters[0]
-  const filteredReports = sortReports(reports.filter(activeFilter.match), sort)
-  const selectedReportId = searchParams.get("report") ?? filteredReports[0]?.id ?? reports[0]?.id
+  const searchScopedReports = reports.filter((report) =>
+    matchesWorkspaceReportSearch(report, searchQuery)
+  )
+  const filteredReports = sortReports(searchScopedReports.filter(activeFilter.match), sort)
+  const requestedReportId = searchParams.get("report")
+  const selectedReportId = filteredReports.some(
+    (report) => report.id === requestedReportId
+  )
+    ? requestedReportId
+    : filteredReports[0]?.id
 
   function replaceSearchParams(nextSearchParams: URLSearchParams) {
     const query = nextSearchParams.toString()
@@ -552,7 +590,7 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
   function changeFilter(filter: StatusFilter) {
     const nextSearchParams = new URLSearchParams(searchParams.toString())
     const nextFilter = filters.find((item) => item.value === filter) ?? filters[0]
-    const nextReports = sortReports(reports.filter(nextFilter.match), sort)
+    const nextReports = sortReports(searchScopedReports.filter(nextFilter.match), sort)
 
     if (filter === "all") {
       nextSearchParams.delete("status")
@@ -587,11 +625,18 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
         activeFilter={statusFilter}
         onFilterChange={changeFilter}
         onSortChange={changeSort}
-        reports={reports}
+        reports={searchScopedReports}
         sort={sort}
       />
 
-      {viewMode === "table" ? (
+      {filteredReports.length === 0 ? (
+        <ReportsNoMatches
+          activeFilterLabel={activeFilter.label}
+          searchQuery={searchQuery}
+        />
+      ) : null}
+
+      {filteredReports.length > 0 && viewMode === "table" ? (
         <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto">
           <table className="w-full min-w-[900px] border-collapse text-left">
             <caption className="sr-only">Feedback reports</caption>
@@ -624,7 +669,9 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
             </tbody>
           </table>
         </div>
-      ) : (
+      ) : null}
+
+      {filteredReports.length > 0 && viewMode === "grid" ? (
         <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto p-4">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,310px),1fr))] gap-3">
             {filteredReports.map((report) => (
@@ -638,7 +685,7 @@ export function ReportsList({ reports, workspaceSlug }: ReportsListProps) {
             ))}
           </div>
         </div>
-      )}
+      ) : null}
     </section>
   )
 }

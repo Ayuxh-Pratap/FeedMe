@@ -164,6 +164,23 @@ Topbar
 -> compact utility icon buttons
 -> controls the visibility of the right rail
 
+Topbar search is a real workspace search control, not decorative chrome. It writes the shared `q` URL param with a short debounce and preserves route-owned params such as `view`, `sort`, `status`, `scope`, and `role`. Search should clear stale selected entity params (`report`, `member`) so the active page and right rail select the first visible match. The focused search field should stay visually quiet in the topbar; do not add a temporary background or border just because the input is active.
+
+Search behavior:
+
+```txt
+Reports
+-> match title, summary, domain, URL, reporter, assignee, selected element, status, severity, category, and developer prompt
+
+My Work
+-> same report matching, after the active Assigned/Reported scope
+
+Team
+-> match name, display name, email, role, status, title, and workload counts
+```
+
+If search or filters produce no visible rows, the main canvas owns the empty state and the right rail should not keep showing stale context from an item outside the current result set.
+
 On mobile/tablet, search becomes an icon-triggered sheet and the primary capture action remains in the topbar. The sidebar is replaced by a left sheet, and right-rail context is replaced by a right sheet.
 
 Main content
