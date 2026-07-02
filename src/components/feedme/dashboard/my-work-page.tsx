@@ -309,8 +309,7 @@ export function MyWorkPage({
         )
 
         if (!shouldAppend) {
-          const nextSearchParams = getCurrentSearchParams()
-          const requestedId = nextSearchParams.get("report")
+          const requestedId = searchParams.get("report")
           const nextSelectedReportId = result.reports.some(
             (report) => report.id === requestedId
           )
@@ -319,14 +318,6 @@ export function MyWorkPage({
 
           setSelectedReportId(nextSelectedReportId)
           setReportRailSelectedReportId(nextSelectedReportId)
-
-          if (nextSelectedReportId) {
-            nextSearchParams.set("report", nextSelectedReportId)
-          } else {
-            nextSearchParams.delete("report")
-          }
-
-          replaceSearchParams(nextSearchParams)
         }
       } catch (error) {
         if (isMountedRef.current && requestSequenceRef.current === requestId) {
@@ -348,9 +339,8 @@ export function MyWorkPage({
     },
     [
       activeScope,
-      getCurrentSearchParams,
-      replaceSearchParams,
       searchQuery,
+      searchParams,
       setReportRailSelectedReportId,
       workspaceSlug,
     ]
@@ -360,6 +350,8 @@ export function MyWorkPage({
     const nextSearchParams = getCurrentSearchParams()
 
     setActiveScope(scope)
+    setSelectedReportId(null)
+    setReportRailSelectedReportId(null)
 
     if (scope === defaultScope) {
       nextSearchParams.delete("scope")
@@ -367,6 +359,7 @@ export function MyWorkPage({
       nextSearchParams.set("scope", scope)
     }
 
+    nextSearchParams.delete("report")
     replaceSearchParams(nextSearchParams)
   }
 

@@ -731,8 +731,7 @@ export function ReportsList({
         )
 
         if (!shouldAppend) {
-          const nextSearchParams = getCurrentSearchParams()
-          const requestedId = nextSearchParams.get("report")
+          const requestedId = searchParams.get("report")
           const nextSelectedReportId = result.reports.some(
             (report) => report.id === requestedId
           )
@@ -741,14 +740,6 @@ export function ReportsList({
 
           setSelectedReportId(nextSelectedReportId)
           setReportRailSelectedReportId(nextSelectedReportId)
-
-          if (nextSelectedReportId) {
-            nextSearchParams.set("report", nextSelectedReportId)
-          } else {
-            nextSearchParams.delete("report")
-          }
-
-          replaceSearchParams(nextSearchParams)
         }
       } catch (error) {
         if (isMountedRef.current && requestSequenceRef.current === requestId) {
@@ -770,8 +761,7 @@ export function ReportsList({
     },
     [
       searchQuery,
-      getCurrentSearchParams,
-      replaceSearchParams,
+      searchParams,
       setReportRailSelectedReportId,
       sort,
       statusFilter,
@@ -783,6 +773,8 @@ export function ReportsList({
     const nextSearchParams = getCurrentSearchParams()
 
     setStatusFilter(filter)
+    setSelectedReportId(null)
+    setReportRailSelectedReportId(null)
 
     if (filter === "all") {
       nextSearchParams.delete("status")
@@ -790,6 +782,7 @@ export function ReportsList({
       nextSearchParams.set("status", filter)
     }
 
+    nextSearchParams.delete("report")
     replaceSearchParams(nextSearchParams)
   }
 
@@ -804,6 +797,7 @@ export function ReportsList({
       nextSearchParams.set("sort", nextSort)
     }
 
+    nextSearchParams.delete("report")
     replaceSearchParams(nextSearchParams)
   }
 
