@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 
 import {
@@ -14,6 +15,12 @@ type JoinInvitePageProps = {
   params: Promise<{
     inviteCode: string
   }>
+}
+
+export const metadata: Metadata = {
+  title: "Join workspace",
+  description: "Accept your FeedMe workspace invite.",
+  robots: { index: false, follow: false },
 }
 
 export default async function JoinInvitePage({ params }: JoinInvitePageProps) {

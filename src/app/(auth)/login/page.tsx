@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { redirect } from "next/navigation"
 
 import {
@@ -20,6 +21,11 @@ type LoginPageProps = {
 
 function firstParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value
+}
+
+export const metadata: Metadata = {
+  title: "Log in",
+  description: "Log in to your FeedMe workspace to review and triage feedback.",
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {

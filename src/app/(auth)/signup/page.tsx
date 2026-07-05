@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { redirect } from "next/navigation"
 
 import {
@@ -20,6 +21,11 @@ type SignupPageProps = {
 
 function firstParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value
+}
+
+export const metadata: Metadata = {
+  title: "Create account",
+  description: "Create a FeedMe account to capture and triage website feedback.",
 }
 
 export default async function SignupPage({ searchParams }: SignupPageProps) {

@@ -1,3 +1,5 @@
+import { cache } from "react"
+import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 
 import { ReportDetail } from "@/components/feedme/dashboard/report-detail"
@@ -14,6 +16,43 @@ type ReportDetailPageProps = {
   }>
 }
 
+// Cached so generateMetadata and the page share a single DB fetch per request.
+const loadReportDetail = cache(async (workspaceSlug: string, reportId: string) => {
+  const currentSession = await requireCurrentSession()
+  const [reportResult, membersResult] = await Promise.all([
+    getWorkspaceReport(currentSession.user.id, workspaceSlug, reportId),
+    listWorkspaceMembers(currentSession.user.id, workspaceSlug),
+  ])
+
+  return {
+    currentUserId: currentSession.user.id,
+    members: membersResult.members,
+    report: reportResult.report,
+    role: reportResult.workspace.role,
+  }
+})
+
+export async function generateMetadata({
+  params,
+}: ReportDetailPageProps): Promise<Metadata> {
+  const { reportId, workspaceSlug } = await params
+  const parsedReportId = reportIdParamSchema.safeParse(reportId)
+
+  if (!parsedReportId.success) {
+    return { title: "Report" }
+  }
+
+  try {
+    const { report } = await loadReportDetail(workspaceSlug, parsedReportId.data)
+    return {
+      title: report.title,
+      description: report.summary,
+    }
+  } catch {
+    return { title: "Report" }
+  }
+}
+
 export default async function ReportDetailPage({ params }: ReportDetailPageProps) {
   const { reportId, workspaceSlug } = await params
   const parsedReportId = reportIdParamSchema.safeParse(reportId)
@@ -22,23 +61,10 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
     notFound()
   }
 
-  let report: Awaited<ReturnType<typeof getWorkspaceReport>>["report"] | null = null
-  let role: Awaited<ReturnType<typeof getWorkspaceReport>>["workspace"]["role"] | null =
-    null
-  let members: Awaited<ReturnType<typeof listWorkspaceMembers>>["members"] = []
-  let currentUserId = ""
+  let detail: Awaited<ReturnType<typeof loadReportDetail>>
 
   try {
-    const currentSession = await requireCurrentSession()
-    currentUserId = currentSession.user.id
-    const [reportResult, membersResult] = await Promise.all([
-      getWorkspaceReport(currentSession.user.id, workspaceSlug, parsedReportId.data),
-      listWorkspaceMembers(currentSession.user.id, workspaceSlug),
-    ])
-
-    report = reportResult.report
-    role = reportResult.workspace.role
-    members = membersResult.members
+    detail = await loadReportDetail(workspaceSlug, parsedReportId.data)
   } catch (error) {
     if (error instanceof NotFoundError) {
       notFound()
@@ -47,20 +73,12 @@ export default async function ReportDetailPage({ params }: ReportDetailPageProps
     throw error
   }
 
-  if (!report) {
-    notFound()
-  }
-
-  if (!role) {
-    notFound()
-  }
-
   return (
     <ReportDetail
-      currentUserId={currentUserId}
-      currentUserRole={role}
-      members={members}
-      report={report}
+      currentUserId={detail.currentUserId}
+      currentUserRole={detail.role}
+      members={detail.members}
+      report={detail.report}
       workspaceSlug={workspaceSlug}
     />
   )

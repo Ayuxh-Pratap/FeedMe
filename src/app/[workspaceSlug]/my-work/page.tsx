@@ -1,3 +1,5 @@
+import type { Metadata } from "next"
+
 import { MyWorkPage } from "@/components/feedme/dashboard/my-work-page"
 import { requireCurrentSession } from "@/server/auth/current-user"
 import { NotFoundError } from "@/server/http/errors"
@@ -21,6 +23,10 @@ function normalizeSearchParams(
       Array.isArray(value) ? value[0] : value,
     ])
   )
+}
+
+export const metadata: Metadata = {
+  title: "My Work",
 }
 
 function getDefaultMyWorkScope(role: string) {

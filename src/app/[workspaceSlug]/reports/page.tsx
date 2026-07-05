@@ -1,3 +1,5 @@
+import type { Metadata } from "next"
+
 import { ReportsEmptyState } from "@/components/feedme/dashboard/reports-empty-state"
 import { ReportsList } from "@/components/feedme/dashboard/reports-list"
 import { requireCurrentSession } from "@/server/auth/current-user"
@@ -9,6 +11,10 @@ type ReportsPageProps = {
     workspaceSlug: string
   }>
   searchParams?: Promise<Record<string, string | string[] | undefined>>
+}
+
+export const metadata: Metadata = {
+  title: "Reports",
 }
 
 function normalizeSearchParams(

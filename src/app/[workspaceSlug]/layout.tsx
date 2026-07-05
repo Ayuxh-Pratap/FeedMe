@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import type { ReactNode } from "react"
 import { notFound, redirect } from "next/navigation"
 
@@ -25,6 +26,12 @@ type WorkspaceLayoutProps = {
   params: Promise<{
     workspaceSlug: string
   }>
+}
+
+// Workspace dashboards are private per-tenant surfaces; keep them out of search
+// indexes even though every route is already behind authentication.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
 }
 
 export default async function WorkspaceLayout({
