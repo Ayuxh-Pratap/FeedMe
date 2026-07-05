@@ -391,69 +391,48 @@ FeedMe captures screenshots with Chrome's `tabs.captureVisibleTab`. That API onl
 accepts two authorizations:
 
 ```txt
-activeTab   no prompt, but resets on every page load (not persistent)
-<all_urls>  persistent, but shows one broad host-permission prompt
+activeTab   granted with no prompt when the user invokes the extension; lasts
+            until the tab is navigated or closed
+<all_urls>  persistent, but forces the "read and change all your data on all
+            websites" prompt, which misrepresents what FeedMe actually does
 ```
 
-A per-domain host permission is NOT accepted by `captureVisibleTab`. Requesting
-`https://v2.bump.fm/*` looks like it works (Chrome grants the permission) but the
-API still refuses the screenshot. This is a Chrome platform rule, not a FeedMe
-choice, and it is why the earlier per-domain "Allow" flow produced intermittent
-"screenshot permission is blocked" errors: capture only succeeded while the
-transient activeTab grant from opening the popup was still live.
+A per-domain host permission is NOT accepted by `captureVisibleTab`, which is why
+the earlier per-domain "Allow" flow produced intermittent "screenshot permission
+is blocked" errors: capture only succeeded while the transient activeTab grant
+from opening the popup happened to still be live.
 
-So FeedMe requests the broad host permission once, as an optional permission the
-user grants deliberately:
+FeedMe uses the `activeTab` model (the same approach as full-page screenshot
+tools) so there is never a permission prompt:
 
 ```txt
-optional_host_permissions: ["https://*/*"]
-requested at runtime from the popup "Enable screenshot capture" action
+1. User opens the FeedMe popup on a workspace domain.
+   -> opening the popup grants activeTab for that tab.
+2. Popup shows "Start feedback on this page" and messages the content script
+   to arm capture.
+3. On-page tools appear; captureVisibleTab works for this page visit.
+4. activeTab and the armed state reset on a full page reload, so the user opens
+   FeedMe again to re-arm. In-app (SPA) navigation keeps it armed.
 ```
 
-Trust is preserved by separating capture permission from activation:
+Permission footprint (no broad host permission, no runtime prompt):
 
 ```txt
-Chrome permission (broad, one-time)   lets captureVisibleTab work at all
-Activation gate (per workspace domain)  decides WHERE FeedMe actually shows up
+permissions: storage, tabs, activeTab
+host_permissions: dashboard API origin + Cloudinary upload origin only
 ```
 
-The content script still only activates its tools on domains in the active
-workspace allowlist, and FeedMe only captures when the user submits a report.
-Enabling capture is a single one-time action, after which every current and
-future workspace domain works for the lifetime of the grant with no repeat
-prompts.
+Activation is still gated to workspace domains: the content script only shows its
+tools when the current host is in the active workspace allowlist, and FeedMe only
+captures when the user submits a report.
 
-Before opening Chrome's native prompt, FeedMe shows its own explanation:
-
-```txt
-Chrome will ask to access websites so FeedMe can take screenshots.
-FeedMe only captures a screenshot when you submit feedback on a workspace domain.
-```
-
-Chrome still phrases host access as reading/changing site data. That wording is
-browser-controlled and cannot be customized; FeedMe does not read or change page
-content and only captures a screenshot on submit.
-
-Popup state example:
-
-```txt
-Bump
-Screenshot capture: Enabled
-
-Domains
-- bump.fm       Active
-- v2.bump.fm    Active
-- test.bump.fm  Active
-```
-
-The floating button appears only when all are true:
+The floating tools appear only when all are true:
 
 ```txt
 user is signed in
 active workspace exists
-current tab domain is in active workspace allowlist
-the extension holds the screenshot capture permission
-backend domain check passes or cached allow state is valid
+current tab host is in the active workspace allowlist
+FeedMe was armed for this page (popup opened -> Start feedback)
 ```
 
 ## Extension Capture Flow
@@ -715,7 +694,7 @@ In MVP:
 - Do not support localhost domains.
 - Do not auto-include subdomains.
 - Do not require hard domain verification yet.
-- Use a one-time optional broad host permission for screenshot capture (Chrome's captureVisibleTab does not accept per-domain permissions); still gate activation to workspace domains.
+- Use the activeTab model for screenshot capture (no host-permission prompt); the user arms capture by opening the popup, and activation is still gated to workspace domains.
 - Let every workspace member submit reports.
 - Assign implementation work to developers.
 - Let developers mark work ready for review.

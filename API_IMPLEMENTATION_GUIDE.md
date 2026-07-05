@@ -862,12 +862,15 @@ floating button unless the current host belongs to the active workspace. Report 
 through the background script to POST /api/workspaces/:workspaceSlug/reports.
 The copied extension is now self-contained for shared feedback types and no longer depends on
 the old @feedme/shared workspace package.
-Screenshot capture uses a one-time broad host permission. Chrome's captureVisibleTab
-only accepts activeTab or all-hosts access, so the old per-domain "Allow" flow could
-not authorize capture and produced intermittent "screenshot permission is blocked"
-errors. The popup now requests https://*/* once (two-step, with FeedMe's own
-explanation first), and the content script still gates activation to workspace
-domains so FeedMe only shows up where the workspace allows.
+Screenshot capture uses the activeTab model (no permission prompt). Chrome's
+captureVisibleTab only accepts activeTab or all-hosts access, so the old per-domain
+"Allow" flow could not authorize capture and produced intermittent "screenshot
+permission is blocked" errors. Opening the popup grants activeTab; the popup's
+"Start feedback on this page" action arms the content script, which then captures
+for that page visit (resets on full reload). Activation is still gated to workspace
+domains. The extension declares no broad host permission — only storage, tabs,
+activeTab, plus host_permissions for the dashboard API and Cloudinary upload
+origins.
 Screenshot capture is mandatory. If Chrome blocks screenshot capture, the extension keeps
 the report unsaved, shows a blocking message in the bottom status pill, and does not
 create or sync the report. After submit starts, the composer closes and should not
