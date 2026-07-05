@@ -1097,6 +1097,112 @@ empty report set so the shell disables the rail and the empty state owns the
 canvas, matching the DASHBOARD.md zero-reports rule.
 ```
 
+### Slice 10: MCP Server (Coding Agent Access)
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Developers connect their FeedMe account to a coding agent (Claude Code, Cursor, etc.)
+through a hosted MCP server, pull their assigned reports with full handoff context
+and screenshots, fix them, and mark them ready for review from the editor.
+```
+
+Locked decisions:
+
+```txt
+transport: remote MCP server hosted in the Next.js app at /api/mcp (Streamable HTTP)
+auth: Personal Access Token (feedme_pat_...), Bearer header, workspace-scoped
+token store: personal_access_tokens table, only the hash stored (mirror sessions),
+             role read live from membership at use time so demoted/removed members lose access
+screenshots: get_report embeds the optimized Cloudinary thumbnails as image content
+             blocks the agent can see (vision tokens, not base64 text)
+```
+
+Library:
+
+```txt
+mcp-handler@1.1.0 (wraps @modelcontextprotocol/sdk@1.26.0), zod v4 supported.
+Stateless Streamable HTTP (no Redis), SSE disabled.
+createMcpHandler(init, { serverInfo }, { basePath: "/api", disableSse: true })
+withMcpAuth(handler, verifyToken, { required: true }) for PAT auth.
+Tools read context from extra.authInfo.extra (the resolved AccessTokenContext).
+```
+
+Routes:
+
+```txt
+POST   /api/mcp                                        MCP Streamable HTTP endpoint (GET/POST/DELETE)
+GET    /api/workspaces/:workspaceSlug/tokens          list the caller's tokens
+POST   /api/workspaces/:workspaceSlug/tokens          create a token (plaintext returned once)
+DELETE /api/workspaces/:workspaceSlug/tokens/:tokenId revoke a token
+```
+
+Server files:
+
+```txt
+src/db/schema.ts                                     personal_access_tokens table
+src/server/access-tokens/service.ts                  generate / resolve / list / revoke (hashed)
+src/server/access-tokens/validation.ts               label + token id schemas
+src/app/api/workspaces/[workspaceSlug]/tokens/route.ts             create + list
+src/app/api/workspaces/[workspaceSlug]/tokens/[tokenId]/route.ts   revoke
+src/app/api/mcp/route.ts                              MCP handler + PAT auth + tools
+src/components/feedme/dashboard/connect-agent-dialog.tsx           workspace-menu dialog
+src/components/feedme/dashboard/workspace-shell.tsx                "Connect coding agent" menu item
+```
+
+Tools (v1, read + workflow):
+
+```txt
+whoami()                          confirm workspace + role (connection test)
+list_my_reports(status?, limit?)  reports assigned to the caller (scope=assigned)
+get_report(reportId)              full handoff text + page/element/annotated screenshots as images
+start_work(reportId)              assigned -> in_progress (assigned developer only)
+mark_ready_for_review(id, note?)  -> ready_for_review (assigned developer only)
+```
+
+Rules:
+
+```txt
+require a valid workspace-scoped PAT (Bearer); no token -> 401
+resolve token -> user -> ACTIVE membership -> role on every request
+every tool reuses the existing report services (listWorkspaceReports, getWorkspaceReport,
+  updateWorkspaceReportStatus) so tenant scoping and role checks match the REST API
+create-token requires an active member (the token only grants the caller's own role)
+tokens are workspace-scoped: one token = one workspace, no workspace argument on tools
+```
+
+Verified:
+
+```txt
+Step 0 spike on Next 16: initialize, tools/list, tools/call all work over Streamable HTTP.
+End to end with a real PAT: no-auth -> 401; whoami -> workspace/role; get_report -> handoff
+text + 3 screenshots as image blocks; start_work on an unassigned report -> the service guard
+("Assign a developer before moving this report forward") surfaces as an MCP tool error.
+```
+
+Dashboard wiring:
+
+```txt
+The workspace switcher menu has a "Connect coding agent" item that opens a dialog
+scoped to the current workspace. It explains the workspace scoping, shows the MCP
+endpoint URL, generates a named token (revealed once) with copy, shows a ready
+agent config snippet (url + Authorization: Bearer token), and lists/revokes the
+caller's tokens. The dialog never keeps the plaintext token after it closes.
+```
+
+Later:
+
+```txt
+OAuth connect (one-click, no token copy), screenshots as MCP resources, admin
+tools (assign / resolve), and a report counts contract for the agent.
+```
+
 ## API Contract For The First Flow
 
 ### Signup

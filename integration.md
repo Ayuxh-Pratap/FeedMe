@@ -691,6 +691,40 @@ Rules:
 - deleting a domain should stop future captures on that domain
 - existing reports from deleted domains should remain historical records
 
+## Coding Agent Access (MCP)
+
+Developers can connect a FeedMe workspace to their coding agent (Claude Code,
+Cursor, etc.) through a hosted MCP server, so the agent works the assigned queue
+from inside the editor. This is why FeedMe fits: a report already carries the
+screenshot, exact selector, element text, page/browser context, and developer
+prompt — the precise handoff a coding agent needs.
+
+Flow:
+
+```txt
+1. Developer opens the "Connect coding agent" dialog in the dashboard and
+   generates a workspace-scoped personal access token (feedme_pat_...).
+2. They paste the MCP URL (/api/mcp) + token into their agent config.
+3. In the editor: "list my FeedMe bugs" -> list_my_reports.
+4. "fix the first one" -> get_report returns the handoff + screenshots the agent
+   can see -> the agent writes the fix.
+5. "mark it ready for review" -> mark_ready_for_review flips the status; the
+   reporter/admin sees it in the dashboard.
+```
+
+Auth and trust:
+
+```txt
+remote MCP server at /api/mcp, Streamable HTTP
+Bearer personal access token, workspace-scoped, only the hash stored
+the token inherits the member's live role; a developer can only act on reports
+  assigned to them, enforced by the same report services as the REST API
+no token -> 401; every tool re-resolves user -> active membership -> role
+```
+
+v1 tools: `whoami`, `list_my_reports`, `get_report` (embedded screenshots),
+`start_work`, `mark_ready_for_review`. See `API_IMPLEMENTATION_GUIDE.md` Slice 10.
+
 ## MVP Boundaries
 
 In MVP:

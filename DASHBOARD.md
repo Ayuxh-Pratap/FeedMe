@@ -125,6 +125,7 @@ Workspace sidebar
 Workspace switcher menu
 -> Settings (disabled / coming soon)
 -> Domains dialog
+-> Connect coding agent dialog
 -> Switch workspace dialog
 -> Log out
 
@@ -153,6 +154,23 @@ current domains
 -> edit affordance
 -> add new domain
 ```
+
+The Connect coding agent dialog belongs in the workspace menu because it is
+workspace configuration, like Domains. It connects the current workspace to a
+coding agent over MCP and must make the workspace scoping obvious:
+
+```txt
+explain this connects the current workspace only, and the token acts as you
+show the MCP endpoint URL with a copy control
+generate a named personal access token, revealed once, with copy
+show a ready-to-paste agent config snippet (url + Authorization: Bearer token)
+list the caller's existing tokens with last-used and a revoke control
+```
+
+The dialog uses FeedMe's dark tactile form language, reuses the Domains dialog
+shell, and shows the token/config in mono on sunken surfaces. See
+`integration.md` "Coding Agent Access (MCP)" and `API_IMPLEMENTATION_GUIDE.md`
+Slice 10 for the server side.
 
 The extension card should act like a small product teaser, not a generic upsell. It should borrow the active sidebar item surface language, stay gray/charcoal, and use a tonal install CTA that already feels slightly lifted at rest. Avoid icons, playful blue gradient washes, or terminal mockups here. The card should be dismissible with a small top-right close control and persist that dismissal in local storage.
 
