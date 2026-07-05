@@ -385,52 +385,66 @@ Popup active workspace is Workspace B.
 Report from bump.fm goes to Workspace B.
 ```
 
-## Extension Domain Permissions
+## Extension Screenshot Permission
 
-Use optional exact host permissions per domain.
-
-Do not request broad all-sites permission for MVP.
-
-Reason:
-
-- FeedMe inspects pages and captures screenshots.
-- Asking for all-sites access creates a heavier trust burden.
-- A workspace can have at most 5 domains, so exact per-domain permission UX is manageable.
-
-Permission model:
+FeedMe captures screenshots with Chrome's `tabs.captureVisibleTab`. That API only
+accepts two authorizations:
 
 ```txt
-Workspace domain: v2.bump.fm
-Chrome host permission: https://v2.bump.fm/*
+activeTab   no prompt, but resets on every page load (not persistent)
+<all_urls>  persistent, but shows one broad host-permission prompt
 ```
 
-Each domain is enabled separately.
+A per-domain host permission is NOT accepted by `captureVisibleTab`. Requesting
+`https://v2.bump.fm/*` looks like it works (Chrome grants the permission) but the
+API still refuses the screenshot. This is a Chrome platform rule, not a FeedMe
+choice, and it is why the earlier per-domain "Allow" flow produced intermittent
+"screenshot permission is blocked" errors: capture only succeeded while the
+transient activeTab grant from opening the popup was still live.
 
-Before opening Chrome's native permission prompt, FeedMe should show its own
-short explanation:
+So FeedMe requests the broad host permission once, as an optional permission the
+user grants deliberately:
 
 ```txt
-Allow FeedMe to show capture tools on this exact domain.
-FeedMe captures page context and screenshots only when you submit feedback.
+optional_host_permissions: ["https://*/*"]
+requested at runtime from the popup "Enable screenshot capture" action
 ```
 
-Chrome may still phrase host access as the ability to read/change site data.
-That wording is browser-controlled and cannot be customized. FeedMe should keep
-the product promise precise: exact workspace domains only, no all-sites access,
-and no capture until the user submits a report.
+Trust is preserved by separating capture permission from activation:
 
-Popup domain state example:
+```txt
+Chrome permission (broad, one-time)   lets captureVisibleTab work at all
+Activation gate (per workspace domain)  decides WHERE FeedMe actually shows up
+```
+
+The content script still only activates its tools on domains in the active
+workspace allowlist, and FeedMe only captures when the user submits a report.
+Enabling capture is a single one-time action, after which every current and
+future workspace domain works for the lifetime of the grant with no repeat
+prompts.
+
+Before opening Chrome's native prompt, FeedMe shows its own explanation:
+
+```txt
+Chrome will ask to access websites so FeedMe can take screenshots.
+FeedMe only captures a screenshot when you submit feedback on a workspace domain.
+```
+
+Chrome still phrases host access as reading/changing site data. That wording is
+browser-controlled and cannot be customized; FeedMe does not read or change page
+content and only captures a screenshot on submit.
+
+Popup state example:
 
 ```txt
 Bump
+Screenshot capture: Enabled
 
 Domains
-- bump.fm       Enabled
-- v2.bump.fm    Enable
-- test.bump.fm  Enable
+- bump.fm       Active
+- v2.bump.fm    Active
+- test.bump.fm  Active
 ```
-
-When a user clicks `Enable`, the extension asks Chrome for permission to that exact domain.
 
 The floating button appears only when all are true:
 
@@ -438,7 +452,7 @@ The floating button appears only when all are true:
 user is signed in
 active workspace exists
 current tab domain is in active workspace allowlist
-extension has host permission for current tab origin
+the extension holds the screenshot capture permission
 backend domain check passes or cached allow state is valid
 ```
 
@@ -701,7 +715,7 @@ In MVP:
 - Do not support localhost domains.
 - Do not auto-include subdomains.
 - Do not require hard domain verification yet.
-- Use optional exact Chrome host permissions, not all-sites permission.
+- Use a one-time optional broad host permission for screenshot capture (Chrome's captureVisibleTab does not accept per-domain permissions); still gate activation to workspace domains.
 - Let every workspace member submit reports.
 - Assign implementation work to developers.
 - Let developers mark work ready for review.
