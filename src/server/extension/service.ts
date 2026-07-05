@@ -28,7 +28,6 @@ type ExtensionWorkspaceDomain = {
   host: string
   status: ExtensionDomainStatus
   captureEnabled: boolean
-  permissionPattern: string
   verifiedAt: Date | null
 }
 
@@ -60,10 +59,6 @@ type ExtensionBootstrap = {
 
 function isCaptureEnabledDomain(status: ExtensionDomainStatus) {
   return status === "active" || status === "verified"
-}
-
-function getHostPermissionPattern(host: string) {
-  return `https://${host}/*`
 }
 
 export async function getExtensionBootstrap(
@@ -123,7 +118,6 @@ export async function getExtensionBootstrap(
         host: row.domainHost,
         status: row.domainStatus,
         captureEnabled: isCaptureEnabledDomain(row.domainStatus),
-        permissionPattern: getHostPermissionPattern(row.domainHost),
         verifiedAt: row.domainVerifiedAt,
       })
     }
