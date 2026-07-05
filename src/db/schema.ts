@@ -162,6 +162,32 @@ export const sessions = pgTable(
   ]
 )
 
+// Personal access tokens let a developer connect one workspace to a coding agent
+// over MCP. Workspace-scoped, only the hash is stored (mirror sessions), and the
+// token inherits the member's role at use time.
+export const personalAccessTokens = pgTable(
+  "personal_access_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    label: varchar("label", { length: 120 }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("personal_access_tokens_token_hash_unique").on(table.tokenHash),
+    index("personal_access_tokens_workspace_id_idx").on(table.workspaceId),
+    index("personal_access_tokens_user_id_idx").on(table.userId),
+  ]
+)
+
 export const workspaces = pgTable(
   "workspaces",
   {
