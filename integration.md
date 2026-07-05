@@ -587,6 +587,28 @@ commentsCount
 
 The extension may submit a raw capture payload. The backend can derive title, summary, status, developer prompt, screenshot records, and dashboard-ready fields.
 
+### Screenshot Storage
+
+Screenshots are hosted on Cloudinary, not stored as base64 in the database.
+
+```txt
+1. Extension captures the page, element, and annotated screenshots.
+2. Extension requests a signed upload from POST /api/uploads/signature.
+3. Extension uploads each screenshot directly to Cloudinary.
+4. Extension submits the report with only the resulting https URLs.
+5. report_assets stores the hosted URL, not the image bytes.
+```
+
+Rules:
+
+```txt
+report asset urls must be external http(s); data: and blob: are rejected
+direct upload keeps large images out of the report API and Postgres
+the read model derives optimized thumbnails for grid/rail; viewers use full res
+```
+
+See `API_IMPLEMENTATION_GUIDE.md` Slice 9 for the storage implementation.
+
 ## API Direction
 
 The Next.js backend owns the API.
@@ -699,7 +721,6 @@ Later versions can add:
 - Slack/Jira/GitHub/Linear integrations
 - AI report summarization
 - AI developer prompt generation
-- screenshot/object storage
 - dynamic extension content-script registration per allowed workspace domain, so
   FeedMe code is not injected on unrelated HTTPS pages before exact host
   permission is granted

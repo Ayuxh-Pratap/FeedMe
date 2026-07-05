@@ -903,12 +903,12 @@ reuse the signed-in dashboard session from chrome-extension:// requests.
 Dashboard performance note:
 
 ```txt
-The reports list/read model must stay summary-first. Do not load screenshot
-asset URLs for every report in list endpoints, especially while screenshots are
-stored as data:image payloads. The list page should render rows/cards from
-summary report data, publish visible reports and selected IDs to the workspace
-dashboard data store, and let the right rail fetch only the selected report
-detail through GET /api/workspaces/:workspaceSlug/reports/:reportId.
+The reports list/read model must stay summary-first. Do not load full screenshot
+evidence for every report in list endpoints. Screenshots now live on Cloudinary
+(Slice 9), so list rows/cards render the optimized thumbnail while the list page
+publishes visible reports and selected IDs to the workspace dashboard data store,
+and the right rail fetches only the selected report detail through
+GET /api/workspaces/:workspaceSlug/reports/:reportId.
 
 Row selection, report filters, My Work scope changes, Team role filters, and
 search should update client state first and sync the URL with native history.
@@ -987,6 +987,109 @@ The Reports/My Work right rail fetches workspace members for owner/admin users a
 The right rail assignment control lists active developers only, saves through PATCH /assignment, updates the selected report locally, and refreshes the route so tables and My Work reflect the new owner.
 For developers, the same right rail shows Start work and Ready for review actions when the selected report is assigned to the signed-in developer. These actions call PATCH /status, update the selected report locally, and refresh the route.
 Report detail shows a workflow panel for admins/owners and assigned developers.
+```
+
+### Slice 9: Screenshot Storage
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Move report screenshots out of Postgres. The extension uploads screenshots
+directly to Cloudinary and only sends the resulting https URLs to the report API.
+This removes multi-megabyte base64 data: URLs from report_assets and keeps report
+writes under Vercel's serverless request body limit.
+```
+
+Provider and flow:
+
+```txt
+Cloudinary, signed direct upload.
+-> extension asks the dashboard for a short-lived upload signature
+-> extension background worker uploads each screenshot straight to Cloudinary
+-> extension submits the report with only the returned https URLs
+-> api secret stays server-side; cloud name and api key are public
+```
+
+Route:
+
+```txt
+POST /api/uploads/signature
+```
+
+Server files:
+
+```txt
+src/server/uploads/cloudinary.ts        env config + SHA-1 request signer
+src/server/uploads/service.ts           createReportUploadSignature()
+src/app/api/uploads/signature/route.ts  session-gated signature endpoint
+src/lib/cloudinary.ts                    client-safe thumbnail transform helper
+src/server/reports/validation.ts        asset url must be http(s); rejects data:/blob:
+src/server/reports/service.ts           read model adds thumbnailUrl per screenshot
+src/lib/reports.ts                       WorkspaceReportScreenshot.thumbnailUrl
+```
+
+Extension files:
+
+```txt
+extension/src/services/uploadApi.ts     getUploadSignature + uploadDataUrlToCloudinary
+extension/src/services/reportsApi.ts    uploads assets before POST, sends https URLs only
+extension/wxt.config.ts                 adds https://api.cloudinary.com/* host permission
+```
+
+Rules:
+
+```txt
+require a signed-in user for the upload signature
+report asset urls must be external http(s); data: and blob: are rejected
+the extension uploads each screenshot directly, then submits the URLs
+one signature covers all screenshots in a single report
+already-hosted assets are not re-uploaded on sync retries
+if a Cloudinary upload fails, the report stays unsynced and retries later
+the read model derives w_720,f_auto,q_auto thumbnails for grid/rail surfaces
+fullscreen evidence viewers use the full-resolution original url
+non-Cloudinary urls pass through the thumbnail helper unchanged
+```
+
+Environment:
+
+```txt
+CLOUDINARY_CLOUD_NAME
+CLOUDINARY_API_KEY
+CLOUDINARY_API_SECRET
+CLOUDINARY_UPLOAD_FOLDER optional, defaults to feedme/reports
+```
+
+Dashboard wiring:
+
+```txt
+Grid cards, the report right rail, and detail inline cards render the optimized
+Cloudinary thumbnail. The fullscreen evidence viewers render the full-resolution
+original. next/image uses unoptimized, so no images.remotePatterns config is
+required yet.
+```
+
+Local dev note:
+
+```txt
+npm run db:reset -- --yes wipes all app tables (scripts/reset-db.mjs) to start
+fresh. It only truncates data and keeps the schema, so no migration is needed.
+```
+
+Reports empty-state fix:
+
+```txt
+When a workspace has zero reports, the reports index renders the server-side
+onboarding empty state instead of ReportsList, which never registered with the
+dashboard data store. That left reportRailReady false and the right rail stuck on
+its loading skeleton. EmptyReportsRailSync (in reports-list.tsx) now registers an
+empty report set so the shell disables the rail and the empty state owns the
+canvas, matching the DASHBOARD.md zero-reports rule.
 ```
 
 ## API Contract For The First Flow
@@ -1167,7 +1270,7 @@ Returns:
 report: full detail with screenshots, selected element, feedback, developer prompt
 ```
 
-The list contract should stay fast and avoid screenshot payloads. The detail contract can fetch heavier evidence by report id when the rail or full detail page needs it. Image storage still needs to move away from base64/data URLs in a future storage slice.
+The list contract should stay fast and avoid heavy screenshot payloads. The detail contract can fetch heavier evidence by report id when the rail or full detail page needs it. Image storage now lives on Cloudinary (Slice 9): report_assets stores hosted https URLs instead of base64/data URLs, and the read model derives optimized thumbnails for list/rail surfaces.
 
 Dashboard interaction rules:
 

@@ -135,7 +135,6 @@ For enterprise usage, FeedMe can grow into:
 - SSO/SAML.
 - Audit logs.
 - Slack, Jira, GitHub, and Linear integrations.
-- Screenshot and object storage.
 - AI summary and developer prompt generation.
 - Release and fix verification workflow.
 - Billing by workspace, seats, reports, or projects.
