@@ -2703,7 +2703,7 @@ function MobileRightRailSheet({
       <SheetContent
         side="right"
         showCloseButton={false}
-        className="!w-[min(21rem,calc(100vw-1.5rem))] !max-w-none overflow-hidden border-border-hairline bg-background p-0 text-foreground shadow-popover"
+        className="!w-screen !max-w-none overflow-hidden border-border-hairline bg-background p-0 text-foreground shadow-popover"
       >
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-hairline px-4">
           <SheetTitle className="text-heading-5">Workspace details</SheetTitle>
