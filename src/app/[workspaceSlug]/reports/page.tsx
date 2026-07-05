@@ -1,8 +1,5 @@
 import { ReportsEmptyState } from "@/components/feedme/dashboard/reports-empty-state"
-import {
-  EmptyReportsRailSync,
-  ReportsList,
-} from "@/components/feedme/dashboard/reports-list"
+import { ReportsList } from "@/components/feedme/dashboard/reports-list"
 import { requireCurrentSession } from "@/server/auth/current-user"
 import { listWorkspaceReports } from "@/server/reports/service"
 import { listReportsInputSchema } from "@/server/reports/validation"
@@ -42,12 +39,7 @@ export default async function ReportsPage({
   )
 
   if (reports.length === 0 && !input.q && input.status === "all") {
-    return (
-      <>
-        <EmptyReportsRailSync />
-        <ReportsEmptyState />
-      </>
-    )
+    return <ReportsEmptyState />
   }
 
   return (

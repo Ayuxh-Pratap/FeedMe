@@ -1583,6 +1583,7 @@ function ReportEvidenceFrame({
   thumbnailUrl,
   preferThumbnail,
 }: ReportScreenshot & { className?: string; preferThumbnail?: boolean }) {
+  const [loaded, setLoaded] = useState(false)
   // Small surfaces (rail) use the optimized thumbnail; the fullscreen viewer
   // asks for the full-resolution original.
   const source = preferThumbnail ? thumbnailUrl ?? url : url
@@ -1596,7 +1597,11 @@ function ReportEvidenceFrame({
           fill
           unoptimized
           sizes="(min-width: 1024px) 288px, 100vw"
-          className="object-contain"
+          onLoad={() => setLoaded(true)}
+          className={cn(
+            "object-contain transition-opacity duration-500 ease-out",
+            loaded ? "opacity-100" : "opacity-0"
+          )}
         />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-[linear-gradient(0deg,color-mix(in_srgb,var(--surface-divider)_78%,transparent),transparent)]" />
         <p className="pointer-events-none absolute bottom-3 left-3 truncate text-caption text-text-secondary">
@@ -1885,72 +1890,43 @@ function ReportInspectorRailSkeleton({ className }: { className?: string }) {
       className={cn("feedme-scrollbar-hidden h-full w-right-rail overflow-y-auto", className)}
     >
       <section className="border-b border-border-hairline px-4 py-4">
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex items-center gap-1.5">
           <RightRailSkeletonBlock className="h-5 w-14" />
-          <RightRailSkeletonBlock className="h-5 w-20" />
+          <RightRailSkeletonBlock className="h-5 w-16" />
         </div>
-        <RightRailSkeletonBlock className="mt-3 h-4 w-full" />
-        <RightRailSkeletonBlock className="mt-2 h-4 w-4/5" />
-        <div className="mt-3 space-y-2">
-          <RightRailSkeletonBlock className="h-3 w-full" />
-          <RightRailSkeletonBlock className="h-3 w-11/12" />
-          <RightRailSkeletonBlock className="h-3 w-2/3" />
-        </div>
+        <RightRailSkeletonBlock className="mt-3 h-3.5 w-3/4" />
+        <RightRailSkeletonBlock className="mt-2 h-2.5 w-1/2" />
       </section>
 
       <section className="border-b border-border-hairline px-4 py-3">
-        <p className="text-caption text-text-muted">View</p>
-        <div className="relative mt-2 grid grid-cols-2 rounded-lg border border-border-hairline bg-background p-1">
-          <span
-            className="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] animate-pulse rounded-md bg-surface-raised shadow-button-hover"
-            aria-hidden="true"
-          />
-          <span className="relative z-10 flex h-7 items-center justify-center text-heading-5 text-text-secondary">
-            Page
-          </span>
-          <span className="relative z-10 flex h-7 items-center justify-center text-heading-5 text-text-muted">
-            Element
-          </span>
+        <div className="grid grid-cols-2 gap-1 rounded-lg border border-border-hairline bg-background p-1">
+          <RightRailSkeletonBlock className="h-7" />
+          <span aria-hidden="true" className="h-7" />
         </div>
-        <div className="relative mt-3 aspect-[16/10] overflow-hidden rounded-lg border border-border-hairline bg-fill-translucent">
-          <div className="absolute inset-0 [background:linear-gradient(145deg,var(--surface-raised),var(--surface-shell))]" />
-          <RightRailSkeletonBlock className="absolute left-3 right-3 top-3 h-4 bg-background/70" />
-          <RightRailSkeletonBlock className="absolute left-3 top-10 h-9 w-24 bg-fill-subtle" />
-          <RightRailSkeletonBlock className="absolute bottom-4 left-3 right-3 h-9 bg-background/70" />
-          <RightRailSkeletonBlock className="absolute bottom-2 right-2 size-7 bg-surface-raised shadow-button-hover" />
-        </div>
-        <RightRailSkeletonBlock className="mt-3 h-8 w-full bg-surface-raised shadow-button-hover" />
+        <div
+          aria-hidden="true"
+          className="mt-3 aspect-[16/10] animate-pulse rounded-lg border border-border-hairline bg-fill-translucent"
+        />
+        <RightRailSkeletonBlock className="mt-3 h-8 w-full" />
       </section>
 
       <section className="grid grid-cols-2 gap-2 border-b border-border-hairline px-4 py-3">
         <RightRailMetaSkeleton labelWidth="w-8" valueWidth="w-12" />
-        <RightRailMetaSkeleton labelWidth="w-14" valueWidth="w-5" />
-        <RightRailMetaSkeleton labelWidth="w-9" valueWidth="w-16" />
-        <RightRailMetaSkeleton labelWidth="w-12" valueWidth="w-14" />
+        <RightRailMetaSkeleton labelWidth="w-12" valueWidth="w-6" />
+        <RightRailMetaSkeleton labelWidth="w-9" valueWidth="w-14" />
+        <RightRailMetaSkeleton labelWidth="w-10" valueWidth="w-12" />
       </section>
 
-      <section className="border-b border-border-hairline px-4 py-3">
-        <div className="flex items-center gap-2">
-          <RightRailSkeletonBlock className="size-4" rounded="rounded" />
-          <RightRailSkeletonBlock className="h-3.5 w-28" />
-        </div>
-        <div className="mt-2 rounded-lg border border-border-hairline bg-background p-2.5">
-          <RightRailSkeletonBlock className="h-2.5 w-full" />
-          <RightRailSkeletonBlock className="mt-2 h-2.5 w-4/5" />
-        </div>
+      <section className="space-y-2 border-b border-border-hairline px-4 py-3">
+        <RightRailSkeletonBlock className="h-2.5 w-24" />
+        <RightRailSkeletonBlock className="h-2.5 w-full" />
+        <RightRailSkeletonBlock className="h-2.5 w-4/5" />
       </section>
 
-      <section className="px-4 py-3">
-        <div className="flex items-center gap-2">
-          <RightRailSkeletonBlock className="size-4" rounded="rounded" />
-          <RightRailSkeletonBlock className="h-3.5 w-28" />
-        </div>
-        <div className="mt-2 rounded-lg border border-border-hairline bg-background p-2.5">
-          <RightRailSkeletonBlock className="h-2.5 w-full" />
-          <RightRailSkeletonBlock className="mt-2 h-2.5 w-11/12" />
-          <RightRailSkeletonBlock className="mt-2 h-2.5 w-5/6" />
-          <RightRailSkeletonBlock className="mt-2 h-2.5 w-3/5" />
-        </div>
+      <section className="space-y-2 px-4 py-3">
+        <RightRailSkeletonBlock className="h-2.5 w-28" />
+        <RightRailSkeletonBlock className="h-2.5 w-full" />
+        <RightRailSkeletonBlock className="h-2.5 w-11/12" />
       </section>
     </div>
   )
@@ -2885,10 +2861,14 @@ function WorkspaceShellContent({
     updateReport(nextReport)
   }, [updateReport])
 
+  // reportCount comes from the server render, so an empty workspace is known on
+  // the very first paint. This suppresses the rail synchronously instead of
+  // flashing the loading skeleton before the client store reports "empty".
+  const workspaceHasNoReports = (workspace.reportCount ?? 0) === 0
   const shouldDisableReportsRail =
     isReportsIndexRoute &&
-    !reportRailIsLoading &&
-    scopedReportRailReports.length === 0
+    (workspaceHasNoReports ||
+      (!reportRailIsLoading && scopedReportRailReports.length === 0))
   const shouldDisableMyWorkRail =
     isMyWorkRoute &&
     !reportRailIsLoading &&

@@ -202,6 +202,7 @@ function ReportAssigneeAvatar({ report }: { report: WorkspaceReport }) {
 }
 
 function ReportEvidenceImage({ report }: { report: WorkspaceReport }) {
+  const [loaded, setLoaded] = useState(false)
   const screenshot = report.screenshots.find((item) => item.url) ?? report.screenshots[0]
   // Grid cards are small; prefer the optimized Cloudinary thumbnail over the
   // full-resolution screenshot to keep the gallery light.
@@ -216,7 +217,11 @@ function ReportEvidenceImage({ report }: { report: WorkspaceReport }) {
           fill
           unoptimized
           sizes="(min-width: 1280px) 25vw, (min-width: 768px) 50vw, 100vw"
-          className="object-cover"
+          onLoad={() => setLoaded(true)}
+          className={cn(
+            "object-cover transition-opacity duration-500 ease-out",
+            loaded ? "opacity-100" : "opacity-0"
+          )}
         />
         <div className="absolute inset-0 bg-[radial-gradient(360px_170px_at_24%_72%,color-mix(in_srgb,var(--primary-soft)_14%,transparent),transparent_70%)]" />
       </div>
@@ -961,19 +966,4 @@ export function ReportsList({
       ) : null}
     </section>
   )
-}
-
-// Rendered on the reports index when the workspace has zero reports, where the
-// page shows the server-side onboarding empty state instead of ReportsList.
-// Without this, the dashboard store never gets a "reports ready" signal and the
-// right rail stays stuck on its loading skeleton. Registering an empty set lets
-// the shell disable the rail so the empty state owns the full canvas.
-export function EmptyReportsRailSync() {
-  const { registerReports } = useWorkspaceDashboardData()
-
-  useEffect(() => {
-    registerReports({ reports: [], selectedReportId: null, visibleReportIds: [] })
-  }, [registerReports])
-
-  return null
 }
