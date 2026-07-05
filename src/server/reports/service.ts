@@ -549,6 +549,44 @@ function serializeReport(
   }
 }
 
+// Lightweight per-report page screenshot for the list/grid. Now that assets are
+// small Cloudinary URLs (not base64), including one thumbnail URL per row is cheap
+// and lets grid cards render real evidence instead of a placeholder.
+async function getPageScreenshotAssets(workspaceId: string, reportIds: string[]) {
+  const assetsByReportId = new Map<string, ReportAssetRow>()
+
+  if (reportIds.length === 0) {
+    return assetsByReportId
+  }
+
+  const rows = await db
+    .select({
+      id: reportAssets.id,
+      reportId: reportAssets.reportId,
+      type: reportAssets.type,
+      url: reportAssets.url,
+      width: reportAssets.width,
+      height: reportAssets.height,
+    })
+    .from(reportAssets)
+    .where(
+      and(
+        eq(reportAssets.workspaceId, workspaceId),
+        inArray(reportAssets.reportId, reportIds),
+        eq(reportAssets.type, "page_screenshot")
+      )
+    )
+    .orderBy(asc(reportAssets.createdAt))
+
+  for (const row of rows) {
+    if (!assetsByReportId.has(row.reportId)) {
+      assetsByReportId.set(row.reportId, row)
+    }
+  }
+
+  return assetsByReportId
+}
+
 async function getAssetsForReport(workspaceId: string, reportId: string) {
   return db
     .select({
@@ -691,15 +729,24 @@ export async function listWorkspaceReports(
   const pageRows = rows.slice(0, input.limit)
   const hasNextPage = rows.length > input.limit
 
-  const peopleById = await getPeopleById(
-    compactUserIds(
-      pageRows.flatMap((row) => [row.reporterUserId, row.assigneeUserId])
-    )
-  )
+  const [peopleById, pageAssetsByReportId] = await Promise.all([
+    getPeopleById(
+      compactUserIds(
+        pageRows.flatMap((row) => [row.reporterUserId, row.assigneeUserId])
+      )
+    ),
+    getPageScreenshotAssets(
+      workspace.id,
+      pageRows.map((row) => row.id)
+    ),
+  ])
 
   return {
     workspace,
-    reports: pageRows.map((row) => serializeReport(row, peopleById)),
+    reports: pageRows.map((row) => {
+      const pageAsset = pageAssetsByReportId.get(row.id)
+      return serializeReport(row, peopleById, pageAsset ? [pageAsset] : [])
+    }),
     pageInfo: getReportsPageInfo({
       hasNextPage,
       limit: input.limit,
