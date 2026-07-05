@@ -2703,7 +2703,7 @@ function MobileRightRailSheet({
       <SheetContent
         side="right"
         showCloseButton={false}
-        className="!w-screen !max-w-none overflow-hidden border-border-hairline bg-background p-0 text-foreground shadow-popover"
+        className="!inset-x-0 !w-full !max-w-none overflow-hidden border-border-hairline bg-background p-0 text-foreground shadow-popover"
       >
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-border-hairline px-4">
           <SheetTitle className="text-heading-5">Workspace details</SheetTitle>
@@ -2718,7 +2718,7 @@ function MobileRightRailSheet({
           </SheetClose>
         </div>
         <WorkspaceRightRailContent
-          className="w-full"
+          className="!w-full"
           onReportChange={onReportChange}
           reportRailIsLoading={reportRailIsLoading}
           reportRailMembers={reportRailMembers}
