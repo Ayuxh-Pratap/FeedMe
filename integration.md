@@ -415,16 +415,24 @@ tools) so there is never a permission prompt:
    FeedMe again to re-arm. In-app (SPA) navigation keeps it armed.
 ```
 
-Permission footprint (no broad host permission, no runtime prompt):
+Permission footprint (no broad access declared anywhere, no runtime prompt):
 
 ```txt
-permissions: storage, tabs, activeTab
+permissions: storage, tabs, activeTab, scripting
 host_permissions: dashboard API origin + Cloudinary upload origin only
+content_scripts: none (injected on demand)
+web_accessible_resources: none (content CSS is inlined)
 ```
 
-Activation is still gated to workspace domains: the content script only shows its
-tools when the current host is in the active workspace allowlist, and FeedMe only
-captures when the user submits a report.
+The content script is not registered in the manifest. When the user starts
+feedback, the popup injects it with `browser.scripting.executeScript` using the
+activeTab grant, so Chrome's extension details page never shows broad
+"read and change your data on all websites" access. A window guard prevents
+double injection when re-arming on the same page.
+
+Activation is still gated to workspace domains: the injected content script only
+shows its tools when the current host is in the active workspace allowlist, and
+FeedMe only captures when the user submits a report.
 
 The floating tools appear only when all are true:
 
@@ -714,8 +722,5 @@ Later versions can add:
 - Slack/Jira/GitHub/Linear integrations
 - AI report summarization
 - AI developer prompt generation
-- dynamic extension content-script registration per allowed workspace domain, so
-  FeedMe code is not injected on unrelated HTTPS pages before exact host
-  permission is granted
 - billing by workspace, seats, reports, domains, or projects
 - enterprise organization layer above workspaces

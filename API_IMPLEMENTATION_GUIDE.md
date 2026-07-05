@@ -837,7 +837,6 @@ workspaces[]
     host
     status
     captureEnabled
-    permissionPattern
     verifiedAt
 ```
 
@@ -849,7 +848,6 @@ return only active workspace memberships
 exclude archived workspaces
 include domains per workspace
 mark active and verified domains as captureEnabled
-return exact HTTPS host permission patterns for extension permission requests
 do not trust this payload for writes; report submission must validate membership and domain again
 ```
 
@@ -879,11 +877,11 @@ capture, but the bottom status pill may remain visible so the user does not see
 a blank state while FeedMe is working.
 The composer collects a user-authored title, description, category, and severity instead
 of deriving the report title from the browser page title.
-Future hardening: move from manifest-registered `https://*/*` content scripts to
-WXT runtime content-script registration per active allowed domain. The current
-content UI is gated by workspace domain and Chrome host permission, but runtime
-registration would prevent FeedMe code from being injected on unrelated HTTPS
-pages at all.
+The content script is no longer registered in the manifest. It is injected on
+demand from the popup via browser.scripting.executeScript using activeTab, so the
+extension declares no broad host access (content_scripts is empty, host_permissions
+covers only the dashboard API and Cloudinary origins) and FeedMe code is never
+injected on unrelated pages.
 ```
 
 Dashboard distribution note:
