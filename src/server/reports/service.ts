@@ -26,6 +26,7 @@ import {
   type ReportSelectedElement,
   type ReportViewport,
 } from "@/db/schema"
+import { buildCloudinaryThumbnailUrl } from "@/lib/cloudinary"
 import {
   activeReportStatuses,
   formatReportCapturedAgo,
@@ -402,6 +403,7 @@ function getScreenshotsFromAssets(
         label: "Page",
         kind: "page",
         url: asset.url,
+        thumbnailUrl: buildCloudinaryThumbnailUrl(asset.url),
         width: asset.width,
         height: asset.height,
       }
@@ -412,6 +414,7 @@ function getScreenshotsFromAssets(
       label: asset.type === "element_screenshot" ? "Element" : "Annotated",
       kind: "annotated",
       url: asset.url,
+      thumbnailUrl: buildCloudinaryThumbnailUrl(asset.url),
       width: asset.width,
       height: asset.height,
     }

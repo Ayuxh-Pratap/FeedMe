@@ -61,13 +61,23 @@ const reportSelectedElementInputSchema = z.object({
     .optional(),
 })
 
+// Screenshots must be hosted externally (Cloudinary), never inlined as base64.
+// Rejecting data:/blob: URLs keeps report_assets.url a small pointer instead of
+// a multi-megabyte payload sitting in Postgres.
+const reportAssetUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => /^https?:\/\//i.test(value), {
+    message: "Screenshots must be uploaded to storage before submitting.",
+  })
+
 const reportAssetInputSchema = z.object({
   type: z.enum([
     "page_screenshot",
     "element_screenshot",
     "annotated_screenshot",
   ]),
-  url: z.string().url(),
+  url: reportAssetUrlSchema,
   mimeType: z.string().trim().max(80).optional(),
   width: z.number().int().positive().max(10000).optional(),
   height: z.number().int().positive().max(10000).optional(),
