@@ -203,12 +203,15 @@ function ReportAssigneeAvatar({ report }: { report: WorkspaceReport }) {
 
 function ReportEvidenceImage({ report }: { report: WorkspaceReport }) {
   const screenshot = report.screenshots.find((item) => item.url) ?? report.screenshots[0]
+  // Grid cards are small; prefer the optimized Cloudinary thumbnail over the
+  // full-resolution screenshot to keep the gallery light.
+  const source = screenshot?.thumbnailUrl ?? screenshot?.url
 
-  if (screenshot?.url) {
+  if (screenshot && source) {
     return (
       <div className="absolute inset-0 overflow-hidden bg-surface-card">
         <Image
-          src={screenshot.url}
+          src={source}
           alt={`${screenshot.label} screenshot evidence`}
           fill
           unoptimized

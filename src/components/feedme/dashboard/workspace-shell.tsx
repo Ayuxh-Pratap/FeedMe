@@ -1580,12 +1580,18 @@ function ReportEvidenceFrame({
   kind,
   className,
   url,
-}: ReportScreenshot & { className?: string }) {
-  if (url) {
+  thumbnailUrl,
+  preferThumbnail,
+}: ReportScreenshot & { className?: string; preferThumbnail?: boolean }) {
+  // Small surfaces (rail) use the optimized thumbnail; the fullscreen viewer
+  // asks for the full-resolution original.
+  const source = preferThumbnail ? thumbnailUrl ?? url : url
+
+  if (source) {
     return (
       <div className={cn("relative overflow-hidden bg-surface-card", className)}>
         <Image
-          src={url}
+          src={source}
           alt={`${label} screenshot evidence`}
           fill
           unoptimized
@@ -1636,7 +1642,7 @@ function ReportRailScreenshot({
           : "pointer-events-none translate-y-1 opacity-0"
       )}
     >
-      <ReportEvidenceFrame {...screenshot} className="absolute inset-0" />
+      <ReportEvidenceFrame {...screenshot} preferThumbnail className="absolute inset-0" />
     </div>
   )
 }

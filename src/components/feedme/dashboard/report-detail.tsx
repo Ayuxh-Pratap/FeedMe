@@ -103,15 +103,21 @@ function getScreenshotDimensions(
 function ScreenshotEvidence({
   className,
   screenshot,
+  preferThumbnail,
 }: {
   className?: string
   screenshot: ReportScreenshot
+  preferThumbnail?: boolean
 }) {
-  if (screenshot.url) {
+  // Inline evidence cards prefer the optimized thumbnail; the fullscreen viewer
+  // requests the full-resolution original.
+  const source = preferThumbnail ? screenshot.thumbnailUrl ?? screenshot.url : screenshot.url
+
+  if (source) {
     return (
       <div className={cn("relative overflow-hidden bg-surface-card", className)}>
         <Image
-          src={screenshot.url}
+          src={source}
           alt={`${screenshot.label} screenshot evidence`}
           fill
           unoptimized
@@ -262,7 +268,7 @@ function ScreenshotPanel({ report }: { report: WorkspaceReport }) {
               <p className="text-caption text-text-muted">{index + 1} of 2</p>
             </div>
             <div className="relative aspect-[16/10] overflow-hidden bg-surface-card">
-              <ScreenshotEvidence screenshot={screenshot} className="absolute inset-0" />
+              <ScreenshotEvidence screenshot={screenshot} preferThumbnail className="absolute inset-0" />
               <button
                 type="button"
                 aria-label={`Open ${screenshot.label} screenshot`}
