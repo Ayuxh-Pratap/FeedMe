@@ -962,3 +962,18 @@ export function ReportsList({
     </section>
   )
 }
+
+// Rendered on the reports index when the workspace has zero reports, where the
+// page shows the server-side onboarding empty state instead of ReportsList.
+// Without this, the dashboard store never gets a "reports ready" signal and the
+// right rail stays stuck on its loading skeleton. Registering an empty set lets
+// the shell disable the rail so the empty state owns the full canvas.
+export function EmptyReportsRailSync() {
+  const { registerReports } = useWorkspaceDashboardData()
+
+  useEffect(() => {
+    registerReports({ reports: [], selectedReportId: null, visibleReportIds: [] })
+  }, [registerReports])
+
+  return null
+}
