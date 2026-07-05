@@ -5,6 +5,7 @@ import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowUpRight,
+  Bot,
   Camera,
   Check,
   CheckCircle2,
@@ -63,6 +64,7 @@ import {
   reportSeverityPillStyles,
   reportStatusPillStyles,
 } from "@/components/feedme/dashboard/report-badge-styles"
+import { ConnectAgentDialog } from "@/components/feedme/dashboard/connect-agent-dialog"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
 import {
   useWorkspaceDashboardData,
@@ -246,6 +248,7 @@ function WorkspaceSwitcher({
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [isSwitchDialogOpen, setIsSwitchDialogOpen] = useState(false)
   const [isDomainsDialogOpen, setIsDomainsDialogOpen] = useState(false)
+  const [isConnectAgentOpen, setIsConnectAgentOpen] = useState(false)
   const switchCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const workspaceOptions =
     availableWorkspaces.length > 0
@@ -343,6 +346,16 @@ function WorkspaceSwitcher({
               <Globe2 className="size-4 text-text-muted" />
               Domains
             </WorkspaceMenuAction>
+            <WorkspaceMenuAction
+              onClick={() => {
+                setOpen(false)
+                setSwitcherOpen(false)
+                setIsConnectAgentOpen(true)
+              }}
+            >
+              <Bot className="size-4 text-text-muted" />
+              Connect coding agent
+            </WorkspaceMenuAction>
 
             <div
               className="relative"
@@ -430,6 +443,11 @@ function WorkspaceSwitcher({
       <DomainsDialog
         open={isDomainsDialogOpen}
         onOpenChange={setIsDomainsDialogOpen}
+        workspace={workspace}
+      />
+      <ConnectAgentDialog
+        open={isConnectAgentOpen}
+        onOpenChange={setIsConnectAgentOpen}
         workspace={workspace}
       />
     </>
