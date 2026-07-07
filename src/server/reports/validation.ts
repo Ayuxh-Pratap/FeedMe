@@ -25,6 +25,11 @@ export const listReportsInputSchema = z.object({
   status: z.enum(["all", "open", "in_progress", "resolved"]).default("all"),
 })
 
+export const reportCountsInputSchema = z.object({
+  q: optionalTrimmedString(120),
+  scope: z.enum(["assigned", "reported"]).optional(),
+})
+
 export const mutableReportStatusSchema = z.enum([
   "reviewing",
   "accepted",
@@ -106,6 +111,7 @@ export const createReportInputSchema = z.object({
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>
 export type ListReportsInput = z.infer<typeof listReportsInputSchema>
+export type ReportCountsInput = z.infer<typeof reportCountsInputSchema>
 
 export const assignReportInputSchema = z.object({
   assigneeUserId: z.string().uuid("Choose a valid teammate.").nullable(),

@@ -20,6 +20,7 @@ export type WorkspaceTeamMember = {
   title: string | null
   avatarUrl: string | null
   assignedCount: number
+  completedCount: number
   reportsCount: number
   joinedAt: string
   joinedAtLabel: string

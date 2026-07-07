@@ -98,6 +98,19 @@ export type WorkspaceReportsListResponse = {
   pageInfo: WorkspaceReportsPageInfo
 }
 
+export type WorkspaceReportCounts = {
+  all: number
+  assignedToMe: number
+  inProgress: number
+  open: number
+  reportedByMe: number
+  resolved: number
+}
+
+export type WorkspaceReportCountsResponse = {
+  counts: WorkspaceReportCounts
+}
+
 export type WorkspaceReportDetailResponse = {
   report: WorkspaceReportDetail
 }
@@ -114,6 +127,19 @@ export const progressReportStatuses = new Set<WorkspaceReportStatus>([
   "in_progress",
   "ready_for_review",
 ])
+
+export const assignmentLockedReportStatuses = new Set<WorkspaceReportStatus>([
+  "in_progress",
+  "ready_for_review",
+  "resolved",
+  "archived",
+])
+
+export function isWorkspaceReportAssignmentLocked(
+  status: WorkspaceReportStatus
+) {
+  return assignmentLockedReportStatuses.has(status)
+}
 
 export function isOpenWorkspaceReport(report: WorkspaceReport) {
   return activeReportStatuses.has(report.status)

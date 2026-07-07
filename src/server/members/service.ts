@@ -23,6 +23,18 @@ function countAssignedReportsSql() {
     from ${reports}
     where ${reports.workspaceId} = ${workspaceMemberships.workspaceId}
       and ${reports.assigneeUserId} = ${workspaceMemberships.userId}
+      and ${reports.status} in ('assigned', 'in_progress', 'ready_for_review')
+      and ${reports.archivedAt} is null
+  )`.mapWith(Number)
+}
+
+function countCompletedReportsSql() {
+  return sql<number>`(
+    select count(*)::int
+    from ${reports}
+    where ${reports.workspaceId} = ${workspaceMemberships.workspaceId}
+      and ${reports.assigneeUserId} = ${workspaceMemberships.userId}
+      and ${reports.status} = 'resolved'
       and ${reports.archivedAt} is null
   )`.mapWith(Number)
 }
@@ -48,6 +60,7 @@ function serializeMember(row: {
   role: WorkspaceTeamMember["role"]
   status: WorkspaceTeamMember["status"]
   assignedCount: number
+  completedCount: number
   reportsCount: number
   joinedAt: Date
   createdAt: Date
@@ -69,6 +82,7 @@ function serializeMember(row: {
     title: row.title,
     avatarUrl: row.avatarUrl,
     assignedCount: row.assignedCount,
+    completedCount: row.completedCount,
     reportsCount: row.reportsCount,
     joinedAt: row.joinedAt.toISOString(),
     joinedAtLabel: formatMemberJoinedAt(row.joinedAt),
@@ -119,6 +133,7 @@ export async function listWorkspaceMembers(userId: string, workspaceSlug: string
       role: workspaceMemberships.role,
       status: workspaceMemberships.status,
       assignedCount: countAssignedReportsSql(),
+      completedCount: countCompletedReportsSql(),
       reportsCount: countSubmittedReportsSql(),
       joinedAt: workspaceMemberships.joinedAt,
       createdAt: workspaceMemberships.createdAt,

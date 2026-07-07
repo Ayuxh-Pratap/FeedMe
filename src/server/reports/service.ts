@@ -31,6 +31,7 @@ import {
   activeReportStatuses,
   formatReportCapturedAgo,
   formatReportCapturedAt,
+  isWorkspaceReportAssignmentLocked,
   progressReportStatuses,
   type WorkspaceReport,
   type WorkspaceReportSort,
@@ -46,6 +47,7 @@ import type {
   AssignReportInput,
   CreateReportInput,
   ListReportsInput,
+  ReportCountsInput,
   UpdateReportStatusInput,
 } from "@/server/reports/validation"
 
@@ -98,11 +100,7 @@ const statusRequiresAssignee = new Set<WorkspaceReportStatus>([
   "ready_for_review",
 ])
 
-const statusResetsWhenUnassigned = new Set<WorkspaceReportStatus>([
-  "assigned",
-  "in_progress",
-  "ready_for_review",
-])
+const statusResetsWhenUnassigned = new Set<WorkspaceReportStatus>(["assigned"])
 
 function canAdministerReports(role: string) {
   return role === "owner" || role === "admin"
@@ -116,6 +114,13 @@ function commentsCountSql() {
       and ${reportComments.reportId} = ${reports.id}
       and ${reportComments.deletedAt} is null
   )`.mapWith(Number)
+}
+
+function sqlValues(values: string[]) {
+  return sql.join(
+    values.map((value) => sql`${value}`),
+    sql`, `
+  )
 }
 
 function encodeReportsCursor(offset: number) {
@@ -169,7 +174,10 @@ function getReportScopeCondition(
   userId: string
 ) {
   if (scope === "assigned") {
-    return eq(reports.assigneeUserId, userId)
+    return and(
+      eq(reports.assigneeUserId, userId),
+      inArray(reports.status, [...progressReportStatuses])
+    )
   }
 
   if (scope === "reported") {
@@ -219,6 +227,29 @@ function getReportOrderBy(sort: WorkspaceReportSort) {
   }
 
   return newestFirst
+}
+
+function getReportBaseConditions(
+  workspaceId: string,
+  input: Pick<ReportCountsInput, "q" | "scope">,
+  userId: string
+) {
+  const conditions: SQL[] = [
+    eq(reports.workspaceId, workspaceId),
+    isNull(reports.archivedAt),
+  ]
+  const scopeCondition = getReportScopeCondition(input.scope, userId)
+  const searchCondition = getReportSearchCondition(input.q)
+
+  if (scopeCondition) {
+    conditions.push(scopeCondition)
+  }
+
+  if (searchCondition) {
+    conditions.push(searchCondition)
+  }
+
+  return conditions
 }
 
 function getReportsPageInfo({
@@ -688,6 +719,56 @@ export async function getWorkspaceReportCount(workspaceId: string) {
   return row?.count ?? 0
 }
 
+export async function getWorkspaceReportCounts(
+  userId: string,
+  workspaceSlug: string,
+  input: ReportCountsInput = {}
+) {
+  const workspace = await requireWorkspaceForReportsRead(userId, workspaceSlug)
+  const conditions = getReportBaseConditions(workspace.id, input, userId)
+  const activeStatuses = sqlValues([...activeReportStatuses])
+  const progressStatuses = sqlValues([...progressReportStatuses])
+  const [row] = await db
+    .select({
+      all: sql<number>`count(*)::int`.mapWith(Number),
+      assignedToMe:
+        sql<number>`count(*) filter (
+          where ${reports.assigneeUserId} = ${userId}
+            and ${reports.status} in (${progressStatuses})
+        )::int`.mapWith(Number),
+      inProgress:
+        sql<number>`count(*) filter (where ${reports.status} in (${progressStatuses}))::int`.mapWith(
+          Number
+        ),
+      open:
+        sql<number>`count(*) filter (where ${reports.status} in (${activeStatuses}))::int`.mapWith(
+          Number
+        ),
+      reportedByMe:
+        sql<number>`count(*) filter (where ${reports.reporterUserId} = ${userId})::int`.mapWith(
+          Number
+        ),
+      resolved:
+        sql<number>`count(*) filter (where ${reports.status} = 'resolved')::int`.mapWith(
+          Number
+        ),
+    })
+    .from(reports)
+    .where(and(...conditions))
+
+  return {
+    workspace,
+    counts: {
+      all: row?.all ?? 0,
+      assignedToMe: row?.assignedToMe ?? 0,
+      inProgress: row?.inProgress ?? 0,
+      open: row?.open ?? 0,
+      reportedByMe: row?.reportedByMe ?? 0,
+      resolved: row?.resolved ?? 0,
+    },
+  }
+}
+
 export async function listWorkspaceReports(
   userId: string,
   workspaceSlug: string,
@@ -699,24 +780,11 @@ export async function listWorkspaceReports(
 ) {
   const workspace = await requireWorkspaceForReportsRead(userId, workspaceSlug)
   const offset = decodeReportsCursor(input.cursor)
-  const conditions: SQL[] = [
-    eq(reports.workspaceId, workspace.id),
-    isNull(reports.archivedAt),
-  ]
+  const conditions = getReportBaseConditions(workspace.id, input, userId)
   const statusCondition = getReportStatusCondition(input.status)
-  const scopeCondition = getReportScopeCondition(input.scope, userId)
-  const searchCondition = getReportSearchCondition(input.q)
 
   if (statusCondition) {
     conditions.push(statusCondition)
-  }
-
-  if (scopeCondition) {
-    conditions.push(scopeCondition)
-  }
-
-  if (searchCondition) {
-    conditions.push(searchCondition)
   }
 
   const rows = await db
@@ -828,12 +896,20 @@ export async function assignWorkspaceReport(
   const workspace = await requireWorkspaceForReportAssign(userId, workspaceSlug)
   const row = await getMutableReportRow(workspace.id, reportId)
   const nextAssigneeUserId = input.assigneeUserId
+  const didChangeAssignee = row.assigneeUserId !== nextAssigneeUserId
+
+  if (didChangeAssignee && isWorkspaceReportAssignmentLocked(row.status)) {
+    throw new ValidationError("Assignment is locked after work starts.", {
+      assigneeUserId: [
+        "This report is already in progress, ready for review, resolved, or archived. Use an explicit override flow if ownership needs to change.",
+      ],
+    })
+  }
 
   if (nextAssigneeUserId) {
     await assertAssignableDeveloper(workspace.id, nextAssigneeUserId)
   }
 
-  const didChangeAssignee = row.assigneeUserId !== nextAssigneeUserId
   const nextStatus = getAssignmentStatus(
     row.status,
     nextAssigneeUserId,
