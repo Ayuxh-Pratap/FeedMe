@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { siteConfig } from "@/lib/site";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Agentation } from "agentation";
+import { AppQueryProvider } from "@/components/providers/app-query-provider";
 
 const googleSans = Google_Sans({
   variable: "--font-google-sans",
@@ -67,7 +68,9 @@ export default function RootLayout({
       className={cn("h-full", "antialiased", googleSans.variable, geistSans.variable, geistMono.variable, "font-sans")}
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
-        <TooltipProvider>{children}</TooltipProvider>
+        <AppQueryProvider>
+          <TooltipProvider>{children}</TooltipProvider>
+        </AppQueryProvider>
         {process.env.NODE_ENV === "development" && <Agentation />}
       </body>
     </html>
