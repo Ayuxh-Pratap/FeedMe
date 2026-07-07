@@ -43,7 +43,11 @@ export function getWorkspaceMemberRoleLabel(role: WorkspaceMemberRole) {
   return roleLabels[role]
 }
 
-export function isAssignableReportRole(role: WorkspaceMemberRole) {
+export function isAssignableReportRole(role: WorkspaceMemberRole | null | undefined) {
+  if (!role) {
+    return false
+  }
+
   return assignableReportRoles.includes(
     role as (typeof assignableReportRoles)[number]
   )
