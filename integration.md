@@ -557,6 +557,12 @@ The production extension manifest must include the dashboard origin in
 issued with `SameSite=None; Secure` so the extension can call the API with the
 same signed-in browser session.
 
+Because production cookies are available to the extension, every unsafe FeedMe
+API mutation is protected by a trust guard. Dashboard calls send
+`x-feedme-client: dashboard`; extension calls send `x-feedme-client: extension`.
+The server rejects cross-site browser mutations without the expected trusted
+client marker/origin, and JSON routes require `Content-Type: application/json`.
+
 Do not imply one-click installation until the extension is published through an
 official browser store or an enterprise policy-controlled distribution channel.
 
@@ -617,9 +623,11 @@ Screenshots are hosted on Cloudinary, not stored as base64 in the database.
 Rules:
 
 ```txt
-report asset urls must be external http(s); data: and blob: are rejected
+report asset urls must be https Cloudinary image URLs for the configured FeedMe cloud/folder
+data:, blob:, non-Cloudinary URLs, wrong Cloudinary accounts, and wrong folders are rejected
 direct upload keeps large images out of the report API and Postgres
 the read model derives optimized thumbnails for grid/rail; viewers use full res
+MCP only fetches validated Cloudinary image URLs and rejects redirects/non-image/oversized responses
 ```
 
 See `API_IMPLEMENTATION_GUIDE.md` Slice 9 for the storage implementation.

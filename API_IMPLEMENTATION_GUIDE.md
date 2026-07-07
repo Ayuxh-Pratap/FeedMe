@@ -187,12 +187,29 @@ Session behavior:
 ```txt
 cookie name: feedme_session
 cookie type: HttpOnly
-cookie sameSite: lax
+cookie sameSite: none in production while the unpacked extension reuses the dashboard session
 cookie secure: true in production
 session token stored raw only in browser cookie
 session token hash stored in database
 session expiry: 30 days for MVP
 ```
+
+Mutation trust guard:
+
+```txt
+all unsafe /api methods except /api/mcp pass through src/proxy.ts
+dashboard writes send x-feedme-client: dashboard
+extension writes send x-feedme-client: extension
+dashboard writes must come from the dashboard origin
+extension writes must come from an extension origin, or an extension context without Origin
+JSON routes must use Content-Type: application/json
+cross-site browser writes without the FeedMe client header are rejected before route handlers run
+```
+
+This guard exists because production cookies are `SameSite=None; Secure` for the
+unpacked extension. Future architecture should move the extension to an
+extension-scoped token/session so the dashboard cookie can return to
+`SameSite=Lax`.
 
 Password behavior:
 
@@ -905,6 +922,10 @@ that origin, and its manifest must include the dashboard origin in
 host_permissions so the extension service worker can call FeedMe APIs.
 Production dashboard cookies use SameSite=None; Secure so the extension can
 reuse the signed-in dashboard session from chrome-extension:// requests.
+Unsafe API mutations are protected by `src/proxy.ts`: dashboard clients send
+`x-feedme-client: dashboard`, extension clients send `x-feedme-client:
+extension`, and cross-site browser writes without a trusted origin/client marker
+are rejected.
 ```
 
 Dashboard performance note:
@@ -1040,9 +1061,10 @@ src/server/uploads/cloudinary.ts        env config + SHA-1 request signer
 src/server/uploads/service.ts           createReportUploadSignature()
 src/app/api/uploads/signature/route.ts  session-gated signature endpoint
 src/lib/cloudinary.ts                    client-safe thumbnail transform helper
-src/server/reports/validation.ts        asset url must be http(s); rejects data:/blob:
+src/server/reports/validation.ts        asset url must be FeedMe Cloudinary image storage
 src/server/reports/service.ts           read model adds thumbnailUrl per screenshot
 src/lib/reports.ts                       WorkspaceReportScreenshot.thumbnailUrl
+src/app/api/mcp/route.ts                only fetches validated Cloudinary image urls
 ```
 
 Extension files:
@@ -1057,14 +1079,15 @@ Rules:
 
 ```txt
 require a signed-in user for the upload signature
-report asset urls must be external http(s); data: and blob: are rejected
+report asset urls must be https Cloudinary image URLs for this FeedMe cloud/folder
+data:, blob:, non-Cloudinary URLs, wrong Cloudinary accounts, and wrong folders are rejected
 the extension uploads each screenshot directly, then submits the URLs
 one signature covers all screenshots in a single report
 already-hosted assets are not re-uploaded on sync retries
 if a Cloudinary upload fails, the report stays unsynced and retries later
 the read model derives w_720,f_auto,q_auto thumbnails for grid/rail surfaces
 fullscreen evidence viewers use the full-resolution original url
-non-Cloudinary urls pass through the thumbnail helper unchanged
+MCP embeds screenshots only after re-validating the Cloudinary URL, refusing redirects, non-image content, and oversized responses
 ```
 
 Environment:
