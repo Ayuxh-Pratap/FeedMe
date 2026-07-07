@@ -2,7 +2,6 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { useState, type ReactNode } from "react"
 import {
   ArrowLeft,
@@ -14,6 +13,7 @@ import {
   ExternalLink,
   CheckCircle2,
   Loader2,
+  Lock,
   Maximize2,
   MessageSquare,
   Monitor,
@@ -39,11 +39,18 @@ import {
 } from "@/components/feedme/dashboard/report-badge-styles"
 import {
   getReportStatusLabel,
+  isWorkspaceReportAssignmentLocked,
   type WorkspaceReport,
   type WorkspaceReportStatus,
 } from "@/lib/reports"
 import type { WorkspaceMemberRole, WorkspaceTeamMember } from "@/lib/team-members"
-import { ApiClientError, patchJson } from "@/lib/api-client"
+import { ApiClientError } from "@/lib/api-client"
+import {
+  mergeReportCacheEntry,
+  useAssignReportMutation,
+  useReportDetailQuery,
+  useUpdateReportStatusMutation,
+} from "@/lib/report-queries"
 import { cn } from "@/lib/utils"
 
 type ReportDetailProps = {
@@ -243,7 +250,13 @@ function ScreenshotViewer({
   )
 }
 
-function ScreenshotPanel({ report }: { report: WorkspaceReport }) {
+function ScreenshotPanel({
+  isEvidenceHydrating = false,
+  report,
+}: {
+  isEvidenceHydrating?: boolean
+  report: WorkspaceReport
+}) {
   const [viewerIndex, setViewerIndex] = useState(0)
   const [isViewerOpen, setIsViewerOpen] = useState(false)
 
@@ -283,6 +296,23 @@ function ScreenshotPanel({ report }: { report: WorkspaceReport }) {
             </div>
           </div>
         ))}
+        {isEvidenceHydrating && report.screenshots.length < 2 ? (
+          <div className="overflow-hidden rounded-lg border border-border-hairline bg-background">
+            <div className="flex h-8 items-center justify-between border-b border-border-hairline px-3">
+              <p className="text-heading-5 text-foreground">Element</p>
+              <p className="text-caption text-text-muted">Fetching</p>
+            </div>
+            <div className="relative flex aspect-[16/10] flex-col items-center justify-center gap-2 overflow-hidden bg-surface-card px-6 text-center">
+              <Loader2 className="size-4 animate-spin text-primary-soft" />
+              <p className="text-heading-5 text-foreground">
+                Loading screenshot evidence
+              </p>
+              <p className="max-w-56 text-caption text-text-muted">
+                Fetching the full report screenshots.
+              </p>
+            </div>
+          </div>
+        ) : null}
       </div>
       <ScreenshotViewer
         activeIndex={viewerIndex}
@@ -312,14 +342,6 @@ function MetadataItem({
 
 const unassignedSelectValue = "__unassigned__"
 
-type ReportMutationResponse = {
-  report: WorkspaceReport
-}
-
-function getReportMutationBaseUrl(workspaceSlug: string, reportId: string) {
-  return `/api/workspaces/${encodeURIComponent(workspaceSlug)}/reports/${encodeURIComponent(reportId)}`
-}
-
 function getMutationErrorMessage(error: unknown) {
   if (error instanceof ApiClientError) {
     return error.message
@@ -335,14 +357,14 @@ function ReportWorkflowPanel({
   report,
   workspaceSlug,
 }: ReportDetailProps) {
-  const router = useRouter()
   const [selectedAssigneeUserId, setSelectedAssigneeUserId] = useState(
     report.assigneeUserId ?? unassignedSelectValue
   )
   const [assigneeMenuOpen, setAssigneeMenuOpen] = useState(false)
   const [mutation, setMutation] = useState<"assignment" | "status" | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const assignReportMutation = useAssignReportMutation(workspaceSlug)
+  const updateStatusMutation = useUpdateReportStatusMutation(workspaceSlug)
 
   const developerMembers = members.filter(
     (member) => member.role === "developer" && member.status === "active"
@@ -358,6 +380,7 @@ function ReportWorkflowPanel({
     selectedAssigneeUserId === unassignedSelectValue
       ? "Unassigned"
       : selectedDeveloper?.name ?? report.assignee?.name ?? "Unknown developer"
+  const assignmentLocked = isWorkspaceReportAssignmentLocked(report.status)
   const hasAssignmentChange =
     selectedAssigneeUserId !== (report.assigneeUserId ?? unassignedSelectValue)
   const canStartWork = isAssignedDeveloper && report.status === "assigned"
@@ -377,20 +400,27 @@ function ReportWorkflowPanel({
   async function updateAssignment() {
     setMutation("assignment")
     setError(null)
-    setMessage(null)
+    const nextAssigneeUserId =
+      selectedAssigneeUserId === unassignedSelectValue
+        ? null
+        : selectedAssigneeUserId
+    const nextAssignee = selectedDeveloper
+      ? {
+          avatarUrl: selectedDeveloper.avatarUrl,
+          initials: selectedDeveloper.initials,
+          name: selectedDeveloper.name,
+        }
+      : undefined
 
     try {
-      await patchJson<ReportMutationResponse>(
-        `${getReportMutationBaseUrl(workspaceSlug, report.id)}/assignment`,
-        {
-          assigneeUserId:
-            selectedAssigneeUserId === unassignedSelectValue
-              ? null
-              : selectedAssigneeUserId,
-        }
+      const result = await assignReportMutation.mutateAsync({
+        assignee: nextAssignee,
+        assigneeUserId: nextAssigneeUserId,
+        report,
+      })
+      setSelectedAssigneeUserId(
+        result.report.assigneeUserId ?? unassignedSelectValue
       )
-      setMessage("Assignment updated.")
-      router.refresh()
     } catch (updateError) {
       setError(getMutationErrorMessage(updateError))
     } finally {
@@ -398,18 +428,12 @@ function ReportWorkflowPanel({
     }
   }
 
-  async function updateStatus(status: WorkspaceReportStatus, successMessage: string) {
+  async function updateStatus(status: WorkspaceReportStatus) {
     setMutation("status")
     setError(null)
-    setMessage(null)
 
     try {
-      await patchJson<ReportMutationResponse>(
-        `${getReportMutationBaseUrl(workspaceSlug, report.id)}/status`,
-        { status }
-      )
-      setMessage(successMessage)
-      router.refresh()
+      await updateStatusMutation.mutateAsync({ report, status })
     } catch (updateError) {
       setError(getMutationErrorMessage(updateError))
     } finally {
@@ -429,9 +453,11 @@ function ReportWorkflowPanel({
             <UserRoundCheck className="size-4 text-text-muted" />
             Workflow
           </div>
-          <p className="mt-1 text-body-3 text-text-body">
-            Assign this report to a developer and move it through review.
-          </p>
+          {!assignmentLocked ? (
+            <p className="mt-1 text-body-3 text-text-body">
+              Assign this report to a developer and move it through review.
+            </p>
+          ) : null}
         </div>
 
         <DetailBadge className={reportStatusPillStyles[report.status]}>
@@ -459,25 +485,31 @@ function ReportWorkflowPanel({
                 type="button"
                 aria-haspopup="listbox"
                 aria-expanded={assigneeMenuOpen}
-                disabled={mutation === "assignment"}
+                disabled={assignmentLocked || mutation === "assignment"}
                 onClick={() => setAssigneeMenuOpen((value) => !value)}
                 className={cn(
                   "flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-left text-body-3 text-text-secondary shadow-button-secondary outline-none transition-all duration-base ease-out-soft",
                   "hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover focus:border-border-strong active:scale-[var(--press-scale)]",
-                  mutation === "assignment" &&
+                  (assignmentLocked || mutation === "assignment") &&
                     "cursor-not-allowed opacity-50 hover:bg-fill-translucent hover:text-text-secondary hover:shadow-button-secondary active:scale-100"
                 )}
               >
-                <span className="min-w-0 truncate">{selectedAssigneeLabel}</span>
-                <ChevronDown
-                  className={cn(
-                    "size-3.5 shrink-0 transition-transform duration-base ease-out-soft",
-                    assigneeMenuOpen && "rotate-180 text-text-secondary"
-                  )}
-                />
+                <span className="min-w-0 truncate">
+                  {selectedAssigneeLabel}
+                </span>
+                {assignmentLocked ? (
+                  <Lock className="size-3.5 shrink-0 text-text-muted" />
+                ) : (
+                  <ChevronDown
+                    className={cn(
+                      "size-3.5 shrink-0 transition-transform duration-base ease-out-soft",
+                      assigneeMenuOpen && "rotate-180 text-text-secondary"
+                    )}
+                  />
+                )}
               </button>
 
-              {assigneeMenuOpen ? (
+              {assigneeMenuOpen && !assignmentLocked ? (
                 <div
                   role="listbox"
                   aria-label="Assign report"
@@ -506,7 +538,6 @@ function ReportWorkflowPanel({
                         onClick={() => {
                           setSelectedAssigneeUserId(option.value)
                           setAssigneeMenuOpen(false)
-                          setMessage(null)
                           setError(null)
                         }}
                         className={cn(
@@ -533,24 +564,26 @@ function ReportWorkflowPanel({
                 </div>
               ) : null}
             </div>
-            <button
-              type="button"
-              disabled={!hasAssignmentChange || mutation === "assignment"}
-              onClick={updateAssignment}
-              className={secondaryActionClass}
-            >
-              {mutation === "assignment" ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Send className="size-3.5" />
-              )}
-              Save assignment
-            </button>
+            {!assignmentLocked ? (
+              <button
+                type="button"
+                disabled={!hasAssignmentChange || mutation === "assignment"}
+                onClick={updateAssignment}
+                className={secondaryActionClass}
+              >
+                {mutation === "assignment" ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Send className="size-3.5" />
+                )}
+                Save assignment
+              </button>
+            ) : null}
             {canResolve ? (
               <button
                 type="button"
                 disabled={isMutating}
-                onClick={() => updateStatus("resolved", "Report resolved.")}
+                onClick={() => updateStatus("resolved")}
                 className={secondaryActionClass}
               >
                 {mutation === "status" ? (
@@ -564,19 +597,18 @@ function ReportWorkflowPanel({
           </div>
         ) : null}
 
-        {developerMembers.length === 0 && canManageReport ? (
+        {!assignmentLocked && developerMembers.length === 0 && canManageReport ? (
           <p className="mt-2 text-caption text-text-muted">
             Invite an active developer before assigning work.
           </p>
         ) : null}
-
         <div className="mt-3 flex flex-wrap gap-2">
           {isAssignedDeveloper ? (
             <>
               <button
                 type="button"
                 disabled={!canStartWork || isMutating}
-                onClick={() => updateStatus("in_progress", "Work marked in progress.")}
+                onClick={() => updateStatus("in_progress")}
                 className={secondaryActionClass}
               >
                 {mutation === "status" && canStartWork ? (
@@ -589,9 +621,7 @@ function ReportWorkflowPanel({
               <button
                 type="button"
                 disabled={!canMarkReady || isMutating}
-                onClick={() =>
-                  updateStatus("ready_for_review", "Report marked ready for review.")
-                }
+                onClick={() => updateStatus("ready_for_review")}
                 className={secondaryActionClass}
               >
                 {mutation === "status" && canMarkReady ? (
@@ -608,7 +638,7 @@ function ReportWorkflowPanel({
             <button
               type="button"
               disabled={isMutating}
-              onClick={() => updateStatus("resolved", "Report resolved.")}
+              onClick={() => updateStatus("resolved")}
               className={secondaryActionClass}
             >
               {mutation === "status" ? (
@@ -621,9 +651,6 @@ function ReportWorkflowPanel({
           ) : null}
         </div>
 
-        {message ? (
-          <p className="mt-3 text-caption text-success">{message}</p>
-        ) : null}
         {error ? (
           <p className="mt-3 text-caption text-error">{error}</p>
         ) : null}
@@ -639,11 +666,22 @@ export function ReportDetail({
   report,
   workspaceSlug,
 }: ReportDetailProps) {
+  const reportQuery = useReportDetailQuery({
+    placeholderReport: report,
+    reportId: report.id,
+    workspaceSlug,
+  })
+  const currentReport = reportQuery.data?.report
+    ? mergeReportCacheEntry(report, reportQuery.data.report)
+    : report
+  const isEvidenceHydrating =
+    reportQuery.isFetching && currentReport.screenshots.length < 2
+
   return (
     <section className="feedme-scrollbar h-full min-h-0 overflow-auto">
       <div className="mx-auto max-w-6xl px-4 py-4">
         <Link
-          href={`/${workspaceSlug}/reports?report=${report.id}`}
+          href={`/${workspaceSlug}/reports?report=${currentReport.id}`}
           className="inline-flex items-center gap-1.5 text-body-3 text-text-muted transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" />
@@ -652,53 +690,57 @@ export function ReportDetail({
 
         <header className="mt-3 border-b border-border-hairline pb-4">
           <div className="flex flex-wrap items-center gap-1.5">
-            <DetailBadge className={reportSeverityPillStyles[report.severity]}>
-              {report.severity}
+            <DetailBadge className={reportSeverityPillStyles[currentReport.severity]}>
+              {currentReport.severity}
             </DetailBadge>
-            <DetailBadge className={reportStatusPillStyles[report.status]}>
-              {getReportStatusLabel(report.status)}
+            <DetailBadge className={reportStatusPillStyles[currentReport.status]}>
+              {getReportStatusLabel(currentReport.status)}
             </DetailBadge>
             <DetailBadge className={reportNeutralPillStyle}>
-              {report.type}
+              {currentReport.type}
             </DetailBadge>
           </div>
 
           <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <h1 className="text-heading-2 text-foreground">{report.title}</h1>
+              <h1 className="text-heading-2 text-foreground">{currentReport.title}</h1>
               <p className="mt-1 max-w-3xl text-body-2 text-text-body">
-                {report.summary}
+                {currentReport.summary}
               </p>
             </div>
-            <Link
-              href={report.url}
+            <a
+              href={currentReport.url}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
             >
               Open URL
               <ExternalLink className="size-3.5" />
-            </Link>
+            </a>
           </div>
         </header>
 
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          <MetadataItem label="Domain" value={report.domain} />
-          <MetadataItem label="Captured" value={report.capturedAt} />
-          <MetadataItem label="Owner" value={report.assignee?.name ?? "Unassigned"} />
-          <MetadataItem label="Comments" value={report.commentsCount} />
+          <MetadataItem label="Domain" value={currentReport.domain} />
+          <MetadataItem label="Captured" value={currentReport.capturedAt} />
+          <MetadataItem label="Owner" value={currentReport.assignee?.name ?? "Unassigned"} />
+          <MetadataItem label="Comments" value={currentReport.commentsCount} />
         </div>
 
         <div className="mt-4 space-y-4">
           <ReportWorkflowPanel
+            key={`${currentReport.id}:${currentReport.assigneeUserId ?? "unassigned"}`}
             currentUserId={currentUserId}
             currentUserRole={currentUserRole}
             members={members}
-            report={report}
+            report={currentReport}
             workspaceSlug={workspaceSlug}
           />
 
-          <ScreenshotPanel report={report} />
+          <ScreenshotPanel
+            isEvidenceHydrating={isEvidenceHydrating}
+            report={currentReport}
+          />
 
           <div className="grid gap-4 xl:grid-cols-2">
             <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
@@ -707,17 +749,17 @@ export function ReportDetail({
                 Feedback
               </div>
               <blockquote className="mt-3 text-body-2 text-text-secondary">
-                {report.feedback.message}
+                {currentReport.feedback.message}
               </blockquote>
               <div className="mt-4 flex items-center gap-2 text-body-3 text-text-muted">
                 <FeedMeAvatar
                   className="shadow-none"
-                  imageUrl={report.feedback.reporterAvatarUrl}
-                  label={report.feedback.reporterName}
+                  imageUrl={currentReport.feedback.reporterAvatarUrl}
+                  label={currentReport.feedback.reporterName}
                   size={22}
-                  value={report.feedback.reporterEmail}
+                  value={currentReport.feedback.reporterEmail}
                 />
-                {report.feedback.reporterName} - {report.feedback.reporterEmail}
+                {currentReport.feedback.reporterName} - {currentReport.feedback.reporterEmail}
               </div>
             </section>
 
@@ -728,11 +770,11 @@ export function ReportDetail({
               </div>
               <div className="mt-3 rounded-lg border border-border-hairline bg-background p-3">
                 <p className="font-mono text-body-3 text-text-secondary">
-                  {report.selectedElement.selector}
+                  {currentReport.selectedElement.selector}
                 </p>
-                {report.selectedElement.text ? (
+                {currentReport.selectedElement.text ? (
                   <p className="mt-2 text-body-3 text-text-body">
-                    Text: {report.selectedElement.text}
+                    Text: {currentReport.selectedElement.text}
                   </p>
                 ) : null}
               </div>
@@ -745,7 +787,7 @@ export function ReportDetail({
               Developer prompt
             </div>
             <pre className="feedme-scrollbar mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-border-hairline bg-background p-3 font-mono text-caption text-text-secondary">
-              {report.developerPrompt}
+              {currentReport.developerPrompt}
             </pre>
           </section>
         </div>

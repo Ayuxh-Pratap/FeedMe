@@ -4,6 +4,7 @@ import { Plus } from "lucide-react"
 import { usePathname, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
+import { DashboardTableBodySkeleton } from "@/components/feedme/dashboard/dashboard-route-loading"
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
 import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
@@ -15,11 +16,12 @@ import {
   getWorkspaceMemberRoleLabel,
   type WorkspaceTeamMember,
 } from "@/lib/team-members"
+import { useWorkspaceMembersQuery } from "@/lib/team-queries"
 import { cn } from "@/lib/utils"
 
 type TeamPageProps = {
-  members: WorkspaceTeamMember[]
-  workspaceName: string
+  members?: WorkspaceTeamMember[]
+  workspaceName?: string
   workspaceSlug: string
 }
 
@@ -55,6 +57,7 @@ const filters: {
     match: (member) => member.status === "pending",
   },
 ]
+const emptyMembers: WorkspaceTeamMember[] = []
 
 function getFilter(searchParams: SearchParamsLike): TeamFilter {
   const value = searchParams.get("role")
@@ -153,19 +156,25 @@ function TeamNoMatches({
 }
 
 export function TeamPage({
-  members,
-  workspaceName,
+  members: initialMembers,
+  workspaceName: initialWorkspaceName,
   workspaceSlug,
 }: TeamPageProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const initialFilter = getFilter(searchParams)
-  const [activeFilter, setActiveFilter] = useState(initialFilter)
+  const activeFilter = getFilter(searchParams)
   const {
     dashboardSearchQuery,
     registerMembers,
     setSelectedMemberId,
+    workspaceName: contextWorkspaceName,
   } = useWorkspaceDashboardData()
+  const membersQuery = useWorkspaceMembersQuery({
+    initialMembers,
+    workspaceSlug,
+  })
+  const members = membersQuery.data?.members ?? emptyMembers
+  const workspaceName = initialWorkspaceName ?? contextWorkspaceName
   const searchQuery = dashboardSearchQuery
   const activeFilterConfig =
     filters.find((filter) => filter.value === activeFilter) ?? filters[0]
@@ -194,6 +203,13 @@ export function TeamPage({
   )
     ? selectedMemberId
     : filteredMembers[0]?.id
+  const showInitialSkeleton = membersQuery.isPending && members.length === 0
+  const errorMessage =
+    membersQuery.error instanceof Error
+      ? membersQuery.error.message
+      : membersQuery.isError
+        ? "Unable to load team members. Please try again."
+        : null
 
   const replaceSearchParams = useCallback((nextSearchParams: URLSearchParams) => {
     replaceUrlSearchParams(pathname, nextSearchParams)
@@ -209,7 +225,6 @@ export function TeamPage({
     const nextMembers = searchScopedMembers.filter(nextFilter.match)
     const nextSelectedMemberId = nextMembers[0]?.id
 
-    setActiveFilter(filter)
     setLocalSelectedMemberId(nextSelectedMemberId)
     setSelectedMemberId(nextSelectedMemberId ?? null)
 
@@ -238,6 +253,10 @@ export function TeamPage({
   }
 
   useEffect(() => {
+    if (showInitialSkeleton) {
+      return
+    }
+
     const nextSelectedMemberId = effectiveSelectedMemberId ?? null
 
     registerMembers({
@@ -252,6 +271,7 @@ export function TeamPage({
     members,
     registerMembers,
     setSelectedMemberId,
+    showInitialSkeleton,
   ])
 
   return (
@@ -287,16 +307,24 @@ export function TeamPage({
         </div>
       </header>
 
-      {filteredMembers.length === 0 ? (
+      {errorMessage ? (
+        <div className="border-b border-border-hairline px-4 py-2 text-caption text-error">
+          {errorMessage}
+        </div>
+      ) : null}
+
+      {showInitialSkeleton ? <DashboardTableBodySkeleton /> : null}
+
+      {!showInitialSkeleton && filteredMembers.length === 0 ? (
         <TeamNoMatches
           activeFilterLabel={activeFilterConfig.label}
           searchQuery={searchQuery}
         />
       ) : null}
 
-      {filteredMembers.length > 0 ? (
+      {!showInitialSkeleton && filteredMembers.length > 0 ? (
         <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[820px] border-collapse text-left">
+        <table className="w-full min-w-[900px] border-collapse text-left">
           <caption className="sr-only">Workspace team members</caption>
           <thead className="sticky top-0 z-10 border-b border-border-hairline bg-background">
             <tr>
@@ -308,6 +336,9 @@ export function TeamPage({
               </th>
               <th scope="col" className="px-4 py-3 text-caption font-medium text-text-muted">
                 Assigned
+              </th>
+              <th scope="col" className="px-4 py-3 text-caption font-medium text-text-muted">
+                Completed
               </th>
               <th scope="col" className="px-4 py-3 text-caption font-medium text-text-muted">
                 Reports
@@ -356,6 +387,9 @@ export function TeamPage({
                 </td>
                 <td className="px-4 py-4 align-top text-body-3 text-text-secondary">
                   {member.assignedCount}
+                </td>
+                <td className="px-4 py-4 align-top text-body-3 text-text-secondary">
+                  {member.completedCount}
                 </td>
                 <td className="px-4 py-4 align-top text-body-3 text-text-secondary">
                   {member.reportsCount}

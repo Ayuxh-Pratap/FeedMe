@@ -10,7 +10,10 @@ import {
 } from "react"
 
 import type { WorkspaceReport } from "@/lib/reports"
-import type { WorkspaceTeamMember } from "@/lib/team-members"
+import type {
+  WorkspaceMemberRole,
+  WorkspaceTeamMember,
+} from "@/lib/team-members"
 
 type RegisterReportsInput = {
   reports: WorkspaceReport[]
@@ -25,6 +28,8 @@ type RegisterMembersInput = {
 }
 
 type WorkspaceDashboardData = {
+  currentUserId: string
+  currentUserRole: WorkspaceMemberRole
   dashboardSearchQuery: string
   membersReady: boolean
   registerMembers: (input: RegisterMembersInput) => void
@@ -40,6 +45,8 @@ type WorkspaceDashboardData = {
   teamMembers: WorkspaceTeamMember[]
   teamVisibleMemberIds: string[]
   updateReport: (report: WorkspaceReport) => void
+  workspaceName: string
+  workspaceSlug: string
 }
 
 const WorkspaceDashboardDataContext =
@@ -64,10 +71,18 @@ function areReportListsEqual(
 
 export function WorkspaceDashboardDataProvider({
   children,
+  currentUserId,
+  currentUserRole,
   initialDashboardSearchQuery = "",
+  workspaceName,
+  workspaceSlug,
 }: {
   children: ReactNode
+  currentUserId: string
+  currentUserRole: WorkspaceMemberRole
   initialDashboardSearchQuery?: string
+  workspaceName: string
+  workspaceSlug: string
 }) {
   const [dashboardSearchQuery, setDashboardSearchQueryState] = useState(
     initialDashboardSearchQuery.trim()
@@ -146,6 +161,8 @@ export function WorkspaceDashboardDataProvider({
 
   const value = useMemo(
     () => ({
+      currentUserId,
+      currentUserRole,
       dashboardSearchQuery,
       membersReady,
       registerMembers,
@@ -161,8 +178,12 @@ export function WorkspaceDashboardDataProvider({
       teamMembers,
       teamVisibleMemberIds,
       updateReport,
+      workspaceName,
+      workspaceSlug,
     }),
     [
+      currentUserId,
+      currentUserRole,
       dashboardSearchQuery,
       membersReady,
       registerMembers,
@@ -178,6 +199,8 @@ export function WorkspaceDashboardDataProvider({
       teamMembers,
       teamVisibleMemberIds,
       updateReport,
+      workspaceName,
+      workspaceSlug,
     ]
   )
 

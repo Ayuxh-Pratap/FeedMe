@@ -21,6 +21,7 @@ import {
   Inbox,
   ListFilter,
   Loader2,
+  Lock,
   LogOut,
   Maximize2,
   Menu,
@@ -52,12 +53,14 @@ import {
 import type { MockWorkspace } from "@/lib/mock/dashboard"
 import {
   getReportStatusLabel,
+  isWorkspaceReportAssignmentLocked,
   type WorkspaceReport,
 } from "@/lib/reports"
 import {
   getWorkspaceMemberRoleLabel,
   type WorkspaceTeamMember,
 } from "@/lib/team-members"
+import { useWorkspaceMembersQuery } from "@/lib/team-queries"
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import {
   reportBadgeBaseClass,
@@ -89,10 +92,15 @@ import {
   ApiClientError,
   deleteJson,
   getJson,
-  patchJson,
   postJson,
 } from "@/lib/api-client"
 import { replaceUrlSearchParams } from "@/lib/dashboard-url"
+import {
+  useAssignReportMutation,
+  useReportDetailQuery,
+  useUpdateReportStatusMutation,
+} from "@/lib/report-queries"
+import { useDashboardUiStore } from "@/stores/dashboard-ui-store"
 
 type WorkspaceShellProps = {
   availableWorkspaces: WorkspaceSwitcherOption[]
@@ -132,14 +140,6 @@ type WorkspaceDomainsResponse = {
 
 type WorkspaceDomainMutationResponse = {
   domain: WorkspaceDomain
-}
-
-type WorkspaceMembersResponse = {
-  members: WorkspaceTeamMember[]
-}
-
-type ReportMutationResponse = {
-  report: WorkspaceReport
 }
 
 const unassignedSelectValue = "__unassigned__"
@@ -907,13 +907,21 @@ function SidebarNav({
   workspaceSlug: string
 }) {
   const pathname = usePathname()
+  const lastMyWorkScope = useDashboardUiStore(
+    (state) => state.lastMyWorkScopeByWorkspace[workspaceSlug]
+  )
 
   return (
     <nav className="mt-4 space-y-1">
       {navItems.map((item) => {
         const Icon = item.icon
-        const href = `/${workspaceSlug}/${item.href}`
-        const active = pathname === href || pathname.startsWith(`${href}/`)
+        const baseHref = `/${workspaceSlug}/${item.href}`
+        const href =
+          item.href === "my-work" && lastMyWorkScope
+            ? `${baseHref}?scope=${lastMyWorkScope}`
+            : baseHref
+        const active =
+          pathname === baseHref || pathname.startsWith(`${baseHref}/`)
         const content = (
           <>
             <Icon className="size-4" />
@@ -1766,9 +1774,11 @@ function ReportEvidenceViewer({
 }
 
 function ReportEvidenceTabs({
+  isEvidenceHydrating = false,
   report,
   workspaceSlug,
 }: {
+  isEvidenceHydrating?: boolean
   report: WorkspaceReport
   workspaceSlug: string
 }) {
@@ -1779,6 +1789,9 @@ function ReportEvidenceTabs({
   const activeScreenshotIndex = Math.max(
     0,
     report.screenshots.findIndex((screenshot) => screenshot.kind === activeKind)
+  )
+  const activeScreenshot = report.screenshots.find(
+    (screenshot) => screenshot.kind === activeKind
   )
 
   return (
@@ -1817,6 +1830,25 @@ function ReportEvidenceTabs({
             isActive={screenshot.kind === activeKind}
           />
         ))}
+        {!activeScreenshot ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-surface-card px-5 text-center">
+            {isEvidenceHydrating ? (
+              <Loader2 className="size-4 animate-spin text-primary-soft" />
+            ) : (
+              <Camera className="size-4 text-text-muted" />
+            )}
+            <p className="text-heading-5 text-foreground">
+              {isEvidenceHydrating
+                ? "Loading evidence"
+                : "Evidence unavailable"}
+            </p>
+            <p className="max-w-48 text-caption text-text-muted">
+              {isEvidenceHydrating
+                ? "Fetching the full report screenshots."
+                : "This report does not include this screenshot type."}
+            </p>
+          </div>
+        ) : null}
         <button
           type="button"
           aria-label="Open screenshot viewer"
@@ -1950,10 +1982,6 @@ function ReportInspectorRailSkeleton({ className }: { className?: string }) {
   )
 }
 
-function getReportMutationBaseUrl(workspaceSlug: string, reportId: string) {
-  return `/api/workspaces/${encodeURIComponent(workspaceSlug)}/reports/${encodeURIComponent(reportId)}`
-}
-
 function getMutationErrorMessage(error: unknown) {
   if (error instanceof ApiClientError) {
     return error.message
@@ -1977,12 +2005,6 @@ function isAssignedDeveloperReport(workspace: MockWorkspace, report: WorkspaceRe
 const reportRailActionButtonClass =
   "inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-2.5 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-border-subtle disabled:hover:brightness-100 disabled:active:scale-100"
 
-const optimisticUnassignResetStatuses: WorkspaceReport["status"][] = [
-  "assigned",
-  "in_progress",
-  "ready_for_review",
-]
-
 function ReportRailAssignmentPanel({
   members,
   membersErrorMessage,
@@ -2002,9 +2024,9 @@ function ReportRailAssignmentPanel({
     report.assigneeUserId ?? unassignedSelectValue
   )
   const [assigneeMenuOpen, setAssigneeMenuOpen] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const assignReportMutation = useAssignReportMutation(workspace.slug)
   const developerMembers = members.filter(
     (member) => member.role === "developer" && member.status === "active"
   )
@@ -2015,13 +2037,16 @@ function ReportRailAssignmentPanel({
     selectedAssigneeUserId === unassignedSelectValue
       ? "Unassigned"
       : selectedDeveloper?.name ?? report.assignee?.name ?? "Unknown developer"
+  const assignmentLocked = isWorkspaceReportAssignmentLocked(report.status)
   const isAssignmentControlDisabled =
-    isSaving || membersIsLoading || Boolean(membersErrorMessage)
+    assignmentLocked ||
+    assignReportMutation.isPending ||
+    membersIsLoading ||
+    Boolean(membersErrorMessage)
   const hasAssignmentChange =
     selectedAssigneeUserId !== (report.assigneeUserId ?? unassignedSelectValue)
 
   async function saveAssignment() {
-    setIsSaving(true)
     setError(null)
     setMessage(null)
 
@@ -2032,40 +2057,25 @@ function ReportRailAssignmentPanel({
     const optimisticAssignee = nextAssigneeUserId
       ? developerMembers.find((member) => member.userId === nextAssigneeUserId)
       : undefined
-    const optimisticReport: WorkspaceReport = {
-      ...report,
-      assignee: optimisticAssignee
-        ? {
-            avatarUrl: optimisticAssignee.avatarUrl,
-            initials: optimisticAssignee.initials,
-            name: optimisticAssignee.name,
-          }
-        : undefined,
-      assigneeUserId: nextAssigneeUserId,
-      status: nextAssigneeUserId
-        ? "assigned"
-        : optimisticUnassignResetStatuses.includes(report.status)
-          ? "reviewing"
-          : report.status,
-    }
-
-    onReportChange(optimisticReport)
+    const nextAssignee = optimisticAssignee
+      ? {
+          avatarUrl: optimisticAssignee.avatarUrl,
+          initials: optimisticAssignee.initials,
+          name: optimisticAssignee.name,
+        }
+      : undefined
 
     try {
-      const result = await patchJson<ReportMutationResponse>(
-        `${getReportMutationBaseUrl(workspace.slug, report.id)}/assignment`,
-        {
-          assigneeUserId: nextAssigneeUserId,
-        }
-      )
+      const result = await assignReportMutation.mutateAsync({
+        assignee: nextAssignee,
+        assigneeUserId: nextAssigneeUserId,
+        report,
+      })
 
       onReportChange(result.report)
       setMessage("Assignment saved.")
     } catch (saveError) {
-      onReportChange(report)
       setError(getMutationErrorMessage(saveError))
-    } finally {
-      setIsSaving(false)
     }
   }
 
@@ -2075,9 +2085,11 @@ function ReportRailAssignmentPanel({
         <UserRoundCheck className="size-4 text-text-muted" />
         Assignment
       </div>
-      <p className="mt-1 text-caption text-text-muted">
-        Route this report to an active developer.
-      </p>
+      {!assignmentLocked ? (
+        <p className="mt-1 text-caption text-text-muted">
+          Route this report to an active developer.
+        </p>
+      ) : null}
 
       <div className="mt-3 space-y-2">
         <div
@@ -2107,17 +2119,25 @@ function ReportRailAssignmentPanel({
             )}
           >
             <span className="min-w-0 truncate">
-              {membersIsLoading ? "Loading developers..." : selectedAssigneeLabel}
+              {assignmentLocked
+                ? selectedAssigneeLabel
+                : membersIsLoading
+                  ? "Loading developers..."
+                  : selectedAssigneeLabel}
             </span>
-            <ChevronDown
-              className={cn(
-                "size-3.5 shrink-0 transition-transform duration-base ease-out-soft",
-                assigneeMenuOpen && "rotate-180 text-text-secondary"
-              )}
-            />
+            {assignmentLocked ? (
+              <Lock className="size-3.5 shrink-0 text-text-muted" />
+            ) : (
+              <ChevronDown
+                className={cn(
+                  "size-3.5 shrink-0 transition-transform duration-base ease-out-soft",
+                  assigneeMenuOpen && "rotate-180 text-text-secondary"
+                )}
+              />
+            )}
           </button>
 
-          {assigneeMenuOpen ? (
+          {assigneeMenuOpen && !assignmentLocked ? (
             <div
               role="listbox"
               aria-label="Assign report"
@@ -2174,30 +2194,35 @@ function ReportRailAssignmentPanel({
           ) : null}
         </div>
 
-        <button
-          type="button"
-          disabled={
-            isSaving ||
-            membersIsLoading ||
-            Boolean(membersErrorMessage) ||
-            !hasAssignmentChange
-          }
-          onClick={saveAssignment}
-          className={reportRailActionButtonClass}
-        >
-          {isSaving ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <Send className="size-3.5" />
-          )}
-          Save assignment
-        </button>
+        {!assignmentLocked ? (
+          <button
+            type="button"
+            disabled={
+              assignReportMutation.isPending ||
+              membersIsLoading ||
+              Boolean(membersErrorMessage) ||
+              !hasAssignmentChange
+            }
+            onClick={saveAssignment}
+            className={reportRailActionButtonClass}
+          >
+            {assignReportMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Send className="size-3.5" />
+            )}
+            Save assignment
+          </button>
+        ) : null}
       </div>
 
       {membersErrorMessage ? (
         <p className="mt-2 text-caption text-error">{membersErrorMessage}</p>
       ) : null}
-      {!membersIsLoading && !membersErrorMessage && developerMembers.length === 0 ? (
+      {!assignmentLocked &&
+      !membersIsLoading &&
+      !membersErrorMessage &&
+      developerMembers.length === 0 ? (
         <p className="mt-2 text-caption text-text-muted">
           Invite an active developer before assigning reports.
         </p>
@@ -2217,9 +2242,9 @@ function ReportRailDeveloperStatusPanel({
   report: WorkspaceReport
   workspace: MockWorkspace
 }) {
-  const [isSavingStatus, setIsSavingStatus] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const updateStatusMutation = useUpdateReportStatusMutation(workspace.slug)
   const canStartWork = report.status === "assigned"
   const canMarkReady =
     report.status === "assigned" || report.status === "in_progress"
@@ -2232,30 +2257,16 @@ function ReportRailDeveloperStatusPanel({
     status: WorkspaceReport["status"],
     successMessage: string
   ) {
-    setIsSavingStatus(true)
     setMessage(null)
     setError(null)
 
-    const optimisticReport: WorkspaceReport = {
-      ...report,
-      status,
-    }
-
-    onReportChange(optimisticReport)
-
     try {
-      const result = await patchJson<ReportMutationResponse>(
-        `${getReportMutationBaseUrl(workspace.slug, report.id)}/status`,
-        { status }
-      )
+      const result = await updateStatusMutation.mutateAsync({ report, status })
 
       onReportChange(result.report)
       setMessage(successMessage)
     } catch (statusError) {
-      onReportChange(report)
       setError(getMutationErrorMessage(statusError))
-    } finally {
-      setIsSavingStatus(false)
     }
   }
 
@@ -2272,11 +2283,11 @@ function ReportRailDeveloperStatusPanel({
       <div className="mt-3 grid gap-2">
         <button
           type="button"
-          disabled={!canStartWork || isSavingStatus}
+          disabled={!canStartWork || updateStatusMutation.isPending}
           onClick={() => updateStatus("in_progress", "Work marked in progress.")}
           className={reportRailActionButtonClass}
         >
-          {isSavingStatus && canStartWork ? (
+          {updateStatusMutation.isPending && canStartWork ? (
             <Loader2 className="size-3.5 animate-spin" />
           ) : (
             <Play className="size-3.5" />
@@ -2285,13 +2296,13 @@ function ReportRailDeveloperStatusPanel({
         </button>
         <button
           type="button"
-          disabled={!canMarkReady || isSavingStatus}
+          disabled={!canMarkReady || updateStatusMutation.isPending}
           onClick={() =>
             updateStatus("ready_for_review", "Report marked ready for review.")
           }
           className={reportRailActionButtonClass}
         >
-          {isSavingStatus && canMarkReady ? (
+          {updateStatusMutation.isPending && canMarkReady ? (
             <Loader2 className="size-3.5 animate-spin" />
           ) : (
             <CheckCircle2 className="size-3.5" />
@@ -2306,8 +2317,73 @@ function ReportRailDeveloperStatusPanel({
   )
 }
 
+function ReportRailAdminStatusPanel({
+  onReportChange,
+  report,
+  workspace,
+}: {
+  onReportChange: (report: WorkspaceReport) => void
+  report: WorkspaceReport
+  workspace: MockWorkspace
+}) {
+  const [error, setError] = useState<string | null>(null)
+  const updateStatusMutation = useUpdateReportStatusMutation(workspace.slug)
+  const canResolve =
+    canManageReportAssignments(workspace) &&
+    report.status !== "resolved" &&
+    report.status !== "archived"
+
+  if (!canResolve) {
+    return null
+  }
+
+  async function resolveReport() {
+    setError(null)
+
+    try {
+      const result = await updateStatusMutation.mutateAsync({
+        report,
+        status: "resolved",
+      })
+
+      onReportChange(result.report)
+    } catch (statusError) {
+      setError(getMutationErrorMessage(statusError))
+    }
+  }
+
+  return (
+    <section className="border-b border-border-hairline px-4 py-3">
+      <div className="flex items-center gap-2 text-heading-5 text-foreground">
+        <CheckCircle2 className="size-4 text-text-muted" />
+        Admin review
+      </div>
+      <p className="mt-1 text-caption text-text-muted">
+        Finalize this report from the inspector.
+      </p>
+
+      <button
+        type="button"
+        disabled={updateStatusMutation.isPending}
+        onClick={resolveReport}
+        className={cn(reportRailActionButtonClass, "mt-3")}
+      >
+        {updateStatusMutation.isPending ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : (
+          <CheckCircle2 className="size-3.5" />
+        )}
+        Resolve report
+      </button>
+
+      {error ? <p className="mt-2 text-caption text-error">{error}</p> : null}
+    </section>
+  )
+}
+
 function ReportInspectorRail({
   className,
+  isEvidenceHydrating = false,
   members,
   membersErrorMessage,
   membersIsLoading,
@@ -2316,6 +2392,7 @@ function ReportInspectorRail({
   workspace,
 }: {
   className?: string
+  isEvidenceHydrating?: boolean
   members: WorkspaceTeamMember[]
   membersErrorMessage: string | null
   membersIsLoading: boolean
@@ -2342,7 +2419,11 @@ function ReportInspectorRail({
         </p>
       </section>
 
-      <ReportEvidenceTabs report={report} workspaceSlug={workspace.slug} />
+      <ReportEvidenceTabs
+        isEvidenceHydrating={isEvidenceHydrating}
+        report={report}
+        workspaceSlug={workspace.slug}
+      />
 
       {canManageReportAssignments(workspace) ? (
         <ReportRailAssignmentPanel
@@ -2358,6 +2439,13 @@ function ReportInspectorRail({
 
       <ReportRailDeveloperStatusPanel
         key={`${report.id}:${report.status}`}
+        onReportChange={onReportChange}
+        report={report}
+        workspace={workspace}
+      />
+
+      <ReportRailAdminStatusPanel
+        key={`${report.id}:${report.status}:admin`}
         onReportChange={onReportChange}
         report={report}
         workspace={workspace}
@@ -2440,64 +2528,35 @@ function ReportsContextRail({
   selectedReportId: string | null
   workspace: MockWorkspace
 }) {
-  const [detailReportsById, setDetailReportsById] = useState<
-    Record<string, WorkspaceReport>
-  >({})
-
   const selectedSummaryReport =
     reports.find((report) => report.id === selectedReportId) ?? reports[0]
-  const selectedDetailReport = selectedSummaryReport
-    ? detailReportsById[selectedSummaryReport.id]
-    : undefined
-  const selectedReport = selectedDetailReport ?? selectedSummaryReport
+  const selectedDetailQuery = useReportDetailQuery({
+    enabled: !isLoading && Boolean(selectedSummaryReport),
+    placeholderReport: selectedSummaryReport,
+    reportId: selectedSummaryReport?.id,
+    workspaceSlug: workspace.slug,
+  })
+  const selectedReport = selectedDetailQuery.data?.report ?? selectedSummaryReport
+  const isEvidenceHydrating =
+    selectedDetailQuery.isFetching &&
+    Boolean(selectedReport) &&
+    !selectedReport?.screenshots.some(
+      (screenshot) =>
+        screenshot.kind === "annotated" &&
+        Boolean(screenshot.url || screenshot.thumbnailUrl)
+    )
   const handleReportChange = useCallback(
     (nextReport: WorkspaceReport) => {
-      setDetailReportsById((currentDetails) => ({
-        ...currentDetails,
-        [nextReport.id]: nextReport,
-      }))
       onReportChange(nextReport)
     },
     [onReportChange]
   )
 
   useEffect(() => {
-    if (
-      isLoading ||
-      !selectedSummaryReport ||
-      detailReportsById[selectedSummaryReport.id]
-    ) {
-      return
+    if (selectedDetailQuery.data?.report) {
+      handleReportChange(selectedDetailQuery.data.report)
     }
-
-    let isMounted = true
-
-    async function loadSelectedReportDetail() {
-      try {
-        const result = await getJson<ReportMutationResponse>(
-          getReportMutationBaseUrl(workspace.slug, selectedSummaryReport.id)
-        )
-
-        if (isMounted) {
-          handleReportChange(result.report)
-        }
-      } catch {
-        // Keep the fast summary rail visible if full evidence is temporarily unavailable.
-      }
-    }
-
-    void loadSelectedReportDetail()
-
-    return () => {
-      isMounted = false
-    }
-  }, [
-    detailReportsById,
-    handleReportChange,
-    isLoading,
-    selectedSummaryReport,
-    workspace.slug,
-  ])
+  }, [handleReportChange, selectedDetailQuery.data])
 
   if (isLoading) {
     return <ReportInspectorRailSkeleton className={className} />
@@ -2515,6 +2574,7 @@ function ReportsContextRail({
       membersIsLoading={membersIsLoading}
       onReportChange={handleReportChange}
       report={selectedReport}
+      isEvidenceHydrating={isEvidenceHydrating}
       workspace={workspace}
     />
   )
@@ -2604,12 +2664,12 @@ function TeamMemberRail({
 
       <section className="grid grid-cols-2 gap-2 border-b border-border-hairline px-4 py-3">
         <ReportRailMeta label="Assigned" value={member.assignedCount} />
+        <ReportRailMeta label="Completed" value={member.completedCount} />
         <ReportRailMeta label="Reports" value={member.reportsCount} />
         <ReportRailMeta
           label="Role"
           value={getWorkspaceMemberRoleLabel(member.role)}
         />
-        <ReportRailMeta label="Joined" value={member.joinedAtLabel} />
       </section>
 
       <section className="px-4 py-3">
@@ -2787,7 +2847,11 @@ export function WorkspaceShell({
 
   return (
     <WorkspaceDashboardDataProvider
+      currentUserId={workspace.currentUserId ?? ""}
+      currentUserRole={workspace.currentUserRole ?? "viewer"}
       initialDashboardSearchQuery={searchParams.get("q")?.trim() ?? ""}
+      workspaceName={workspace.name}
+      workspaceSlug={workspace.slug}
     >
       <WorkspaceShellContent
         availableWorkspaces={availableWorkspaces}
@@ -2804,14 +2868,18 @@ function WorkspaceShellContent({
   children,
   workspace,
 }: WorkspaceShellProps) {
-  const [isRightRailOpen, setIsRightRailOpen] = useState(true)
-  const [isExtensionInstallOpen, setIsExtensionInstallOpen] = useState(false)
-  const [reportRailMembers, setReportRailMembers] = useState<WorkspaceTeamMember[]>([])
-  const [reportRailMembersIsLoading, setReportRailMembersIsLoading] = useState(
-    () => canManageReportAssignments(workspace)
+  const isRightRailOpen = useDashboardUiStore(
+    (state) => state.rightRailOpenByWorkspace[workspace.slug] ?? true
   )
-  const [reportRailMembersErrorMessage, setReportRailMembersErrorMessage] =
-    useState<string | null>(null)
+  const setRightRailOpen = useDashboardUiStore(
+    (state) => state.setRightRailOpen
+  )
+  const isExtensionInstallOpen = useDashboardUiStore(
+    (state) => state.extensionInstallDialogOpen
+  )
+  const setExtensionInstallOpen = useDashboardUiStore(
+    (state) => state.setExtensionInstallDialogOpen
+  )
   const {
     reportRailReady,
     reportRailReports,
@@ -2826,8 +2894,23 @@ function WorkspaceShellContent({
   const isMyWorkRoute = pathname === myWorkPath
   const isReportRailRoute = isReportsIndexRoute || isMyWorkRoute
   const isReportDetailRoute = pathname.startsWith(`${reportsPath}/`)
-  const reportRailMembersEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/members`
   const canManageAssignments = canManageReportAssignments(workspace)
+  const reportRailMembersQuery = useWorkspaceMembersQuery({
+    enabled: isReportRailRoute && canManageAssignments,
+    workspaceSlug: workspace.slug,
+  })
+  const reportRailMembers = reportRailMembersQuery.data?.members ?? []
+  const reportRailMembersErrorMessage =
+    reportRailMembersQuery.error instanceof Error
+      ? reportRailMembersQuery.error.message
+      : reportRailMembersQuery.isError
+        ? "Unable to load team members. Please try again."
+        : null
+  const reportRailMembersIsLoading =
+    canManageAssignments &&
+    isReportRailRoute &&
+    reportRailMembers.length === 0 &&
+    reportRailMembersQuery.isPending
   const reportRailReportsById = new Map(
     reportRailReports.map((report) => [report.id, report])
   )
@@ -2837,43 +2920,6 @@ function WorkspaceShellContent({
         .filter((report): report is WorkspaceReport => Boolean(report))
     : []
   const reportRailIsLoading = isReportRailRoute && !reportRailReady
-
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadMembers() {
-      setReportRailMembersIsLoading(true)
-      setReportRailMembersErrorMessage(null)
-
-      try {
-        const result = await getJson<WorkspaceMembersResponse>(reportRailMembersEndpoint)
-
-        if (isMounted) {
-          setReportRailMembers(result.members)
-        }
-      } catch (error) {
-        if (isMounted) {
-          setReportRailMembersErrorMessage(
-            error instanceof ApiClientError
-              ? error.message
-              : "Unable to load team members. Please try again."
-          )
-        }
-      } finally {
-        if (isMounted) {
-          setReportRailMembersIsLoading(false)
-        }
-      }
-    }
-
-    if (isReportRailRoute && canManageAssignments) {
-      void loadMembers()
-    }
-
-    return () => {
-      isMounted = false
-    }
-  }, [canManageAssignments, isReportRailRoute, reportRailMembersEndpoint])
 
   const handleReportChange = useCallback((nextReport: WorkspaceReport) => {
     updateReport(nextReport)
@@ -2899,59 +2945,61 @@ function WorkspaceShellContent({
     <>
       <ExtensionInstallDialog
         open={isExtensionInstallOpen}
-        onOpenChange={setIsExtensionInstallOpen}
+        onOpenChange={setExtensionInstallOpen}
       />
       <main className="flex h-screen overflow-hidden bg-card text-foreground">
-      <WorkspaceSidebar
-        availableWorkspaces={availableWorkspaces}
-        onOpenExtensionInstall={() => setIsExtensionInstallOpen(true)}
-        workspace={workspace}
-      />
+        <WorkspaceSidebar
+          availableWorkspaces={availableWorkspaces}
+          onOpenExtensionInstall={() => setExtensionInstallOpen(true)}
+          workspace={workspace}
+        />
 
-      <section className="min-w-0 flex-1 p-2 lg:pl-0">
-        <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border-hairline bg-background shadow-card">
-          <WorkspaceTopbar
-            availableWorkspaces={availableWorkspaces}
-            isRightRailOpen={isRightRailOpen}
-            isRightRailEnabled={isRightRailEnabled}
-            onOpenExtensionInstall={() => setIsExtensionInstallOpen(true)}
-            onReportChange={handleReportChange}
-            onToggleRightRail={() => setIsRightRailOpen((value) => !value)}
-            reportRailIsLoading={isReportRailRoute && reportRailIsLoading}
-            reportRailMembers={reportRailMembers}
-            reportRailMembersErrorMessage={reportRailMembersErrorMessage}
-            reportRailMembersIsLoading={reportRailMembersIsLoading}
-            reportRailReports={reportRailReports}
-            reportRailSelectedReportId={reportRailSelectedReportId}
-            workspace={workspace}
-          />
-          <div
-            className={cn(
-              "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] transition-[grid-template-columns] duration-[720ms] ease-toolbar will-change-[grid-template-columns]",
-              !isRightRailEnabled
-                ? "lg:grid-cols-[minmax(0,1fr)]"
-                : shouldShowRightRail
-                  ? "lg:grid-cols-[minmax(0,1fr)_var(--right-rail-width)]"
-                  : "lg:grid-cols-[minmax(0,1fr)_0px]"
-            )}
-          >
-            <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
-            {isRightRailEnabled ? (
-              <WorkspaceRightRail
-                isOpen={isRightRailOpen}
-                onReportChange={handleReportChange}
-                reportRailIsLoading={isReportRailRoute && reportRailIsLoading}
-                reportRailMembers={reportRailMembers}
-                reportRailMembersErrorMessage={reportRailMembersErrorMessage}
-                reportRailMembersIsLoading={reportRailMembersIsLoading}
-                reportRailReports={scopedReportRailReports}
-                reportRailSelectedReportId={reportRailSelectedReportId}
-                workspace={workspace}
-              />
-            ) : null}
+        <section className="min-w-0 flex-1 p-2 lg:pl-0">
+          <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border-hairline bg-background shadow-card">
+            <WorkspaceTopbar
+              availableWorkspaces={availableWorkspaces}
+              isRightRailOpen={isRightRailOpen}
+              isRightRailEnabled={isRightRailEnabled}
+              onOpenExtensionInstall={() => setExtensionInstallOpen(true)}
+              onReportChange={handleReportChange}
+              onToggleRightRail={() =>
+                setRightRailOpen(workspace.slug, !isRightRailOpen)
+              }
+              reportRailIsLoading={isReportRailRoute && reportRailIsLoading}
+              reportRailMembers={reportRailMembers}
+              reportRailMembersErrorMessage={reportRailMembersErrorMessage}
+              reportRailMembersIsLoading={reportRailMembersIsLoading}
+              reportRailReports={reportRailReports}
+              reportRailSelectedReportId={reportRailSelectedReportId}
+              workspace={workspace}
+            />
+            <div
+              className={cn(
+                "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] transition-[grid-template-columns] duration-[720ms] ease-toolbar will-change-[grid-template-columns]",
+                !isRightRailEnabled
+                  ? "lg:grid-cols-[minmax(0,1fr)]"
+                  : shouldShowRightRail
+                    ? "lg:grid-cols-[minmax(0,1fr)_var(--right-rail-width)]"
+                    : "lg:grid-cols-[minmax(0,1fr)_0px]"
+              )}
+            >
+              <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+              {isRightRailEnabled ? (
+                <WorkspaceRightRail
+                  isOpen={isRightRailOpen}
+                  onReportChange={handleReportChange}
+                  reportRailIsLoading={isReportRailRoute && reportRailIsLoading}
+                  reportRailMembers={reportRailMembers}
+                  reportRailMembersErrorMessage={reportRailMembersErrorMessage}
+                  reportRailMembersIsLoading={reportRailMembersIsLoading}
+                  reportRailReports={scopedReportRailReports}
+                  reportRailSelectedReportId={reportRailSelectedReportId}
+                  workspace={workspace}
+                />
+              ) : null}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
       </main>
     </>
   )

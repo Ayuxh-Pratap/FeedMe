@@ -1,13 +1,11 @@
 "use client"
 
 import Image from "next/image"
-import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
@@ -25,23 +23,30 @@ import {
   reportPriorityCodePillStyle,
   reportSeverityPriorityLabels,
 } from "@/components/feedme/dashboard/report-badge-styles"
+import { DashboardTableBodySkeleton } from "@/components/feedme/dashboard/dashboard-route-loading"
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import {
   isInProgressWorkspaceReport,
   isOpenWorkspaceReport,
   type WorkspaceReport,
+  type WorkspaceReportCounts,
   type WorkspaceReportSort,
   type WorkspaceReportsPageInfo,
-  type WorkspaceReportsListResponse,
 } from "@/lib/reports"
 import { cn } from "@/lib/utils"
 import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
-import { ApiClientError, getJson } from "@/lib/api-client"
 import { replaceUrlSearchParams } from "@/lib/dashboard-url"
+import {
+  flattenReportPages,
+  makeInitialReportsInfiniteData,
+  usePrefetchReportDetail,
+  useReportCountsQuery,
+  useReportsInfiniteQuery,
+} from "@/lib/report-queries"
 
 type ReportsListProps = {
-  pageInfo: WorkspaceReportsPageInfo
-  reports: WorkspaceReport[]
+  pageInfo?: WorkspaceReportsPageInfo
+  reports?: WorkspaceReport[]
   workspaceSlug: string
 }
 
@@ -53,18 +58,25 @@ type SearchParamsLike = {
 }
 
 const filters: {
+  countKey: keyof Pick<WorkspaceReportCounts, "all" | "open" | "inProgress" | "resolved">
   label: string
   value: StatusFilter
   match: (report: WorkspaceReport) => boolean
 }[] = [
-  { label: "All", value: "all", match: () => true },
-  { label: "Open", value: "open", match: isOpenWorkspaceReport },
+  { countKey: "all", label: "All", value: "all", match: () => true },
+  { countKey: "open", label: "Open", value: "open", match: isOpenWorkspaceReport },
   {
+    countKey: "inProgress",
     label: "In progress",
     value: "in_progress",
     match: isInProgressWorkspaceReport,
   },
-  { label: "Closed", value: "resolved", match: (report) => report.status === "resolved" },
+  {
+    countKey: "resolved",
+    label: "Closed",
+    value: "resolved",
+    match: (report) => report.status === "resolved",
+  },
 ]
 
 const sortOptions: {
@@ -78,6 +90,11 @@ const sortOptions: {
 ]
 
 const reportsPageSize = 30
+const emptyReportsPageInfo: WorkspaceReportsPageInfo = {
+  hasNextPage: false,
+  limit: reportsPageSize,
+  nextCursor: null,
+}
 
 function getViewMode(searchParams: SearchParamsLike): ReportViewMode {
   return searchParams.get("view") === "grid" ? "grid" : "table"
@@ -105,59 +122,6 @@ function getReportSort(searchParams: SearchParamsLike): ReportSort {
 
 function getSortLabel(sort: ReportSort) {
   return sortOptions.find((option) => option.value === sort)?.label ?? "Newest first"
-}
-
-function mergeReportsById(
-  currentReports: WorkspaceReport[],
-  nextReports: WorkspaceReport[]
-) {
-  const reportsById = new Map<string, WorkspaceReport>()
-
-  for (const report of currentReports) {
-    reportsById.set(report.id, report)
-  }
-
-  for (const report of nextReports) {
-    reportsById.set(report.id, report)
-  }
-
-  return [...reportsById.values()]
-}
-
-function getReportsListUrl({
-  cursor,
-  searchQuery,
-  sort,
-  status,
-  workspaceSlug,
-}: {
-  cursor?: string | null
-  searchQuery: string
-  sort: ReportSort
-  status: StatusFilter
-  workspaceSlug: string
-}) {
-  const searchParams = new URLSearchParams()
-
-  searchParams.set("limit", String(reportsPageSize))
-
-  if (cursor) {
-    searchParams.set("cursor", cursor)
-  }
-
-  if (searchQuery) {
-    searchParams.set("q", searchQuery)
-  }
-
-  if (sort !== "newest") {
-    searchParams.set("sort", sort)
-  }
-
-  if (status !== "all") {
-    searchParams.set("status", status)
-  }
-
-  return `/api/workspaces/${encodeURIComponent(workspaceSlug)}/reports?${searchParams}`
 }
 
 function ReportPriorityCode({
@@ -293,17 +257,15 @@ function ReportEvidenceImage({ report }: { report: WorkspaceReport }) {
 
 function ReportsHeader({
   activeFilter,
-  hasMoreReports,
+  counts,
   onFilterChange,
   onSortChange,
-  reports,
   sort,
 }: {
   activeFilter: StatusFilter
-  hasMoreReports: boolean
+  counts?: WorkspaceReportCounts
   onFilterChange: (filter: StatusFilter) => void
   onSortChange: (sort: ReportSort) => void
-  reports: WorkspaceReport[]
   sort: ReportSort
 }) {
   return (
@@ -320,9 +282,7 @@ function ReportsHeader({
           <div className="flex items-center gap-1 rounded-lg border border-border-hairline bg-fill-translucent p-1">
             {filters.map((filter) => {
               const active = activeFilter === filter.value
-              const count = active
-                ? `${reports.filter(filter.match).length}${hasMoreReports ? "+" : ""}`
-                : null
+              const count = counts?.[filter.countKey]
 
               return (
                 <button
@@ -337,7 +297,7 @@ function ReportsHeader({
                   )}
                 >
                   {filter.label}
-                  {count ? (
+                  {count !== undefined ? (
                     <span className="text-caption text-text-muted">{count}</span>
                   ) : null}
                 </button>
@@ -482,23 +442,28 @@ function ReportsPaginationFooter({
 export function ReportCard({
   isSelected,
   onSelect,
+  onWarmReport,
   report,
-  workspaceSlug,
 }: {
   isSelected: boolean
   onSelect: () => void
+  onWarmReport?: () => void
   report: WorkspaceReport
-  workspaceSlug: string
 }) {
+  function selectWithWarmCache() {
+    onWarmReport?.()
+    onSelect()
+  }
+
   return (
     <article
       role="button"
       tabIndex={0}
-      onClick={onSelect}
+      onClick={selectWithWarmCache}
       onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault()
-          onSelect()
+          selectWithWarmCache()
         }
       }}
       className={cn(
@@ -541,17 +506,21 @@ export function ReportCard({
         </div>
       </div>
 
-      <Link
-        href={`/${workspaceSlug}/reports/${report.id}`}
-        onClick={(event) => event.stopPropagation()}
+      <a
+        href={report.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(event) => {
+          event.stopPropagation()
+        }}
         className={cn(
           "absolute bottom-3 right-3 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-border-subtle bg-surface-raised text-foreground shadow-button-hover transition-all duration-base ease-out-soft",
           "hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
         )}
-        aria-label={`Open ${report.title}`}
+        aria-label={`Open captured page for ${report.title}`}
       >
         <ArrowUpRight className="size-3.5" />
-      </Link>
+      </a>
     </article>
   )
 }
@@ -559,18 +528,23 @@ export function ReportCard({
 export function ReportTableRow({
   isSelected,
   onSelect,
+  onWarmReport,
   report,
-  workspaceSlug,
 }: {
   isSelected: boolean
   onSelect: () => void
+  onWarmReport?: () => void
   report: WorkspaceReport
-  workspaceSlug: string
 }) {
+  function selectWithWarmCache() {
+    onWarmReport?.()
+    onSelect()
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTableRowElement>) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault()
-      onSelect()
+      selectWithWarmCache()
     }
   }
 
@@ -578,7 +552,7 @@ export function ReportTableRow({
     <tr
       role="button"
       tabIndex={0}
-      onClick={onSelect}
+      onClick={selectWithWarmCache}
       onKeyDown={handleKeyDown}
       className={cn(
         "group cursor-pointer border-b border-border-hairline outline-none transition-all duration-base ease-out-soft",
@@ -614,14 +588,18 @@ export function ReportTableRow({
             {report.assignee?.name ?? "Unassigned"}
           </span>
           <span className="text-text-muted">{report.capturedAgo}</span>
-          <Link
-            href={`/${workspaceSlug}/reports/${report.id}`}
-            onClick={(event) => event.stopPropagation()}
+          <a
+            href={report.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
             className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
-            aria-label={`Open ${report.title}`}
+            aria-label={`Open captured page for ${report.title}`}
           >
             <ArrowUpRight className="size-3.5" />
-          </Link>
+          </a>
         </div>
       </td>
     </tr>
@@ -629,7 +607,7 @@ export function ReportTableRow({
 }
 
 export function ReportsList({
-  pageInfo,
+  pageInfo = emptyReportsPageInfo,
   reports,
   workspaceSlug,
 }: ReportsListProps) {
@@ -645,18 +623,60 @@ export function ReportsList({
     setReportRailSelectedReportId,
   } = useWorkspaceDashboardData()
   const searchQuery = dashboardSearchQuery
-  const lastQueryKeyRef = useRef<string | null>(null)
-  const isMountedRef = useRef(true)
-  const requestSequenceRef = useRef(0)
-  const latestSearchParamsRef = useRef(searchParams)
-  const [reportRows, setReportRows] = useState(reports)
-  const [currentPageInfo, setCurrentPageInfo] = useState(pageInfo)
-  const [isPending, setIsPending] = useState(false)
-  const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState(initialStatusFilter)
   const [sort, setSort] = useState(initialSort)
+  const [initialSearchQuery] = useState(searchQuery)
+  const filtersForQuery = useMemo(
+    () => ({
+      limit: reportsPageSize,
+      q: searchQuery,
+      sort,
+      status: statusFilter,
+    }),
+    [searchQuery, sort, statusFilter]
+  )
+  const initialFilters = useMemo(
+    () => ({
+      limit: reportsPageSize,
+      q: initialSearchQuery,
+      sort: initialSort,
+      status: initialStatusFilter,
+    }),
+    [initialSearchQuery, initialSort, initialStatusFilter]
+  )
+  const shouldUseInitialData =
+    Boolean(reports) &&
+    filtersForQuery.q === initialFilters.q &&
+    filtersForQuery.sort === initialFilters.sort &&
+    filtersForQuery.status === initialFilters.status
+  const reportsQuery = useReportsInfiniteQuery({
+    filters: filtersForQuery,
+    initialData: shouldUseInitialData
+      ? makeInitialReportsInfiniteData(reports ?? [], pageInfo)
+      : undefined,
+    workspaceSlug,
+  })
+  const countsQuery = useReportCountsQuery({
+    filters: { q: searchQuery },
+    workspaceSlug,
+  })
+  const prefetchReportDetail = usePrefetchReportDetail(workspaceSlug)
   const activeFilter = filters.find((filter) => filter.value === statusFilter) ?? filters[0]
+  const currentPageInfo =
+    reportsQuery.data?.pages[reportsQuery.data.pages.length - 1]?.pageInfo ??
+    pageInfo
+  const reportRows = useMemo(
+    () => flattenReportPages(reportsQuery.data),
+    [reportsQuery.data]
+  )
+  const errorMessage =
+    reportsQuery.error instanceof Error
+      ? reportsQuery.error.message
+      : reportsQuery.isError
+        ? "Unable to load reports. Please try again."
+        : null
+  const isPending = reportsQuery.isPending
+  const isLoadingMore = reportsQuery.isFetchingNextPage
   const reportUpdatesById = useMemo(
     () => new Map(reportRailReports.map((report) => [report.id, report])),
     [reportRailReports]
@@ -666,35 +686,28 @@ export function ReportsList({
       reportRows.map((report) => reportUpdatesById.get(report.id) ?? report),
     [reportRows, reportUpdatesById]
   )
+  const showInitialSkeleton = isPending && visibleReports.length === 0
   const requestedReportId = searchParams.get("report")
-  const initialSelectedReportId = visibleReports.some(
-      (report) => report.id === requestedReportId
-    )
+  const requestedSelectedReportId =
+    requestedReportId && visibleReports.some((report) => report.id === requestedReportId)
       ? requestedReportId
-      : visibleReports[0]?.id
-  const [selectedReportId, setSelectedReportId] = useState(
-    initialSelectedReportId
+      : null
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(
+    requestedSelectedReportId
   )
-  const effectiveSelectedReportId = visibleReports.some(
-    (report) => report.id === selectedReportId
-  )
-    ? selectedReportId
-    : visibleReports[0]?.id
+  const localSelectedReportId =
+    selectedReportId && visibleReports.some((report) => report.id === selectedReportId)
+      ? selectedReportId
+      : null
+  const effectiveSelectedReportId =
+    requestedSelectedReportId ?? localSelectedReportId ?? visibleReports[0]?.id ?? null
 
   const replaceSearchParams = useCallback((nextSearchParams: URLSearchParams) => {
-    if (!isMountedRef.current) {
-      return
-    }
-
     replaceUrlSearchParams(pathname, nextSearchParams)
   }, [pathname])
 
   const getCurrentSearchParams = useCallback(() => {
     return new URLSearchParams(searchParams.toString())
-  }, [searchParams])
-
-  useEffect(() => {
-    latestSearchParamsRef.current = searchParams
   }, [searchParams])
 
   function selectReport(reportId: string) {
@@ -705,80 +718,6 @@ export function ReportsList({
     nextSearchParams.set("report", reportId)
     replaceSearchParams(nextSearchParams)
   }
-
-  const loadReportsPage = useCallback(
-    async ({ cursor = null }: { cursor?: string | null } = {}) => {
-      const requestId = requestSequenceRef.current + 1
-      const shouldAppend = Boolean(cursor)
-
-      requestSequenceRef.current = requestId
-      setErrorMessage(null)
-
-      if (shouldAppend) {
-        setIsLoadingMore(true)
-      } else {
-        setIsPending(true)
-      }
-
-      try {
-        const result = await getJson<WorkspaceReportsListResponse>(
-          getReportsListUrl({
-            cursor,
-            searchQuery,
-            sort,
-            status: statusFilter,
-            workspaceSlug,
-          })
-        )
-
-        if (!isMountedRef.current || requestSequenceRef.current !== requestId) {
-          return
-        }
-
-        setCurrentPageInfo(result.pageInfo)
-        setReportRows((currentReports) =>
-          shouldAppend
-            ? mergeReportsById(currentReports, result.reports)
-            : result.reports
-        )
-
-        if (!shouldAppend) {
-          const requestedId = latestSearchParamsRef.current.get("report")
-          const nextSelectedReportId = result.reports.some(
-            (report) => report.id === requestedId
-          )
-            ? requestedId
-            : result.reports[0]?.id ?? null
-
-          setSelectedReportId(nextSelectedReportId)
-          setReportRailSelectedReportId(nextSelectedReportId)
-        }
-      } catch (error) {
-        if (isMountedRef.current && requestSequenceRef.current === requestId) {
-          setErrorMessage(
-            error instanceof ApiClientError
-              ? error.message
-              : "Unable to load reports. Please try again."
-          )
-        }
-      } finally {
-        if (isMountedRef.current && requestSequenceRef.current === requestId) {
-          if (shouldAppend) {
-            setIsLoadingMore(false)
-          } else {
-            setIsPending(false)
-          }
-        }
-      }
-    },
-    [
-      searchQuery,
-      setReportRailSelectedReportId,
-      sort,
-      statusFilter,
-      workspaceSlug,
-    ]
-  )
 
   function changeFilter(filter: StatusFilter) {
     const nextSearchParams = getCurrentSearchParams()
@@ -813,40 +752,12 @@ export function ReportsList({
   }
 
   function loadMoreReports() {
-    if (!currentPageInfo.nextCursor || isLoadingMore) {
+    if (!reportsQuery.hasNextPage || isLoadingMore) {
       return
     }
 
-    void loadReportsPage({ cursor: currentPageInfo.nextCursor })
+    void reportsQuery.fetchNextPage()
   }
-
-  useEffect(() => {
-    isMountedRef.current = true
-
-    return () => {
-      isMountedRef.current = false
-      requestSequenceRef.current += 1
-    }
-  }, [])
-
-  useEffect(() => {
-    const queryKey = `${searchQuery} ${sort} ${statusFilter}`
-
-    // First render records the query the server already rendered for (also
-    // covers Strict Mode's dev re-mount, which reuses this ref) so plain
-    // navigation never refetches. Only a genuine query change reloads.
-    if (lastQueryKeyRef.current === null) {
-      lastQueryKeyRef.current = queryKey
-      return
-    }
-
-    if (queryKey === lastQueryKeyRef.current) {
-      return
-    }
-
-    lastQueryKeyRef.current = queryKey
-    void loadReportsPage()
-  }, [loadReportsPage, searchQuery, sort, statusFilter])
 
   useEffect(() => {
     const nextSelectedReportId = effectiveSelectedReportId ?? null
@@ -856,11 +767,9 @@ export function ReportsList({
       selectedReportId: nextSelectedReportId,
       visibleReportIds: visibleReports.map((report) => report.id),
     })
-    setReportRailSelectedReportId(nextSelectedReportId)
   }, [
     effectiveSelectedReportId,
     registerReports,
-    setReportRailSelectedReportId,
     visibleReports,
   ])
 
@@ -868,18 +777,11 @@ export function ReportsList({
     <section className="flex h-full min-h-0 flex-col">
       <ReportsHeader
         activeFilter={statusFilter}
-        hasMoreReports={currentPageInfo.hasNextPage}
+        counts={countsQuery.data?.counts}
         onFilterChange={changeFilter}
         onSortChange={changeSort}
-        reports={visibleReports}
         sort={sort}
       />
-
-      {isPending ? (
-        <div className="h-px shrink-0 overflow-hidden bg-fill-translucent">
-          <div className="h-full w-full animate-pulse bg-primary-soft" />
-        </div>
-      ) : null}
 
       {errorMessage ? (
         <div className="border-b border-border-hairline px-4 py-2 text-caption text-error">
@@ -887,19 +789,18 @@ export function ReportsList({
         </div>
       ) : null}
 
-      {visibleReports.length === 0 ? (
+      {showInitialSkeleton ? <DashboardTableBodySkeleton /> : null}
+
+      {!showInitialSkeleton && visibleReports.length === 0 ? (
         <ReportsNoMatches
           activeFilterLabel={activeFilter.label}
           searchQuery={searchQuery}
         />
       ) : null}
 
-      {visibleReports.length > 0 && viewMode === "table" ? (
+      {!showInitialSkeleton && visibleReports.length > 0 && viewMode === "table" ? (
         <div
-          className={cn(
-            "feedme-scrollbar min-h-0 flex-1 overflow-auto transition-opacity duration-base ease-out-soft",
-            isPending && "opacity-60"
-          )}
+          className="feedme-scrollbar min-h-0 flex-1 overflow-auto"
         >
           <table className="w-full min-w-[900px] border-collapse text-left">
             <caption className="sr-only">Feedback reports</caption>
@@ -925,8 +826,8 @@ export function ReportsList({
                   key={report.id}
                   isSelected={report.id === effectiveSelectedReportId}
                   onSelect={() => selectReport(report.id)}
+                  onWarmReport={() => prefetchReportDetail(report.id)}
                   report={report}
-                  workspaceSlug={workspaceSlug}
                 />
               ))}
             </tbody>
@@ -939,12 +840,9 @@ export function ReportsList({
         </div>
       ) : null}
 
-      {visibleReports.length > 0 && viewMode === "grid" ? (
+      {!showInitialSkeleton && visibleReports.length > 0 && viewMode === "grid" ? (
         <div
-          className={cn(
-            "feedme-scrollbar min-h-0 flex-1 overflow-auto p-4 transition-opacity duration-base ease-out-soft",
-            isPending && "opacity-60"
-          )}
+          className="feedme-scrollbar min-h-0 flex-1 overflow-auto p-4"
         >
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,310px),1fr))] gap-3">
             {visibleReports.map((report) => (
@@ -952,8 +850,8 @@ export function ReportsList({
                 key={report.id}
                 isSelected={report.id === effectiveSelectedReportId}
                 onSelect={() => selectReport(report.id)}
+                onWarmReport={() => prefetchReportDetail(report.id)}
                 report={report}
-                workspaceSlug={workspaceSlug}
               />
             ))}
           </div>

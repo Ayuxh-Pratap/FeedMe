@@ -183,3 +183,44 @@ export function DashboardTableLoading({
     </section>
   )
 }
+
+export function DashboardTableBodySkeleton({
+  rows = 7,
+}: {
+  rows?: number
+}) {
+  return (
+    <div
+      aria-busy="true"
+      className="feedme-scrollbar min-h-0 flex-1 overflow-auto"
+    >
+      <div className="border-b border-border-hairline px-4 py-3">
+        <div className="grid grid-cols-[minmax(18rem,1fr)_8rem_12rem_16rem] gap-4">
+          <SkeletonBlock className="h-3 w-14 border-0" />
+          <SkeletonBlock className="h-3 w-16 border-0" />
+          <SkeletonBlock className="h-3 w-14 border-0" />
+          <SkeletonBlock className="h-3 w-16 border-0" />
+        </div>
+      </div>
+
+      {Array.from({ length: rows }).map((_, index) => (
+        <div
+          key={index}
+          className="grid grid-cols-[minmax(18rem,1fr)_8rem_12rem_16rem] gap-4 border-b border-border-hairline px-4 py-4"
+        >
+          <div>
+            <SkeletonBlock className="h-4 w-56 border-0" />
+            <SkeletonBlock className="mt-2 h-3 w-72 max-w-full border-0" />
+          </div>
+          <SkeletonBlock className="h-6 w-10 border-0" />
+          <SkeletonBlock className="h-4 w-36 border-0" />
+          <div className="flex items-center gap-3">
+            <SkeletonBlock className="size-7 rounded-full border-0" />
+            <SkeletonBlock className="h-4 w-24 border-0" />
+            <SkeletonBlock className="ml-auto size-7 border-0" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}

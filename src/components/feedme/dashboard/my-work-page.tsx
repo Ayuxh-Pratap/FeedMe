@@ -2,29 +2,35 @@
 
 import { usePathname, useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
+import { DashboardTableBodySkeleton } from "@/components/feedme/dashboard/dashboard-route-loading"
 import { ReportsEmptyState } from "@/components/feedme/dashboard/reports-empty-state"
 import {
   ReportCard,
   ReportTableRow,
 } from "@/components/feedme/dashboard/reports-list"
 import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
-import { ApiClientError, getJson } from "@/lib/api-client"
 import { replaceUrlSearchParams } from "@/lib/dashboard-url"
+import {
+  flattenReportPages,
+  makeInitialReportsInfiniteData,
+  usePrefetchReportDetail,
+  useReportCountsQuery,
+  useReportsInfiniteQuery,
+} from "@/lib/report-queries"
 import type {
   WorkspaceReport,
-  WorkspaceReportsListResponse,
+  WorkspaceReportCounts,
   WorkspaceReportsPageInfo,
 } from "@/lib/reports"
 import type { WorkspaceMemberRole } from "@/lib/team-members"
 import { cn } from "@/lib/utils"
+import { useDashboardUiStore } from "@/stores/dashboard-ui-store"
 
 type MyWorkPageProps = {
-  currentUserId: string
-  currentUserRole: WorkspaceMemberRole
-  pageInfo: WorkspaceReportsPageInfo
-  reports: WorkspaceReport[]
+  pageInfo?: WorkspaceReportsPageInfo
+  reports?: WorkspaceReport[]
   workspaceSlug: string
 }
 
@@ -35,6 +41,11 @@ type SearchParamsLike = {
 }
 
 const myWorkPageSize = 30
+const emptyMyWorkPageInfo: WorkspaceReportsPageInfo = {
+  hasNextPage: false,
+  limit: myWorkPageSize,
+  nextCursor: null,
+}
 
 const scopes: {
   label: string
@@ -65,65 +76,18 @@ function getDefaultScope(role: WorkspaceMemberRole): MyWorkScope {
   return role === "developer" ? "assigned" : "reported"
 }
 
-function getScope(
-  searchParams: SearchParamsLike,
-  defaultScope: MyWorkScope
-): MyWorkScope {
+function getScopeParam(searchParams: SearchParamsLike): MyWorkScope | null {
   const scope = searchParams.get("scope")
 
   if (scope === "assigned" || scope === "reported") {
     return scope
   }
 
-  return defaultScope
+  return null
 }
 
 function getViewMode(searchParams: SearchParamsLike): ReportViewMode {
   return searchParams.get("view") === "grid" ? "grid" : "table"
-}
-
-function mergeReportsById(
-  currentReports: WorkspaceReport[],
-  nextReports: WorkspaceReport[]
-) {
-  const reportsById = new Map<string, WorkspaceReport>()
-
-  for (const report of currentReports) {
-    reportsById.set(report.id, report)
-  }
-
-  for (const report of nextReports) {
-    reportsById.set(report.id, report)
-  }
-
-  return [...reportsById.values()]
-}
-
-function getMyWorkReportsUrl({
-  cursor,
-  scope,
-  searchQuery,
-  workspaceSlug,
-}: {
-  cursor?: string | null
-  scope: MyWorkScope
-  searchQuery: string
-  workspaceSlug: string
-}) {
-  const searchParams = new URLSearchParams({
-    limit: String(myWorkPageSize),
-    scope,
-  })
-
-  if (cursor) {
-    searchParams.set("cursor", cursor)
-  }
-
-  if (searchQuery) {
-    searchParams.set("q", searchQuery)
-  }
-
-  return `/api/workspaces/${encodeURIComponent(workspaceSlug)}/reports?${searchParams}`
 }
 
 function MyWorkPaginationFooter({
@@ -156,16 +120,12 @@ function MyWorkPaginationFooter({
 
 function ScopeTabs({
   activeScope,
-  hasMoreReports,
+  counts,
   onScopeChange,
-  reports,
-  currentUserId,
 }: {
   activeScope: MyWorkScope
-  hasMoreReports: boolean
+  counts?: Pick<WorkspaceReportCounts, "assignedToMe" | "reportedByMe">
   onScopeChange: (scope: MyWorkScope) => void
-  reports: WorkspaceReport[]
-  currentUserId: string
 }) {
   return (
     <div className="relative grid w-full grid-cols-2 rounded-lg border border-border-hairline bg-background p-1 sm:w-[21rem]">
@@ -178,9 +138,10 @@ function ScopeTabs({
       />
       {scopes.map((scope) => {
         const active = activeScope === scope.value
-        const count = active
-          ? `${reports.filter((report) => scope.match(report, currentUserId)).length}${hasMoreReports ? "+" : ""}`
-          : null
+        const count =
+          scope.value === "assigned"
+            ? counts?.assignedToMe
+            : counts?.reportedByMe
 
         return (
           <button
@@ -195,7 +156,7 @@ function ScopeTabs({
             )}
           >
             <span>{scope.label}</span>
-            {count !== null ? (
+            {count !== undefined ? (
               <span className="ml-1.5 text-caption text-text-muted">{count}</span>
             ) : null}
           </button>
@@ -206,34 +167,80 @@ function ScopeTabs({
 }
 
 export function MyWorkPage({
-  currentUserId,
-  currentUserRole,
-  pageInfo,
+  pageInfo = emptyMyWorkPageInfo,
   reports,
   workspaceSlug,
 }: MyWorkPageProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const defaultScope = getDefaultScope(currentUserRole)
-  const initialScope = getScope(searchParams, defaultScope)
-  const [activeScope, setActiveScope] = useState(initialScope)
   const viewMode = getViewMode(searchParams)
   const {
+    currentUserRole,
     dashboardSearchQuery,
     registerReports,
     reportRailReports,
     setReportRailSelectedReportId,
   } = useWorkspaceDashboardData()
+  const defaultScope = getDefaultScope(currentUserRole)
+  const urlScope = getScopeParam(searchParams)
+  const storedScope = useDashboardUiStore(
+    (state) => state.lastMyWorkScopeByWorkspace[workspaceSlug]
+  )
+  const setLastMyWorkScope = useDashboardUiStore(
+    (state) => state.setLastMyWorkScope
+  )
+  const initialScope = urlScope ?? storedScope ?? defaultScope
+  const activeScope = urlScope ?? storedScope ?? defaultScope
   const searchQuery = dashboardSearchQuery
-  const lastQueryKeyRef = useRef<string | null>(null)
-  const isMountedRef = useRef(true)
-  const requestSequenceRef = useRef(0)
-  const latestSearchParamsRef = useRef(searchParams)
-  const [reportRows, setReportRows] = useState(reports)
-  const [currentPageInfo, setCurrentPageInfo] = useState(pageInfo)
-  const [isPending, setIsPending] = useState(false)
-  const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [initialSearchQuery] = useState(searchQuery)
+  const filtersForQuery = useMemo(
+    () => ({
+      limit: myWorkPageSize,
+      q: searchQuery,
+      scope: activeScope,
+    }),
+    [activeScope, searchQuery]
+  )
+  const initialFilters = useMemo(
+    () => ({
+      limit: myWorkPageSize,
+      q: initialSearchQuery,
+      scope: initialScope,
+    }),
+    [initialScope, initialSearchQuery]
+  )
+  const shouldUseInitialData =
+    Boolean(reports) &&
+    filtersForQuery.q === initialFilters.q &&
+    filtersForQuery.scope === initialFilters.scope
+  const reportsQuery = useReportsInfiniteQuery({
+    filters: filtersForQuery,
+    initialData: shouldUseInitialData
+      ? makeInitialReportsInfiniteData(reports ?? [], pageInfo)
+      : undefined,
+    queryKind: "my-work",
+    workspaceSlug,
+  })
+  const countsQuery = useReportCountsQuery({
+    filters: { q: searchQuery },
+    workspaceSlug,
+  })
+  const prefetchReportDetail = usePrefetchReportDetail(workspaceSlug)
+  const currentPageInfo =
+    reportsQuery.data?.pages[reportsQuery.data.pages.length - 1]?.pageInfo ??
+    pageInfo
+  const reportRows = useMemo(
+    () => flattenReportPages(reportsQuery.data),
+    [reportsQuery.data]
+  )
+  const errorMessage =
+    reportsQuery.error instanceof Error
+      ? reportsQuery.error.message
+      : reportsQuery.isError
+        ? "Unable to load your work. Please try again."
+        : null
+  const isPending = reportsQuery.isPending
+  const isLoadingMore = reportsQuery.isFetchingNextPage
   const activeScopeConfig =
     scopes.find((scope) => scope.value === activeScope) ?? scopes[0]
   const reportUpdatesById = useMemo(
@@ -246,26 +253,23 @@ export function MyWorkPage({
       reportRows.map((report) => reportUpdatesById.get(report.id) ?? report),
     [reportRows, reportUpdatesById]
   )
+  const showInitialSkeleton = isPending && visibleReports.length === 0
   const requestedReportId = searchParams.get("report")
-  const initialSelectedReportId = visibleReports.some(
-      (report) => report.id === requestedReportId
-    )
+  const requestedSelectedReportId =
+    requestedReportId && visibleReports.some((report) => report.id === requestedReportId)
       ? requestedReportId
-      : visibleReports[0]?.id
-  const [selectedReportId, setSelectedReportId] = useState(
-    initialSelectedReportId
+      : null
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(
+    requestedSelectedReportId
   )
-  const effectiveSelectedReportId = visibleReports.some(
-    (report) => report.id === selectedReportId
-  )
-    ? selectedReportId
-    : visibleReports[0]?.id
+  const localSelectedReportId =
+    selectedReportId && visibleReports.some((report) => report.id === selectedReportId)
+      ? selectedReportId
+      : null
+  const effectiveSelectedReportId =
+    requestedSelectedReportId ?? localSelectedReportId ?? visibleReports[0]?.id ?? null
 
   const replaceSearchParams = useCallback((nextSearchParams: URLSearchParams) => {
-    if (!isMountedRef.current) {
-      return
-    }
-
     replaceUrlSearchParams(pathname, nextSearchParams)
   }, [pathname])
 
@@ -273,86 +277,10 @@ export function MyWorkPage({
     return new URLSearchParams(searchParams.toString())
   }, [searchParams])
 
-  useEffect(() => {
-    latestSearchParamsRef.current = searchParams
-  }, [searchParams])
-
-  const loadReportsPage = useCallback(
-    async ({ cursor = null }: { cursor?: string | null } = {}) => {
-      const requestId = requestSequenceRef.current + 1
-      const shouldAppend = Boolean(cursor)
-
-      requestSequenceRef.current = requestId
-      setErrorMessage(null)
-
-      if (shouldAppend) {
-        setIsLoadingMore(true)
-      } else {
-        setIsPending(true)
-      }
-
-      try {
-        const result = await getJson<WorkspaceReportsListResponse>(
-          getMyWorkReportsUrl({
-            cursor,
-            scope: activeScope,
-            searchQuery,
-            workspaceSlug,
-          })
-        )
-
-        if (!isMountedRef.current || requestSequenceRef.current !== requestId) {
-          return
-        }
-
-        setCurrentPageInfo(result.pageInfo)
-        setReportRows((currentReports) =>
-          shouldAppend
-            ? mergeReportsById(currentReports, result.reports)
-            : result.reports
-        )
-
-        if (!shouldAppend) {
-          const requestedId = latestSearchParamsRef.current.get("report")
-          const nextSelectedReportId = result.reports.some(
-            (report) => report.id === requestedId
-          )
-            ? requestedId
-            : result.reports[0]?.id ?? null
-
-          setSelectedReportId(nextSelectedReportId)
-          setReportRailSelectedReportId(nextSelectedReportId)
-        }
-      } catch (error) {
-        if (isMountedRef.current && requestSequenceRef.current === requestId) {
-          setErrorMessage(
-            error instanceof ApiClientError
-              ? error.message
-              : "Unable to load your work. Please try again."
-          )
-        }
-      } finally {
-        if (isMountedRef.current && requestSequenceRef.current === requestId) {
-          if (shouldAppend) {
-            setIsLoadingMore(false)
-          } else {
-            setIsPending(false)
-          }
-        }
-      }
-    },
-    [
-      activeScope,
-      searchQuery,
-      setReportRailSelectedReportId,
-      workspaceSlug,
-    ]
-  )
-
   function changeScope(scope: MyWorkScope) {
     const nextSearchParams = getCurrentSearchParams()
 
-    setActiveScope(scope)
+    setLastMyWorkScope(workspaceSlug, scope)
     setSelectedReportId(null)
     setReportRailSelectedReportId(null)
 
@@ -376,40 +304,12 @@ export function MyWorkPage({
   }
 
   function loadMoreReports() {
-    if (!currentPageInfo.nextCursor || isLoadingMore) {
+    if (!reportsQuery.hasNextPage || isLoadingMore) {
       return
     }
 
-    void loadReportsPage({ cursor: currentPageInfo.nextCursor })
+    void reportsQuery.fetchNextPage()
   }
-
-  useEffect(() => {
-    isMountedRef.current = true
-
-    return () => {
-      isMountedRef.current = false
-      requestSequenceRef.current += 1
-    }
-  }, [])
-
-  useEffect(() => {
-    const queryKey = `${activeScope} ${searchQuery}`
-
-    // First render records the query the server already rendered for (also
-    // covers Strict Mode's dev re-mount, which reuses this ref) so plain
-    // navigation never refetches. Only a genuine scope/search change reloads.
-    if (lastQueryKeyRef.current === null) {
-      lastQueryKeyRef.current = queryKey
-      return
-    }
-
-    if (queryKey === lastQueryKeyRef.current) {
-      return
-    }
-
-    lastQueryKeyRef.current = queryKey
-    void loadReportsPage()
-  }, [activeScope, loadReportsPage, searchQuery])
 
   useEffect(() => {
     const nextSelectedReportId = effectiveSelectedReportId ?? null
@@ -419,11 +319,9 @@ export function MyWorkPage({
       selectedReportId: nextSelectedReportId,
       visibleReportIds: visibleReports.map((report) => report.id),
     })
-    setReportRailSelectedReportId(nextSelectedReportId)
   }, [
     effectiveSelectedReportId,
     registerReports,
-    setReportRailSelectedReportId,
     visibleReports,
   ])
 
@@ -440,19 +338,11 @@ export function MyWorkPage({
 
           <ScopeTabs
             activeScope={activeScope}
-            currentUserId={currentUserId}
-            hasMoreReports={currentPageInfo.hasNextPage}
+            counts={countsQuery.data?.counts}
             onScopeChange={changeScope}
-            reports={visibleReports}
           />
         </div>
       </header>
-
-      {isPending ? (
-        <div className="h-px shrink-0 overflow-hidden bg-fill-translucent">
-          <div className="h-full w-full animate-pulse bg-primary-soft" />
-        </div>
-      ) : null}
 
       {errorMessage ? (
         <div className="border-b border-border-hairline px-4 py-2 text-caption text-error">
@@ -460,7 +350,9 @@ export function MyWorkPage({
         </div>
       ) : null}
 
-      {visibleReports.length === 0 ? (
+      {showInitialSkeleton ? <DashboardTableBodySkeleton /> : null}
+
+      {!showInitialSkeleton && visibleReports.length === 0 ? (
         <div className="min-h-0 flex-1">
           <ReportsEmptyState
             description={
@@ -484,12 +376,9 @@ export function MyWorkPage({
         </div>
       ) : null}
 
-      {visibleReports.length > 0 && viewMode === "table" ? (
+      {!showInitialSkeleton && visibleReports.length > 0 && viewMode === "table" ? (
         <div
-          className={cn(
-            "feedme-scrollbar min-h-0 flex-1 overflow-auto transition-opacity duration-base ease-out-soft",
-            isPending && "opacity-60"
-          )}
+          className="feedme-scrollbar min-h-0 flex-1 overflow-auto"
         >
           <table className="w-full min-w-[900px] border-collapse text-left">
             <caption className="sr-only">My work reports</caption>
@@ -515,8 +404,8 @@ export function MyWorkPage({
                   key={report.id}
                   isSelected={report.id === effectiveSelectedReportId}
                   onSelect={() => selectReport(report.id)}
+                  onWarmReport={() => prefetchReportDetail(report.id)}
                   report={report}
-                  workspaceSlug={workspaceSlug}
                 />
               ))}
             </tbody>
@@ -529,12 +418,9 @@ export function MyWorkPage({
         </div>
       ) : null}
 
-      {visibleReports.length > 0 && viewMode === "grid" ? (
+      {!showInitialSkeleton && visibleReports.length > 0 && viewMode === "grid" ? (
         <div
-          className={cn(
-            "feedme-scrollbar min-h-0 flex-1 overflow-auto p-4 transition-opacity duration-base ease-out-soft",
-            isPending && "opacity-60"
-          )}
+          className="feedme-scrollbar min-h-0 flex-1 overflow-auto p-4"
         >
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,310px),1fr))] gap-3">
             {visibleReports.map((report) => (
@@ -542,8 +428,8 @@ export function MyWorkPage({
                 key={report.id}
                 isSelected={report.id === effectiveSelectedReportId}
                 onSelect={() => selectReport(report.id)}
+                onWarmReport={() => prefetchReportDetail(report.id)}
                 report={report}
-                workspaceSlug={workspaceSlug}
               />
             ))}
           </div>

@@ -84,6 +84,7 @@ export function matchesWorkspaceMemberSearch(
     member.status,
     member.title,
     member.assignedCount,
+    member.completedCount,
     member.reportsCount,
     member.joinedAtLabel,
   ])
