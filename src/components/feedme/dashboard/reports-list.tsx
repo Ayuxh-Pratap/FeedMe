@@ -560,34 +560,40 @@ export function ReportTableRow({
         isSelected && "bg-fill-subtle"
       )}
     >
-      <td className="w-[46%] px-4 py-4 align-top">
-        <div className="min-w-0">
-          <p className="truncate text-heading-5 text-foreground">
+      <td className="max-w-0 px-4 py-4 align-top">
+        <div className="min-w-0 max-w-full">
+          <p
+            className="max-w-full truncate text-heading-5 text-foreground"
+            title={report.title}
+          >
             {report.title}
           </p>
-          <p className="mt-1 line-clamp-1 text-body-3 text-text-body">
+          <p
+            className="mt-1 max-w-full truncate text-body-3 text-text-body"
+            title={report.summary}
+          >
             {report.summary}
           </p>
         </div>
       </td>
-      <td className="w-28 px-4 py-4 align-top">
+      <td className="px-4 py-4 align-top">
         <ReportPriorityCode title={`${report.severity} priority`}>
           {reportSeverityPriorityLabels[report.severity]}
         </ReportPriorityCode>
       </td>
-      <td className="px-4 py-4 align-top">
+      <td className="max-w-0 px-4 py-4 align-top">
         <div className="flex min-w-0 items-center gap-2 text-body-3 text-text-secondary">
           <Globe2 className="size-3.5 shrink-0 text-text-muted" />
           <span className="truncate">{report.domain}</span>
         </div>
       </td>
-      <td className="px-4 py-4 align-top">
-        <div className="flex items-center justify-between gap-3 text-body-3 text-text-body">
-          <span className="inline-flex items-center gap-2">
+      <td className="max-w-0 px-4 py-4 align-top">
+        <div className="flex min-w-0 items-center justify-between gap-3 text-body-3 text-text-body">
+          <span className="inline-flex min-w-0 items-center gap-2">
             <ReportAssigneeAvatar report={report} />
-            {report.assignee?.name ?? "Unassigned"}
+            <span className="truncate">{report.assignee?.name ?? "Unassigned"}</span>
           </span>
-          <span className="text-text-muted">{report.capturedAgo}</span>
+          <span className="shrink-0 text-text-muted">{report.capturedAgo}</span>
           <a
             href={report.url}
             target="_blank"
@@ -595,7 +601,7 @@ export function ReportTableRow({
             onClick={(event) => {
               event.stopPropagation()
             }}
-            className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+            className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
             aria-label={`Open captured page for ${report.title}`}
           >
             <ArrowUpRight className="size-3.5" />
@@ -603,6 +609,17 @@ export function ReportTableRow({
         </div>
       </td>
     </tr>
+  )
+}
+
+export function ReportTableColumns() {
+  return (
+    <colgroup>
+      <col className="w-[46%]" />
+      <col className="w-28" />
+      <col className="w-[22%]" />
+      <col className="w-[24%]" />
+    </colgroup>
   )
 }
 
@@ -802,8 +819,9 @@ export function ReportsList({
         <div
           className="feedme-scrollbar min-h-0 flex-1 overflow-auto"
         >
-          <table className="w-full min-w-[900px] border-collapse text-left">
+          <table className="w-full min-w-[900px] table-fixed border-collapse text-left">
             <caption className="sr-only">Feedback reports</caption>
+            <ReportTableColumns />
             <thead className="sticky top-0 z-10 border-b border-border-hairline bg-background">
               <tr>
                 <th scope="col" className="px-4 py-3 text-caption font-medium text-text-muted">

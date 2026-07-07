@@ -8,6 +8,7 @@ import { DashboardTableBodySkeleton } from "@/components/feedme/dashboard/dashbo
 import { ReportsEmptyState } from "@/components/feedme/dashboard/reports-empty-state"
 import {
   ReportCard,
+  ReportTableColumns,
   ReportTableRow,
 } from "@/components/feedme/dashboard/reports-list"
 import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
@@ -380,8 +381,9 @@ export function MyWorkPage({
         <div
           className="feedme-scrollbar min-h-0 flex-1 overflow-auto"
         >
-          <table className="w-full min-w-[900px] border-collapse text-left">
+          <table className="w-full min-w-[900px] table-fixed border-collapse text-left">
             <caption className="sr-only">My work reports</caption>
+            <ReportTableColumns />
             <thead className="sticky top-0 z-10 border-b border-border-hairline bg-background">
               <tr>
                 <th scope="col" className="px-4 py-3 text-caption font-medium text-text-muted">
