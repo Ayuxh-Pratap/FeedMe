@@ -7,6 +7,7 @@ Read this with:
 - `AUTH_WORKSPACE_FLOW.md` for signup, login, onboarding, and first workspace creation.
 - `integration.md` for workspace, dashboard, extension, domain, invite, and report behavior.
 - `PROJECT_VISION.md` for the product shape we are protecting.
+- `FRONTEND_DATA_ARCHITECTURE.md` for TanStack Query, Zustand, caching, optimistic updates, and production dashboard data rules.
 
 ## Readiness
 
@@ -569,7 +570,7 @@ allow member listing through workspace:read
 scope every member query by workspaceId
 exclude removed memberships from the live team list
 return canonical DB role and status values
-return UI-ready name, displayName, initials, joinedAtLabel, assignedCount, and reportsCount
+return UI-ready name, displayName, initials, joinedAtLabel, assignedCount, completedCount, and reportsCount
 ```
 
 Dashboard wiring:
@@ -578,7 +579,8 @@ Dashboard wiring:
 The Team page now reads real workspace memberships.
 The Team right rail fetches the same member list from the API.
 The workspace shell member count uses the real membership count.
-Assigned and submitted report counts are already wired to the reports table and will populate once the report slice lands.
+Assigned, completed, and submitted report counts are wired to the reports table.
+Assigned means active work; completed means resolved work owned by that teammate.
 ```
 
 ### Slice 5: Reports Read Model
@@ -972,7 +974,10 @@ resolve workspaceSlug through the signed-in user's active membership
 scope all mutations by workspaceId and reportId
 assignment requires report:assign and only accepts active developer members
 assigning a developer moves the report to assigned
-unassigning assigned/in_progress/ready_for_review reports moves them back to reviewing
+assignment may be corrected while status is assigned
+assignment is locked once work reaches in_progress, ready_for_review, resolved, or archived
+resolved reports keep assigneeUserId as the completion owner for team metrics
+completed reports do not count as currently assigned work
 developer status updates require the report to be assigned to that developer
 developers can only move assigned work to in_progress or ready_for_review
 owner/admin can resolve reports directly
@@ -985,12 +990,13 @@ Dashboard wiring:
 
 ```txt
 My Work now reads real reports instead of mock report IDs.
-Assigned to me filters by assigneeUserId matching the current user.
+Assigned to me filters by assigneeUserId matching the current user and active assignment statuses only.
 Reported by me filters by reporterUserId matching the current user.
 Developers default to Assigned to me; other roles default to Reported by me.
-The Reports/My Work right rail fetches workspace members for owner/admin users and shows an Assignment control on the selected report.
-The right rail assignment control lists active developers only, saves through PATCH /assignment, updates the selected report locally, and refreshes the route so tables and My Work reflect the new owner.
-For developers, the same right rail shows Start work and Ready for review actions when the selected report is assigned to the signed-in developer. These actions call PATCH /status, update the selected report locally, and refresh the route.
+The Reports/My Work right rail reads workspace members from the shared members query and shows an Assignment control on the selected report.
+The right rail assignment control lists active developers only, saves through PATCH /assignment, and reconciles caches optimistically.
+For developers, the same right rail shows Start work and Ready for review actions when the selected report is assigned to the signed-in developer. These actions call PATCH /status and reconcile caches optimistically.
+For admins/owners, the same right rail can resolve reports directly without opening the full detail page.
 Report detail shows a workflow panel for admins/owners and assigned developers.
 ```
 
@@ -1201,6 +1207,94 @@ Later:
 ```txt
 OAuth connect (one-click, no token copy), screenshots as MCP resources, admin
 tools (assign / resolve), and a report counts contract for the agent.
+```
+
+### Slice 11: Production Dashboard Data Layer
+
+Status:
+
+```txt
+planned
+```
+
+Goal:
+
+```txt
+Make Reports, My Work, Team, Domains, and right-rail interactions feel instant
+through a real frontend data architecture instead of page-local fetch state.
+```
+
+Locked decisions:
+
+```txt
+server state: TanStack Query
+durable dashboard UI state: Zustand
+shareable navigation/filter/selection state: URL search params
+temporary component state: React local state
+backend entities must never live in Zustand
+report workflow mutations must not call router.refresh()
+```
+
+Approved dependencies:
+
+```txt
+@tanstack/react-query
+zustand
+```
+
+Core query families:
+
+```txt
+workspace
+workspace members
+workspace domains
+reports list
+report detail
+report counts
+my work
+invites
+MCP tokens
+```
+
+Rules:
+
+```txt
+list/detail/counts are separate contracts
+list pages render cached summaries immediately on return navigation
+right rail renders summary first, then hydrates selected report detail
+assignment/status mutations patch every affected cache optimistically
+failed mutations roll back to the previous cached report
+polling or realtime must surface new reports without hard reload
+```
+
+Backend support needed:
+
+```txt
+GET /api/workspaces/:workspaceSlug/reports/counts
+stable opaque cursors, eventually keyset-based
+report updatedAt/version for cache reconciliation
+mutation responses with updated report or mutation delta
+indexes for workspace-scoped status, assignee, reporter, capturedAt, and search
+```
+
+Implemented counts contract:
+
+```txt
+GET /api/workspaces/:workspaceSlug/reports/counts?q=&scope=
+
+returns:
+all
+open
+inProgress
+resolved
+assignedToMe
+reportedByMe
+```
+
+Reference:
+
+```txt
+See FRONTEND_DATA_ARCHITECTURE.md for the full production data architecture.
 ```
 
 ## API Contract For The First Flow

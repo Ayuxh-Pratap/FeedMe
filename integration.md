@@ -260,6 +260,20 @@ Developer behavior:
 - Admins/owners assign reports to active developers and can resolve directly.
 - My Work uses `assigneeUserId` for Assigned to me and `reporterUserId` for Reported by me.
 
+Assignment ownership rules:
+
+- `assigned` means routed but not started; admins/owners may still correct the assignee here.
+- `in_progress` and `ready_for_review` mean work ownership has started; reassignment is locked by default.
+- `resolved` means completed; assignment is frozen and the assignee remains the completion owner for team metrics.
+- Completed reports should not count as currently assigned work.
+- If reassignment after work starts is needed later, add an explicit admin override action with a reason/status event instead of silently changing the assignee.
+
+Team member metrics:
+
+- `assignedCount` means active work currently assigned to the member (`assigned`, `in_progress`, `ready_for_review`).
+- `completedCount` means resolved reports completed by that member.
+- `reportsCount` means feedback submitted by that member.
+
 Reporter-facing labels can stay simpler:
 
 ```txt
@@ -667,11 +681,15 @@ Reports index:
 Performance rules:
 
 - list pages fetch report summaries, not full screenshot evidence for every row
+- TanStack Query owns report, member, domain, invite, token, count, and detail caches
+- Zustand owns durable dashboard UI preferences only, not backend entities
 - the workspace shell does not refetch the reports list for the right rail
-- Reports and My Work publish visible report IDs and selected report ID to the shared dashboard data store
+- Reports and My Work read visible report IDs and selected report context from the report list cache plus URL state
 - the right rail renders selected summary context immediately
 - full screenshot/detail evidence is fetched only for the selected report and cached
 - row selection and filters update client state first, then sync the URL with native history
+- assignment/status mutations update affected caches optimistically and never call `router.refresh()`
+- new reports should appear through polling or realtime awareness, not hard reload
 
 Report detail:
 

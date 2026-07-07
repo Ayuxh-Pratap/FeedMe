@@ -1,6 +1,6 @@
 # Dashboard Foundation
 
-This file captures the dashboard direction for FeedMe. It should be read with `design.md` as the visual source of truth and `PROJECT_VISION.md` as the product source of truth.
+This file captures the dashboard direction for FeedMe. It should be read with `design.md` as the visual source of truth, `PROJECT_VISION.md` as the product source of truth, and `FRONTEND_DATA_ARCHITECTURE.md` as the production data-layer source of truth.
 
 ## Routing
 
@@ -201,9 +201,20 @@ If search or filters produce no visible rows, the main canvas owns the empty sta
 
 Dashboard interactions must feel local-first. Report row selection, report status filters, My Work scope tabs, Team role filters, and teammate/report selection should update visible UI state immediately and sync the URL with the native History API. Do not use App Router navigation for these micro-interactions because it can refetch server components and make clicks feel dead.
 
-Reports and My Work pages feed their already-loaded report summaries into the workspace shell through the shared dashboard data store. The shell must not refetch the full reports list just to populate the right rail. The right rail uses the visible report IDs and selected report ID from that store, renders summary context immediately, then fetches the selected report detail by ID and caches it for screenshot evidence.
+Production dashboard data rules:
 
-Team pages follow the same rule: the page feeds members into the shell store, and the Team right rail reads that state instead of making a second members request.
+```txt
+TanStack Query owns backend data and cache
+Zustand owns durable dashboard UI preferences only
+URL search params own shareable route state
+React local state owns temporary component details
+```
+
+Reports and My Work pages should read report summaries from the TanStack Query list cache. The workspace shell and right rail must not refetch the full reports list just to populate context. The right rail uses the selected report id from URL/dashboard state, renders cached summary context immediately, then fetches or reads the selected report detail query for screenshot evidence.
+
+Team pages follow the same rule: members come from the team members query cache, and the Team right rail reads cached member state instead of making a second members request.
+
+Zustand may store preferences such as right rail open state, sidebar collapsed state, density, and global dialog visibility. It must not store reports, report details, members, domains, session user, counts, invites, or MCP tokens.
 
 On mobile/tablet, search becomes an icon-triggered sheet and the primary capture action remains in the topbar. The sidebar is replaced by a left sheet, and right-rail context is replaced by a right sheet.
 

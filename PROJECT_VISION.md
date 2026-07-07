@@ -123,6 +123,7 @@ That model lets the product scale from one internal project to many companies.
 - Extension must always know the active workspace.
 - Server must validate membership and domain, not just trust the extension.
 - Dashboard must never show cross-workspace data.
+- Dashboard server state must be cached, invalidated, and updated optimistically through the production data layer, not duplicated in ad hoc local stores.
 - Domain activation should eventually require verification.
 
 ## Future Enterprise Shape
