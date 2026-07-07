@@ -58,6 +58,7 @@ import {
 } from "@/lib/reports"
 import {
   getWorkspaceMemberRoleLabel,
+  isAssignableReportRole,
   type WorkspaceTeamMember,
 } from "@/lib/team-members"
 import { useWorkspaceMembersQuery } from "@/lib/team-queries"
@@ -1943,9 +1944,12 @@ function canManageReportAssignments(workspace: MockWorkspace) {
   return workspace.currentUserRole === "owner" || workspace.currentUserRole === "admin"
 }
 
-function isAssignedDeveloperReport(workspace: MockWorkspace, report: WorkspaceReport) {
+function isAssignedImplementationReport(
+  workspace: MockWorkspace,
+  report: WorkspaceReport
+) {
   return (
-    workspace.currentUserRole === "developer" &&
+    isAssignableReportRole(workspace.currentUserRole) &&
     Boolean(workspace.currentUserId) &&
     report.assigneeUserId === workspace.currentUserId
   )
@@ -1976,16 +1980,16 @@ function ReportRailAssignmentPanel({
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const assignReportMutation = useAssignReportMutation(workspace.slug)
-  const developerMembers = members.filter(
-    (member) => member.role === "developer" && member.status === "active"
+  const assignableMembers = members.filter(
+    (member) => isAssignableReportRole(member.role) && member.status === "active"
   )
-  const selectedDeveloper = developerMembers.find(
+  const selectedAssignee = assignableMembers.find(
     (member) => member.userId === selectedAssigneeUserId
   )
   const selectedAssigneeLabel =
     selectedAssigneeUserId === unassignedSelectValue
       ? "Unassigned"
-      : selectedDeveloper?.name ?? report.assignee?.name ?? "Unknown developer"
+      : selectedAssignee?.name ?? report.assignee?.name ?? "Unknown teammate"
   const assignmentLocked = isWorkspaceReportAssignmentLocked(report.status)
   const isAssignmentControlDisabled =
     assignmentLocked ||
@@ -2004,7 +2008,7 @@ function ReportRailAssignmentPanel({
         ? null
         : selectedAssigneeUserId
     const optimisticAssignee = nextAssigneeUserId
-      ? developerMembers.find((member) => member.userId === nextAssigneeUserId)
+      ? assignableMembers.find((member) => member.userId === nextAssigneeUserId)
       : undefined
     const nextAssignee = optimisticAssignee
       ? {
@@ -2036,7 +2040,7 @@ function ReportRailAssignmentPanel({
       </div>
       {!assignmentLocked ? (
         <p className="mt-1 text-caption text-text-muted">
-          Route this report to an active developer.
+          Route this report to an active developer or designer.
         </p>
       ) : null}
 
@@ -2071,7 +2075,7 @@ function ReportRailAssignmentPanel({
               {assignmentLocked
                 ? selectedAssigneeLabel
                 : membersIsLoading
-                  ? "Loading developers..."
+                  ? "Loading teammates..."
                   : selectedAssigneeLabel}
             </span>
             {assignmentLocked ? (
@@ -2098,7 +2102,7 @@ function ReportRailAssignmentPanel({
                   label: "Unassigned",
                   value: unassignedSelectValue,
                 },
-                ...developerMembers.map((member) => ({
+                ...assignableMembers.map((member) => ({
                   email: member.email,
                   label: member.name,
                   value: member.userId,
@@ -2171,9 +2175,9 @@ function ReportRailAssignmentPanel({
       {!assignmentLocked &&
       !membersIsLoading &&
       !membersErrorMessage &&
-      developerMembers.length === 0 ? (
+      assignableMembers.length === 0 ? (
         <p className="mt-2 text-caption text-text-muted">
-          Invite an active developer before assigning reports.
+          Invite an active developer or designer before assigning reports.
         </p>
       ) : null}
       {message ? <p className="mt-2 text-caption text-success">{message}</p> : null}
@@ -2198,7 +2202,7 @@ function ReportRailDeveloperStatusPanel({
   const canMarkReady =
     report.status === "assigned" || report.status === "in_progress"
 
-  if (!isAssignedDeveloperReport(workspace, report)) {
+  if (!isAssignedImplementationReport(workspace, report)) {
     return null
   }
 

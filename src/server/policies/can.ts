@@ -32,6 +32,8 @@ const rolePermissions: Record<WorkspaceRole, ReadonlySet<PolicyAction>> = {
     "report:create",
     "report:read",
     "report:comment",
+    "report:update_status",
+    "report:mark_ready_for_review",
   ]),
   reporter: new Set([
     "workspace:read",

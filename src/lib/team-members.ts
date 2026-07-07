@@ -8,6 +8,8 @@ export type WorkspaceMemberRole =
 
 export type WorkspaceMemberStatus = "active" | "pending" | "disabled" | "removed"
 
+export const assignableReportRoles = ["developer", "designer"] as const
+
 export type WorkspaceTeamMember = {
   id: string
   userId: string
@@ -39,6 +41,12 @@ const roleLabels: Record<WorkspaceMemberRole, string> = {
 
 export function getWorkspaceMemberRoleLabel(role: WorkspaceMemberRole) {
   return roleLabels[role]
+}
+
+export function isAssignableReportRole(role: WorkspaceMemberRole) {
+  return assignableReportRoles.includes(
+    role as (typeof assignableReportRoles)[number]
+  )
 }
 
 export function getNameFromEmail(email: string) {

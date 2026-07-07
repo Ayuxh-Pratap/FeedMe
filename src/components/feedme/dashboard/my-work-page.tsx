@@ -34,7 +34,7 @@ import type {
   WorkspaceReportCounts,
   WorkspaceReportsPageInfo,
 } from "@/lib/reports"
-import type { WorkspaceMemberRole } from "@/lib/team-members"
+import { isAssignableReportRole, type WorkspaceMemberRole } from "@/lib/team-members"
 import { cn } from "@/lib/utils"
 import { useDashboardUiStore } from "@/stores/dashboard-ui-store"
 
@@ -83,7 +83,7 @@ const scopes: {
 ]
 
 function getDefaultScope(role: WorkspaceMemberRole): MyWorkScope {
-  return role === "developer" ? "assigned" : "reported"
+  return isAssignableReportRole(role) ? "assigned" : "reported"
 }
 
 function getScopeParam(searchParams: SearchParamsLike): MyWorkScope | null {

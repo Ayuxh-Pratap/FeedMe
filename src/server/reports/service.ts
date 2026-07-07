@@ -38,7 +38,12 @@ import {
   type WorkspaceReportStatus,
   type WorkspaceReportsPageInfo,
 } from "@/lib/reports"
-import { getInitialsFromName, getNameFromEmail } from "@/lib/team-members"
+import {
+  assignableReportRoles,
+  getInitialsFromName,
+  getNameFromEmail,
+  isAssignableReportRole,
+} from "@/lib/team-members"
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/http/errors"
 import { assertCanWorkspaceRole } from "@/server/policies/can"
 import { normalizeDomainHost } from "@/server/workspaces/domains"
@@ -89,7 +94,7 @@ type ReportAssetRow = {
   height: number | null
 }
 
-const developerMutableStatuses = new Set<WorkspaceReportStatus>([
+const assigneeMutableStatuses = new Set<WorkspaceReportStatus>([
   "in_progress",
   "ready_for_review",
 ])
@@ -658,7 +663,7 @@ async function getMutableReportRow(workspaceId: string, reportId: string) {
   return row
 }
 
-async function assertAssignableDeveloper(workspaceId: string, userId: string) {
+async function assertAssignableReportMember(workspaceId: string, userId: string) {
   const [member] = await db
     .select({ id: workspaceMemberships.id })
     .from(workspaceMemberships)
@@ -666,16 +671,21 @@ async function assertAssignableDeveloper(workspaceId: string, userId: string) {
       and(
         eq(workspaceMemberships.workspaceId, workspaceId),
         eq(workspaceMemberships.userId, userId),
-        eq(workspaceMemberships.role, "developer"),
+        inArray(workspaceMemberships.role, [...assignableReportRoles]),
         eq(workspaceMemberships.status, "active")
       )
     )
     .limit(1)
 
   if (!member) {
-    throw new ValidationError("Reports can only be assigned to active developers.", {
-      assigneeUserId: ["Choose an active developer in this workspace."],
-    })
+    throw new ValidationError(
+      "Reports can only be assigned to active developers or designers.",
+      {
+        assigneeUserId: [
+          "Choose an active developer or designer in this workspace.",
+        ],
+      }
+    )
   }
 }
 
@@ -907,7 +917,7 @@ export async function assignWorkspaceReport(
   }
 
   if (nextAssigneeUserId) {
-    await assertAssignableDeveloper(workspace.id, nextAssigneeUserId)
+    await assertAssignableReportMember(workspace.id, nextAssigneeUserId)
   }
 
   const nextStatus = getAssignmentStatus(
@@ -932,9 +942,7 @@ export async function assignWorkspaceReport(
 
   const note =
     input.note ??
-    (nextAssigneeUserId
-      ? "Report assigned to a developer."
-      : "Report unassigned.")
+    (nextAssigneeUserId ? "Report assigned." : "Report unassigned.")
 
   await db.batch([
     db
@@ -969,23 +977,28 @@ export async function updateWorkspaceReportStatus(
   const isReportAdmin = canAdministerReports(workspace.role)
 
   if (!isReportAdmin) {
-    if (workspace.role !== "developer") {
+    if (!isAssignableReportRole(workspace.role)) {
       throw new ForbiddenError()
     }
 
     if (row.assigneeUserId !== userId) {
-      throw new ForbiddenError("Only the assigned developer can update this report.")
+      throw new ForbiddenError("Only the assigned teammate can update this report.")
     }
 
-    if (!developerMutableStatuses.has(input.status)) {
-      throw new ForbiddenError("Developers can only start work or mark it ready.")
+    if (!assigneeMutableStatuses.has(input.status)) {
+      throw new ForbiddenError(
+        "Assigned teammates can only start work or mark it ready."
+      )
     }
   }
 
   if (statusRequiresAssignee.has(input.status) && !row.assigneeUserId) {
-    throw new ValidationError("Assign a developer before moving this report forward.", {
-      status: ["A developer assignee is required for this status."],
-    })
+    throw new ValidationError(
+      "Assign a developer or designer before moving this report forward.",
+      {
+        status: ["A developer or designer assignee is required for this status."],
+      }
+    )
   }
 
   if (row.status === input.status && !input.note) {

@@ -43,7 +43,11 @@ import {
   type WorkspaceReport,
   type WorkspaceReportStatus,
 } from "@/lib/reports"
-import type { WorkspaceMemberRole, WorkspaceTeamMember } from "@/lib/team-members"
+import {
+  isAssignableReportRole,
+  type WorkspaceMemberRole,
+  type WorkspaceTeamMember,
+} from "@/lib/team-members"
 import { ApiClientError } from "@/lib/api-client"
 import {
   mergeReportCacheEntry,
@@ -366,32 +370,32 @@ function ReportWorkflowPanel({
   const assignReportMutation = useAssignReportMutation(workspaceSlug)
   const updateStatusMutation = useUpdateReportStatusMutation(workspaceSlug)
 
-  const developerMembers = members.filter(
-    (member) => member.role === "developer" && member.status === "active"
+  const assignableMembers = members.filter(
+    (member) => isAssignableReportRole(member.role) && member.status === "active"
   )
-  const selectedDeveloper = developerMembers.find(
+  const selectedAssignee = assignableMembers.find(
     (member) => member.userId === selectedAssigneeUserId
   )
   const canManageReport =
     currentUserRole === "owner" || currentUserRole === "admin"
-  const isAssignedDeveloper =
-    currentUserRole === "developer" && report.assigneeUserId === currentUserId
+  const isAssignedImplementationMember =
+    isAssignableReportRole(currentUserRole) && report.assigneeUserId === currentUserId
   const selectedAssigneeLabel =
     selectedAssigneeUserId === unassignedSelectValue
       ? "Unassigned"
-      : selectedDeveloper?.name ?? report.assignee?.name ?? "Unknown developer"
+      : selectedAssignee?.name ?? report.assignee?.name ?? "Unknown teammate"
   const assignmentLocked = isWorkspaceReportAssignmentLocked(report.status)
   const hasAssignmentChange =
     selectedAssigneeUserId !== (report.assigneeUserId ?? unassignedSelectValue)
-  const canStartWork = isAssignedDeveloper && report.status === "assigned"
+  const canStartWork = isAssignedImplementationMember && report.status === "assigned"
   const canMarkReady =
-    isAssignedDeveloper &&
+    isAssignedImplementationMember &&
     (report.status === "assigned" || report.status === "in_progress")
   const canResolve =
     canManageReport &&
     report.status !== "resolved" &&
     report.status !== "archived"
-  const shouldShowPanel = canManageReport || isAssignedDeveloper
+  const shouldShowPanel = canManageReport || isAssignedImplementationMember
 
   if (!shouldShowPanel) {
     return null
@@ -404,11 +408,11 @@ function ReportWorkflowPanel({
       selectedAssigneeUserId === unassignedSelectValue
         ? null
         : selectedAssigneeUserId
-    const nextAssignee = selectedDeveloper
+    const nextAssignee = selectedAssignee
       ? {
-          avatarUrl: selectedDeveloper.avatarUrl,
-          initials: selectedDeveloper.initials,
-          name: selectedDeveloper.name,
+          avatarUrl: selectedAssignee.avatarUrl,
+          initials: selectedAssignee.initials,
+          name: selectedAssignee.name,
         }
       : undefined
 
@@ -455,7 +459,7 @@ function ReportWorkflowPanel({
           </div>
           {!assignmentLocked ? (
             <p className="mt-1 text-body-3 text-text-body">
-              Assign this report to a developer and move it through review.
+              Assign this report to a developer or designer and move it through review.
             </p>
           ) : null}
         </div>
@@ -521,7 +525,7 @@ function ReportWorkflowPanel({
                       label: "Unassigned",
                       value: unassignedSelectValue,
                     },
-                    ...developerMembers.map((member) => ({
+                    ...assignableMembers.map((member) => ({
                       email: member.email,
                       label: member.name,
                       value: member.userId,
@@ -597,13 +601,13 @@ function ReportWorkflowPanel({
           </div>
         ) : null}
 
-        {!assignmentLocked && developerMembers.length === 0 && canManageReport ? (
+        {!assignmentLocked && assignableMembers.length === 0 && canManageReport ? (
           <p className="mt-2 text-caption text-text-muted">
-            Invite an active developer before assigning work.
+            Invite an active developer or designer before assigning work.
           </p>
         ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
-          {isAssignedDeveloper ? (
+          {isAssignedImplementationMember ? (
             <>
               <button
                 type="button"

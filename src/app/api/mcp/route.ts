@@ -21,7 +21,7 @@ import type { WorkspaceReport } from "@/lib/reports"
 export const runtime = "nodejs"
 export const maxDuration = 60
 
-// The MCP handler exposes FeedMe's report workflow to a developer's coding agent.
+// The MCP handler exposes FeedMe's assigned report workflow to a coding agent.
 // Auth is a workspace-scoped personal access token (Bearer). Every tool resolves
 // its context from the token and reuses the existing report services, so tenant
 // scoping and role checks are enforced exactly like the REST API.
@@ -109,7 +109,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Get report detail",
         description:
-          "Get full developer-handoff detail for a FeedMe report: the feedback, the exact selected element and CSS selector, page/browser context, the developer prompt, and the captured screenshots as images.",
+          "Get full implementation handoff detail for a FeedMe report: the feedback, the exact selected element and CSS selector, page/browser context, the developer prompt, and the captured screenshots as images.",
         inputSchema: {
           reportId: z.string().uuid().describe("The report id from list_my_reports."),
         },
@@ -156,7 +156,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Start work on a report",
         description:
-          "Move a report that is assigned to you from 'assigned' to 'in_progress'. Only the assigned developer can do this.",
+          "Move a report that is assigned to you from 'assigned' to 'in_progress'. Only the assigned developer or designer can do this.",
         inputSchema: {
           reportId: z.string().uuid().describe("The report id to start working on."),
         },
@@ -178,7 +178,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Mark a report ready for review",
         description:
-          "Mark a report that is assigned to you as 'ready_for_review' once you have made the fix. Only the assigned developer can do this.",
+          "Mark a report that is assigned to you as 'ready_for_review' once you have made the fix. Only the assigned developer or designer can do this.",
         inputSchema: {
           reportId: z.string().uuid().describe("The report id you have finished."),
           note: z
