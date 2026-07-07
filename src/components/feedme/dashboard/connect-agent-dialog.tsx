@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { Bot, Check, Copy, KeyRound, Loader2, ShieldCheck, X } from "lucide-react"
 
 import {
@@ -9,30 +9,15 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ApiClientError, deleteJson, getJson, postJson } from "@/lib/api-client"
+import { ApiClientError } from "@/lib/api-client"
 import type { MockWorkspace } from "@/lib/mock/dashboard"
+import {
+  useCreateWorkspaceTokenMutation,
+  useRevokeWorkspaceTokenMutation,
+  useWorkspaceTokensQuery,
+  type AgentToken,
+} from "@/lib/token-queries"
 import { cn } from "@/lib/utils"
-
-type AgentToken = {
-  id: string
-  label: string
-  lastUsedAt: string | null
-  revokedAt: string | null
-  createdAt: string
-}
-
-type TokensResponse = {
-  tokens: AgentToken[]
-}
-
-type CreateTokenResponse = {
-  token: string
-  tokenRecord: {
-    id: string
-    label: string
-    createdAt: string
-  }
-}
 
 function CopyButton({
   value,
@@ -86,15 +71,28 @@ export function ConnectAgentDialog({
   open: boolean
   workspace: MockWorkspace
 }) {
-  const [tokens, setTokens] = useState<AgentToken[]>([])
-  const [isLoading, setIsLoading] = useState(false)
   const [label, setLabel] = useState("")
-  const [isGenerating, setIsGenerating] = useState(false)
   const [revealedToken, setRevealedToken] = useState<string | null>(null)
-  const [revokingId, setRevokingId] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-
-  const tokensEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/tokens`
+  const tokensQuery = useWorkspaceTokensQuery({
+    enabled: open,
+    workspaceSlug: workspace.slug,
+  })
+  const createTokenMutation = useCreateWorkspaceTokenMutation(workspace.slug)
+  const revokeTokenMutation = useRevokeWorkspaceTokenMutation(workspace.slug)
+  const tokens = tokensQuery.data?.tokens ?? []
+  const isLoading = open && tokens.length === 0 && tokensQuery.isPending
+  const isGenerating = createTokenMutation.isPending
+  const revokingId = revokeTokenMutation.isPending
+    ? revokeTokenMutation.variables?.tokenId ?? null
+    : null
+  const queryErrorMessage =
+    tokensQuery.error instanceof Error
+      ? tokensQuery.error.message
+      : tokensQuery.isError
+        ? "Unable to load tokens. Please try again."
+        : null
+  const displayErrorMessage = errorMessage ?? queryErrorMessage
   const mcpUrl = useMemo(
     () =>
       typeof window !== "undefined"
@@ -132,69 +130,20 @@ export function ConnectAgentDialog({
     onOpenChange(nextOpen)
   }
 
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    let isMounted = true
-
-    async function loadTokens() {
-      setIsLoading(true)
-      setErrorMessage(null)
-
-      try {
-        const result = await getJson<TokensResponse>(tokensEndpoint)
-        if (isMounted) {
-          setTokens(result.tokens)
-        }
-      } catch (error) {
-        if (isMounted) {
-          setErrorMessage(
-            error instanceof ApiClientError
-              ? error.message
-              : "Unable to load tokens. Please try again."
-          )
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadTokens()
-
-    return () => {
-      isMounted = false
-    }
-  }, [open, tokensEndpoint])
-
   async function generateToken() {
     const value = label.trim()
     if (!value) {
       return
     }
 
-    setIsGenerating(true)
     setErrorMessage(null)
 
     try {
-      const result = await postJson<CreateTokenResponse>(tokensEndpoint, {
+      const result = await createTokenMutation.mutateAsync({
         label: value,
       })
 
       setRevealedToken(result.token)
-      setTokens((items) => [
-        {
-          id: result.tokenRecord.id,
-          label: result.tokenRecord.label,
-          lastUsedAt: null,
-          revokedAt: null,
-          createdAt: result.tokenRecord.createdAt,
-        },
-        ...items,
-      ])
       setLabel("")
     } catch (error) {
       setErrorMessage(
@@ -202,32 +151,20 @@ export function ConnectAgentDialog({
           ? error.message
           : "Unable to generate a token. Please try again."
       )
-    } finally {
-      setIsGenerating(false)
     }
   }
 
   async function revokeToken(tokenId: string) {
-    setRevokingId(tokenId)
     setErrorMessage(null)
 
     try {
-      await deleteJson(`${tokensEndpoint}/${encodeURIComponent(tokenId)}`)
-      setTokens((items) =>
-        items.map((item) =>
-          item.id === tokenId
-            ? { ...item, revokedAt: new Date().toISOString() }
-            : item
-        )
-      )
+      await revokeTokenMutation.mutateAsync({ tokenId })
     } catch (error) {
       setErrorMessage(
         error instanceof ApiClientError
           ? error.message
           : "Unable to revoke that token. Please try again."
       )
-    } finally {
-      setRevokingId(null)
     }
   }
 
@@ -354,12 +291,12 @@ export function ConnectAgentDialog({
             </section>
           ) : null}
 
-          {errorMessage ? (
+          {displayErrorMessage ? (
             <div
               role="alert"
               className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-body-3 font-medium text-destructive"
             >
-              {errorMessage}
+              {displayErrorMessage}
             </div>
           ) : null}
 

@@ -90,11 +90,14 @@ import {
 import { cn } from "@/lib/utils"
 import {
   ApiClientError,
-  deleteJson,
-  getJson,
   postJson,
 } from "@/lib/api-client"
 import { replaceUrlSearchParams } from "@/lib/dashboard-url"
+import {
+  useAddWorkspaceDomainMutation,
+  useDeleteWorkspaceDomainMutation,
+  useWorkspaceDomainsQuery,
+} from "@/lib/domain-queries"
 import {
   useAssignReportMutation,
   useReportDetailQuery,
@@ -124,23 +127,6 @@ type NavItem = {
 }
 
 type ReportScreenshot = WorkspaceReport["screenshots"][number]
-
-type WorkspaceDomain = {
-  id: string
-  host: string
-  status: "active" | "pending_verification" | "verified" | "disabled"
-  verifiedAt: string | null
-  createdAt: string
-  updatedAt: string
-}
-
-type WorkspaceDomainsResponse = {
-  domains: WorkspaceDomain[]
-}
-
-type WorkspaceDomainMutationResponse = {
-  domain: WorkspaceDomain
-}
 
 const unassignedSelectValue = "__unassigned__"
 
@@ -576,50 +562,27 @@ function DomainsDialog({
   open: boolean
   workspace: MockWorkspace
 }) {
-  const [domains, setDomains] = useState<WorkspaceDomain[]>([])
   const [newDomain, setNewDomain] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
-  const [deletingDomainId, setDeletingDomainId] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const domainsEndpoint = `/api/workspaces/${encodeURIComponent(workspace.slug)}/domains`
-
-  useEffect(() => {
-    let isMounted = true
-
-    async function loadDomains() {
-      setIsLoading(true)
-      setErrorMessage(null)
-
-      try {
-        const result = await getJson<WorkspaceDomainsResponse>(domainsEndpoint)
-
-        if (isMounted) {
-          setDomains(result.domains)
-        }
-      } catch (error) {
-        if (isMounted) {
-          setErrorMessage(
-            error instanceof ApiClientError
-              ? error.message
-              : "Unable to load domains. Please try again."
-          )
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    if (open) {
-      void loadDomains()
-    }
-
-    return () => {
-      isMounted = false
-    }
-  }, [domainsEndpoint, open])
+  const domainsQuery = useWorkspaceDomainsQuery({
+    enabled: open,
+    workspaceSlug: workspace.slug,
+  })
+  const addDomainMutation = useAddWorkspaceDomainMutation(workspace.slug)
+  const deleteDomainMutation = useDeleteWorkspaceDomainMutation(workspace.slug)
+  const domains = domainsQuery.data?.domains ?? []
+  const isLoading = open && domains.length === 0 && domainsQuery.isPending
+  const isSaving = addDomainMutation.isPending
+  const deletingDomainId = deleteDomainMutation.isPending
+    ? deleteDomainMutation.variables?.domainId ?? null
+    : null
+  const queryErrorMessage =
+    domainsQuery.error instanceof Error
+      ? domainsQuery.error.message
+      : domainsQuery.isError
+        ? "Unable to load domains. Please try again."
+        : null
+  const displayErrorMessage = errorMessage ?? queryErrorMessage
 
   async function addDomain() {
     const value = newDomain.trim()
@@ -628,15 +591,10 @@ function DomainsDialog({
       return
     }
 
-    setIsSaving(true)
     setErrorMessage(null)
 
     try {
-      const result = await postJson<WorkspaceDomainMutationResponse>(domainsEndpoint, {
-        domain: value,
-      })
-
-      setDomains((items) => [...items, result.domain])
+      await addDomainMutation.mutateAsync({ domain: value })
       setNewDomain("")
     } catch (error) {
       setErrorMessage(
@@ -644,29 +602,20 @@ function DomainsDialog({
           ? error.message
           : "Unable to add domain. Please try again."
       )
-    } finally {
-      setIsSaving(false)
     }
   }
 
   async function removeDomain(domainId: string) {
-    setDeletingDomainId(domainId)
     setErrorMessage(null)
 
     try {
-      await deleteJson<WorkspaceDomainMutationResponse>(
-        `${domainsEndpoint}/${encodeURIComponent(domainId)}`
-      )
-
-      setDomains((items) => items.filter((item) => item.id !== domainId))
+      await deleteDomainMutation.mutateAsync({ domainId })
     } catch (error) {
       setErrorMessage(
         error instanceof ApiClientError
           ? error.message
           : "Unable to remove domain. Please try again."
       )
-    } finally {
-      setDeletingDomainId(null)
     }
   }
 
@@ -747,12 +696,12 @@ function DomainsDialog({
               : null}
           </div>
 
-          {errorMessage ? (
+          {displayErrorMessage ? (
             <div
               role="alert"
               className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-body-3 font-medium text-destructive"
             >
-              {errorMessage}
+              {displayErrorMessage}
             </div>
           ) : null}
 

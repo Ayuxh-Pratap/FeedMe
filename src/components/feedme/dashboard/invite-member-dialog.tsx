@@ -11,7 +11,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { ApiClientError, postJson } from "@/lib/api-client"
+import { ApiClientError } from "@/lib/api-client"
+import {
+  inviteRoles,
+  labelFromInviteRole,
+  useCreateWorkspaceInviteMutation,
+  type CreatedInvite,
+  type InviteRole,
+} from "@/lib/invite-queries"
 import { cn } from "@/lib/utils"
 
 type InviteMemberDialogProps = {
@@ -20,28 +27,8 @@ type InviteMemberDialogProps = {
   workspaceSlug: string
 }
 
-const inviteRoles = [
-  { label: "Reporter", value: "reporter" },
-  { label: "Developer", value: "developer" },
-  { label: "Designer", value: "designer" },
-  { label: "Viewer", value: "viewer" },
-] as const
-
-type InviteRole = (typeof inviteRoles)[number]["value"]
-
-type CreatedInvite = {
-  code: string
-  role: InviteRole
-  joinPath: string
-  inviteUrl: string
-}
-
-type CreateInviteResponse = {
-  invite: CreatedInvite
-}
-
 function labelFromRole(role: InviteRole) {
-  return inviteRoles.find((item) => item.value === role)?.label ?? "Reporter"
+  return labelFromInviteRole(role)
 }
 
 function RolePicker({
@@ -124,23 +111,18 @@ export function InviteMemberDialog({
 }: InviteMemberDialogProps) {
   const [role, setRole] = useState<InviteRole>("reporter")
   const [invite, setInvite] = useState<CreatedInvite | null>(null)
-  const [isCreating, setIsCreating] = useState(false)
   const [copiedValue, setCopiedValue] = useState<"code" | "link" | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const createInviteMutation = useCreateWorkspaceInviteMutation(workspaceSlug)
+  const isCreating = createInviteMutation.isPending
   const selectedRoleLabel = labelFromRole(role)
 
   async function createInvite() {
-    setIsCreating(true)
     setErrorMessage(null)
     setCopiedValue(null)
 
     try {
-      const result = await postJson<CreateInviteResponse>(
-        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/invites`,
-        {
-          role,
-        }
-      )
+      const result = await createInviteMutation.mutateAsync({ role })
 
       setInvite(result.invite)
     } catch (error) {
@@ -149,8 +131,6 @@ export function InviteMemberDialog({
           ? error.message
           : "Unable to create invite. Please try again."
       )
-    } finally {
-      setIsCreating(false)
     }
   }
 
