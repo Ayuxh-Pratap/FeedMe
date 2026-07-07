@@ -1137,8 +1137,8 @@ implemented
 Goal:
 
 ```txt
-Developers connect their FeedMe account to a coding agent (Claude Code, Cursor, etc.)
-through a hosted MCP server, pull their assigned reports with full handoff context
+Assigned implementation members can connect their FeedMe account to a coding agent
+(Claude Code, Cursor, etc.) through a hosted MCP server, pull their assigned reports with full handoff context
 and screenshots, fix them, and mark them ready for review from the editor.
 ```
 

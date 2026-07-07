@@ -721,8 +721,8 @@ Rules:
 
 ## Coding Agent Access (MCP)
 
-Developers can connect a FeedMe workspace to their coding agent (Claude Code,
-Cursor, etc.) through a hosted MCP server, so the agent works the assigned queue
+Assigned implementation members can connect a FeedMe workspace to their coding
+agent (Claude Code, Cursor, etc.) through a hosted MCP server, so the agent works the assigned queue
 from inside the editor. This is why FeedMe fits: a report already carries the
 screenshot, exact selector, element text, page/browser context, and developer
 prompt — the precise handoff a coding agent needs.
@@ -730,7 +730,7 @@ prompt — the precise handoff a coding agent needs.
 Flow:
 
 ```txt
-1. Developer opens the "Connect coding agent" dialog in the dashboard and
+1. The member opens the "Connect coding agent" dialog in the dashboard and
    generates a workspace-scoped personal access token (feedme_pat_...).
 2. They paste the MCP URL (/api/mcp) + token into their agent config.
 3. In the editor: "list my FeedMe bugs" -> list_my_reports.
@@ -745,7 +745,7 @@ Auth and trust:
 ```txt
 remote MCP server at /api/mcp, Streamable HTTP
 Bearer personal access token, workspace-scoped, only the hash stored
-the token inherits the member's live role; a developer can only act on reports
+the token inherits the member's live role; developers/designers can only act on reports
   assigned to them, enforced by the same report services as the REST API
 no token -> 401; every tool re-resolves user -> active membership -> role
 ```
