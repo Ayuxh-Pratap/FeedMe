@@ -444,11 +444,19 @@ MVP freshness:
 
 ```txt
 focus refetch reports and my work
-poll active report list every 10-15 seconds while the tab is visible
+poll a lightweight freshness query every 10-15 seconds while the tab is visible
 poll selected detail less frequently or only on focus
 background refetch must not dim, disable, or visually reload an already-rendered list
 show "New reports available" when the incoming first page has unseen ids
 let the user apply new reports instead of jumping the list while they are reading
+```
+
+Implementation rule:
+
+```txt
+Do not attach refetchInterval directly to the visible reports/my-work list query.
+Use a separate freshness query key so polling can detect unseen report ids without
+rewriting the table under the user's cursor.
 ```
 
 Later realtime:
@@ -533,6 +541,13 @@ implemented query-backed resources:
 -> workspace domains
 -> invite creation/list cache
 -> MCP tokens
+
+implemented reliability/freshness behavior:
+-> reports/my-work visible lists no longer self-poll and reshape while reading
+-> reports/my-work use a separate freshness query and user-applied update notice
+-> reports/my-work/team show centered retry states on first-load failure
+-> reports/my-work/team keep visible data on background refetch errors with inline retry
+-> reports/my-work/team use route-shaped table skeletons
 
 remaining architecture direction:
 -> keep any new backend-backed dashboard surface behind a query hook first

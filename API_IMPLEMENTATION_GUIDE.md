@@ -1291,6 +1291,18 @@ returns the normalized/secure record.
 
 The MCP token plaintext is never stored in TanStack Query. Only the token record
 is cached; the plaintext remains local to the dialog and is cleared on close.
+
+Reports and My Work now separate visible list ownership from freshness polling.
+The visible list query does not use refetchInterval, so background polling cannot
+reshape the table while a user is reading or clicking. A separate freshness query
+checks the current first page for unseen report ids and shows a user-applied
+"new reports available" notice. Applying the notice refetches the visible list
+and counts.
+
+Reports, My Work, and Team now share first-load failure handling:
+centered retry state when no cached rows exist, compact inline retry when cached
+data remains visible after a background error, and route-shaped table skeletons
+for first load.
 ```
 
 Backend hardening still useful:
