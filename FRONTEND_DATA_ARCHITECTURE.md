@@ -523,6 +523,22 @@ no backend entities live in Zustand
 no random component fetches bypass query hooks
 ```
 
+Current implementation status:
+
+```txt
+implemented query-backed resources:
+-> reports list/detail/counts
+-> my work
+-> team members
+-> workspace domains
+-> invite creation/list cache
+-> MCP tokens
+
+remaining architecture direction:
+-> keep any new backend-backed dashboard surface behind a query hook first
+-> do not add new component-local fetch/effect islands for server resources
+```
+
 If those are true, FeedMe will feel like a serious product instead of a slow admin panel.
 
 ## Loading Handoff Rule

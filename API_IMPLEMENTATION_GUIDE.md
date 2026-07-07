@@ -1214,7 +1214,7 @@ tools (assign / resolve), and a report counts contract for the agent.
 Status:
 
 ```txt
-planned
+implemented
 ```
 
 Goal:
@@ -1267,7 +1267,33 @@ failed mutations roll back to the previous cached report
 polling or realtime must surface new reports without hard reload
 ```
 
-Backend support needed:
+Implemented dashboard query hooks:
+
+```txt
+src/lib/report-queries.ts    reports list/detail/counts + assignment/status mutations
+src/lib/team-queries.ts      workspace members
+src/lib/domain-queries.ts    workspace domains + add/remove mutations
+src/lib/invite-queries.ts    workspace invites + create mutation
+src/lib/token-queries.ts     MCP tokens + create/revoke mutations
+src/lib/query-keys.ts        shared key factory for workspace-backed resources
+```
+
+Dashboard wiring:
+
+```txt
+Reports, My Work, Team, Domains, Invite generation, MCP token management, and
+the report right rail now use query hooks instead of component-owned fetch
+islands.
+
+Domain deletion and MCP token revocation are optimistic with rollback.
+Domain, invite, and token creation update their shared caches after the server
+returns the normalized/secure record.
+
+The MCP token plaintext is never stored in TanStack Query. Only the token record
+is cached; the plaintext remains local to the dialog and is cleared on close.
+```
+
+Backend hardening still useful:
 
 ```txt
 GET /api/workspaces/:workspaceSlug/reports/counts
