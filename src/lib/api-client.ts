@@ -1,4 +1,8 @@
 import type { ApiFailure, ApiSuccess } from "@/server/http/responses"
+import {
+  FEEDME_CLIENT_HEADER,
+  FEEDME_DASHBOARD_CLIENT,
+} from "@/lib/api-trust"
 
 export class ApiClientError extends Error {
   readonly code: string
@@ -45,6 +49,7 @@ export async function postJson<T>(url: string, body?: unknown) {
   const response = await fetch(url, {
     method: "POST",
     headers: {
+      [FEEDME_CLIENT_HEADER]: FEEDME_DASHBOARD_CLIENT,
       "Content-Type": "application/json",
     },
     credentials: "include",
@@ -58,6 +63,7 @@ export async function patchJson<T>(url: string, body?: unknown) {
   const response = await fetch(url, {
     method: "PATCH",
     headers: {
+      [FEEDME_CLIENT_HEADER]: FEEDME_DASHBOARD_CLIENT,
       "Content-Type": "application/json",
     },
     credentials: "include",
@@ -70,6 +76,9 @@ export async function patchJson<T>(url: string, body?: unknown) {
 export async function deleteJson<T>(url: string) {
   const response = await fetch(url, {
     method: "DELETE",
+    headers: {
+      [FEEDME_CLIENT_HEADER]: FEEDME_DASHBOARD_CLIENT,
+    },
     credentials: "include",
   })
 

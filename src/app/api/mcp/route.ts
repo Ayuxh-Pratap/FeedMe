@@ -15,6 +15,7 @@ import {
   listWorkspaceReports,
   updateWorkspaceReportStatus,
 } from "@/server/reports/service"
+import { isAllowedCloudinaryImageUrl } from "@/server/uploads/cloudinary"
 import type { WorkspaceReport } from "@/lib/reports"
 
 export const runtime = "nodejs"
@@ -328,17 +329,37 @@ async function getReportImageBlocks(report: WorkspaceReport) {
 }
 
 async function fetchImageBlock(url: string) {
+  if (!isAllowedCloudinaryImageUrl(url)) {
+    return null
+  }
+
   try {
-    const response = await fetch(url)
+    const response = await fetch(url, { redirect: "manual" })
     if (!response.ok) {
       return null
     }
 
     const mimeType = response.headers.get("content-type") ?? "image/png"
-    const data = Buffer.from(await response.arrayBuffer()).toString("base64")
+    if (!mimeType.toLowerCase().startsWith("image/")) {
+      return null
+    }
+
+    const contentLength = Number(response.headers.get("content-length") ?? 0)
+    if (contentLength > MCP_IMAGE_BYTE_LIMIT) {
+      return null
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (buffer.byteLength > MCP_IMAGE_BYTE_LIMIT) {
+      return null
+    }
+
+    const data = buffer.toString("base64")
 
     return { type: "image" as const, data, mimeType }
   } catch {
     return null
   }
 }
+
+const MCP_IMAGE_BYTE_LIMIT = 4 * 1024 * 1024

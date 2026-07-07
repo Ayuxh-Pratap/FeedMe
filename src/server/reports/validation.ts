@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { isAllowedCloudinaryImageUrl } from "@/server/uploads/cloudinary"
+
 export const reportIdParamSchema = z.string().uuid("Invalid report id.")
 
 const optionalTrimmedString = (max: number) =>
@@ -75,6 +77,9 @@ const reportAssetUrlSchema = z
   .refine((value) => /^https?:\/\//i.test(value), {
     message: "Screenshots must be uploaded to storage before submitting.",
   })
+  .refine(isAllowedCloudinaryImageUrl, {
+    message: "Screenshots must use FeedMe image storage.",
+  })
 
 const reportAssetInputSchema = z.object({
   type: z.enum([
@@ -89,7 +94,13 @@ const reportAssetInputSchema = z.object({
 })
 
 export const createReportInputSchema = z.object({
-  url: z.string().trim().url("Enter a valid report URL."),
+  url: z
+    .string()
+    .trim()
+    .url("Enter a valid report URL.")
+    .refine((value) => /^https?:\/\//i.test(value), {
+      message: "Report URL must be a web page.",
+    }),
   title: z.string().trim().min(3).max(180).optional(),
   summary: z.string().trim().min(3).max(2000).optional(),
   severity: z.enum(["low", "medium", "high", "urgent"]).default("medium"),

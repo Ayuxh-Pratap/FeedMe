@@ -43,6 +43,48 @@ export function getCloudinaryConfig(): CloudinaryConfig {
   }
 }
 
+export function isAllowedCloudinaryImageUrl(value: string): boolean {
+  let config: CloudinaryConfig
+  let url: URL
+
+  try {
+    config = getCloudinaryConfig()
+    url = new URL(value)
+  } catch {
+    return false
+  }
+
+  if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com") {
+    return false
+  }
+
+  const segments = url.pathname.split("/").filter(Boolean)
+  const [cloudName, resourceType, deliveryType, ...deliveryPath] = segments
+
+  if (
+    cloudName !== config.cloudName ||
+    resourceType !== "image" ||
+    deliveryType !== "upload"
+  ) {
+    return false
+  }
+
+  const folderSegments = config.folder.split("/").filter(Boolean)
+  if (folderSegments.length === 0) {
+    return false
+  }
+
+  const versionIndex = deliveryPath.findIndex((segment) => /^v\d+$/.test(segment))
+  const publicPath =
+    versionIndex >= 0 ? deliveryPath.slice(versionIndex + 1) : deliveryPath
+
+  return startsWithSegments(publicPath, folderSegments)
+}
+
+function startsWithSegments(segments: string[], prefix: string[]) {
+  return prefix.every((segment, index) => segments[index] === segment)
+}
+
 // Cloudinary signs the alphabetically-sorted `key=value` params joined by `&`,
 // with the API secret appended, hashed with SHA-1. The client must send exactly
 // these params (plus file + api_key) or the upload is rejected.
