@@ -4,7 +4,13 @@ import { Plus } from "lucide-react"
 import { usePathname, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { DashboardTableBodySkeleton } from "@/components/feedme/dashboard/dashboard-route-loading"
+import {
+  DashboardTeamTableSkeleton,
+} from "@/components/feedme/dashboard/dashboard-route-loading"
+import {
+  DashboardCenteredError,
+  DashboardInlineError,
+} from "@/components/feedme/dashboard/dashboard-query-status"
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
 import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
@@ -210,6 +216,9 @@ export function TeamPage({
       : membersQuery.isError
         ? "Unable to load team members. Please try again."
         : null
+  const showInitialError =
+    Boolean(errorMessage) && members.length === 0 && !showInitialSkeleton
+  const showInlineError = Boolean(errorMessage) && members.length > 0
 
   const replaceSearchParams = useCallback((nextSearchParams: URLSearchParams) => {
     replaceUrlSearchParams(pathname, nextSearchParams)
@@ -307,25 +316,48 @@ export function TeamPage({
         </div>
       </header>
 
-      {errorMessage ? (
-        <div className="border-b border-border-hairline px-4 py-2 text-caption text-error">
-          {errorMessage}
-        </div>
+      {showInlineError && errorMessage ? (
+        <DashboardInlineError
+          isRetrying={membersQuery.isRefetching}
+          message={errorMessage}
+          onRetry={() => {
+            void membersQuery.refetch()
+          }}
+        />
       ) : null}
 
-      {showInitialSkeleton ? <DashboardTableBodySkeleton /> : null}
+      {showInitialSkeleton ? <DashboardTeamTableSkeleton /> : null}
 
-      {!showInitialSkeleton && filteredMembers.length === 0 ? (
+      {showInitialError && errorMessage ? (
+        <DashboardCenteredError
+          isRetrying={membersQuery.isFetching}
+          message={errorMessage}
+          onRetry={() => {
+            void membersQuery.refetch()
+          }}
+          title="Unable to load team"
+        />
+      ) : null}
+
+      {!showInitialSkeleton && !showInitialError && filteredMembers.length === 0 ? (
         <TeamNoMatches
           activeFilterLabel={activeFilterConfig.label}
           searchQuery={searchQuery}
         />
       ) : null}
 
-      {!showInitialSkeleton && filteredMembers.length > 0 ? (
+      {!showInitialSkeleton && !showInitialError && filteredMembers.length > 0 ? (
         <div className="feedme-scrollbar min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[900px] border-collapse text-left">
+        <table className="w-full min-w-[900px] table-fixed border-collapse text-left">
           <caption className="sr-only">Workspace team members</caption>
+          <colgroup>
+            <col className="w-[42%]" />
+            <col className="w-[13%]" />
+            <col className="w-[10%]" />
+            <col className="w-[11%]" />
+            <col className="w-[10%]" />
+            <col className="w-[14%]" />
+          </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border-hairline bg-background">
             <tr>
               <th scope="col" className="px-4 py-3 text-caption font-medium text-text-muted">
@@ -369,10 +401,10 @@ export function TeamPage({
                   selected && "bg-fill-subtle"
                 )}
               >
-                <td className="w-[42%] px-4 py-4 align-top">
+                <td className="max-w-0 px-4 py-4 align-top">
                   <div className="flex min-w-0 items-center gap-2">
                     <TeamMemberAvatar member={member} />
-                    <div className="min-w-0">
+                    <div className="min-w-0 max-w-full">
                       <p className="truncate text-heading-5 text-foreground">
                         {member.name}
                       </p>
@@ -394,8 +426,8 @@ export function TeamPage({
                 <td className="px-4 py-4 align-top text-body-3 text-text-secondary">
                   {member.reportsCount}
                 </td>
-                <td className="px-4 py-4 align-top text-body-3 text-text-muted">
-                  {member.joinedAtLabel}
+                <td className="max-w-0 px-4 py-4 align-top text-body-3 text-text-muted">
+                  <span className="block truncate">{member.joinedAtLabel}</span>
                 </td>
               </tr>
               )

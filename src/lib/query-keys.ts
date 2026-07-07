@@ -57,6 +57,8 @@ export const reportKeys = {
     [...reportKeys.countsRoot(slug), normalizeReportCountFilters(filters)] as const,
   detail: (slug: string, reportId: string) =>
     [...reportKeys.all(slug), "detail", reportId] as const,
+  freshness: (slug: string, filters: ReportListFilters) =>
+    [...reportKeys.all(slug), "freshness", normalizeReportListFilters(filters)] as const,
   list: (slug: string, filters: ReportListFilters) =>
     [...reportKeys.all(slug), "list", normalizeReportListFilters(filters)] as const,
   myWork: (slug: string, filters: ReportListFilters) =>

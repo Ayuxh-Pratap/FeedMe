@@ -19,11 +19,18 @@ import {
 } from "lucide-react"
 
 import {
+  DashboardReportTableSkeleton,
+} from "@/components/feedme/dashboard/dashboard-route-loading"
+import {
+  DashboardCenteredError,
+  DashboardFreshnessNotice,
+  DashboardInlineError,
+} from "@/components/feedme/dashboard/dashboard-query-status"
+import {
   reportPriorityCodeBaseClass,
   reportPriorityCodePillStyle,
   reportSeverityPriorityLabels,
 } from "@/components/feedme/dashboard/report-badge-styles"
-import { DashboardTableBodySkeleton } from "@/components/feedme/dashboard/dashboard-route-loading"
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import {
   isInProgressWorkspaceReport,
@@ -37,10 +44,12 @@ import { cn } from "@/lib/utils"
 import { useWorkspaceDashboardData } from "@/components/feedme/dashboard/workspace-dashboard-data"
 import { replaceUrlSearchParams } from "@/lib/dashboard-url"
 import {
+  countUnseenReports,
   flattenReportPages,
   makeInitialReportsInfiniteData,
   usePrefetchReportDetail,
   useReportCountsQuery,
+  useReportsFreshnessQuery,
   useReportsInfiniteQuery,
 } from "@/lib/report-queries"
 
@@ -704,6 +713,18 @@ export function ReportsList({
     [reportRows, reportUpdatesById]
   )
   const showInitialSkeleton = isPending && visibleReports.length === 0
+  const showInitialError =
+    Boolean(errorMessage) && visibleReports.length === 0 && !showInitialSkeleton
+  const showInlineError = Boolean(errorMessage) && visibleReports.length > 0
+  const freshnessQuery = useReportsFreshnessQuery({
+    enabled: !showInitialSkeleton && !showInitialError,
+    filters: filtersForQuery,
+    workspaceSlug,
+  })
+  const unseenReportCount = countUnseenReports({
+    currentReports: visibleReports,
+    incomingReports: freshnessQuery.data?.reports ?? [],
+  })
   const requestedReportId = searchParams.get("report")
   const requestedSelectedReportId =
     requestedReportId && visibleReports.some((report) => report.id === requestedReportId)
@@ -776,6 +797,15 @@ export function ReportsList({
     void reportsQuery.fetchNextPage()
   }
 
+  function retryReports() {
+    void reportsQuery.refetch()
+    void countsQuery.refetch()
+  }
+
+  function applyFreshReports() {
+    retryReports()
+  }
+
   useEffect(() => {
     const nextSelectedReportId = effectiveSelectedReportId ?? null
 
@@ -800,22 +830,41 @@ export function ReportsList({
         sort={sort}
       />
 
-      {errorMessage ? (
-        <div className="border-b border-border-hairline px-4 py-2 text-caption text-error">
-          {errorMessage}
-        </div>
+      {showInlineError && errorMessage ? (
+        <DashboardInlineError
+          isRetrying={reportsQuery.isRefetching}
+          message={errorMessage}
+          onRetry={retryReports}
+        />
       ) : null}
 
-      {showInitialSkeleton ? <DashboardTableBodySkeleton /> : null}
+      {!showInlineError ? (
+        <DashboardFreshnessNotice
+          count={unseenReportCount}
+          isApplying={reportsQuery.isRefetching}
+          onApply={applyFreshReports}
+        />
+      ) : null}
 
-      {!showInitialSkeleton && visibleReports.length === 0 ? (
+      {showInitialSkeleton ? <DashboardReportTableSkeleton /> : null}
+
+      {showInitialError && errorMessage ? (
+        <DashboardCenteredError
+          isRetrying={reportsQuery.isFetching}
+          message={errorMessage}
+          onRetry={retryReports}
+          title="Unable to load reports"
+        />
+      ) : null}
+
+      {!showInitialSkeleton && !showInitialError && visibleReports.length === 0 ? (
         <ReportsNoMatches
           activeFilterLabel={activeFilter.label}
           searchQuery={searchQuery}
         />
       ) : null}
 
-      {!showInitialSkeleton && visibleReports.length > 0 && viewMode === "table" ? (
+      {!showInitialSkeleton && !showInitialError && visibleReports.length > 0 && viewMode === "table" ? (
         <div
           className="feedme-scrollbar min-h-0 flex-1 overflow-auto"
         >
@@ -858,7 +907,7 @@ export function ReportsList({
         </div>
       ) : null}
 
-      {!showInitialSkeleton && visibleReports.length > 0 && viewMode === "grid" ? (
+      {!showInitialSkeleton && !showInitialError && visibleReports.length > 0 && viewMode === "grid" ? (
         <div
           className="feedme-scrollbar min-h-0 flex-1 overflow-auto p-4"
         >

@@ -183,6 +183,18 @@ export function flattenReportPages(
   return [...reportsById.values()]
 }
 
+export function countUnseenReports({
+  currentReports,
+  incomingReports,
+}: {
+  currentReports: WorkspaceReport[]
+  incomingReports: WorkspaceReport[]
+}) {
+  const currentReportIds = new Set(currentReports.map((report) => report.id))
+
+  return incomingReports.filter((report) => !currentReportIds.has(report.id)).length
+}
+
 function patchReportList(
   reports: WorkspaceReport[],
   nextReport: WorkspaceReport
@@ -339,8 +351,25 @@ export function useReportsInfiniteQuery({
       queryKind === "my-work"
         ? reportKeys.myWork(workspaceSlug, filters)
         : reportKeys.list(workspaceSlug, filters),
+  })
+}
+
+export function useReportsFreshnessQuery({
+  enabled = true,
+  filters,
+  workspaceSlug,
+}: {
+  enabled?: boolean
+  filters: ReportListFilters
+  workspaceSlug: string
+}) {
+  return useQuery({
+    enabled,
+    queryFn: () => fetchReportsList({ filters, workspaceSlug }),
+    queryKey: reportKeys.freshness(workspaceSlug, filters),
     refetchInterval: refetchVisibleReportsIntervalMs,
     refetchIntervalInBackground: false,
+    staleTime: 0,
   })
 }
 
