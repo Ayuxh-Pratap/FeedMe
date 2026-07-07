@@ -401,9 +401,9 @@ Implementation note: My Work is backed by the report ownership fields. Assigned 
 
 The My Work right rail must be scoped to the active My Work tab. If the active scope has reports, the rail shows the selected visible report and falls back to the first visible report when the URL has no valid `report` parameter. If the active scope is empty, the right rail should be disabled so the empty state owns the full canvas.
 
-Owners and admins can assign the selected report directly from the report inspector rail. The assignment block belongs below the evidence viewer and Open report action, not above the screenshot context. The assignee picker should use the same compact tactile charcoal menu language as report sorting, list active developers only, and avoid generic native/Radix-looking select styling. Saving assignment is a secondary raised action, not a primary blue CTA. Saving should immediately update the selected report and make it appear in that developer's Assigned to me scope.
+Owners and admins can assign the selected report directly from the report inspector rail. The assignment block belongs below the evidence viewer and Open report action, not above the screenshot context. The assignee picker should use the same compact tactile charcoal menu language as report sorting, list active developers and designers, and avoid generic native/Radix-looking select styling. Saving assignment is a secondary raised action, not a primary blue CTA. Saving should immediately update the selected report and make it appear in that member's Assigned to me scope.
 
-Developers should also be able to operate from the same selected-report rail. If the selected report is assigned to the signed-in developer, show compact secondary actions below Open report so they can Start work and mark Ready for review without opening the detail route.
+Developers and designers should also be able to operate from the same selected-report rail. If the selected report is assigned to the signed-in member, show compact secondary actions below Open report so they can Start work and mark Ready for review without opening the detail route.
 
 The right rail on My Work should summarize personal workload and selected-item context:
 

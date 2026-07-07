@@ -15,8 +15,8 @@ The dashboard becomes the command center:
 - Reports come in.
 - Admins triage them.
 - Admins assign them to developers or designers.
-- Developers work through their assigned queue.
-- Developers mark items done.
+- Developers and designers work through their assigned queue.
+- Developers and designers mark items ready for review.
 - Admins, designers, or QA review and resolve them.
 
 ## Main Roles
@@ -24,8 +24,8 @@ The dashboard becomes the command center:
 - Owner: creates workspace, manages billing, domains, members, and permissions.
 - Admin/Product Lead: reviews all reports, changes status, assigns work, and manages workflow.
 - Tester/Reporter: uses the extension to submit feedback and can view status of their own reports.
-- Developer: sees assigned reports, copies developer handoff prompt, and marks work done.
-- Designer/QA: reviews visual issues, comments, validates fixes, and reopens if needed.
+- Developer: sees assigned reports, copies developer handoff prompt, and marks work ready for review.
+- Designer/QA: sees assigned visual/design reports, comments, validates fixes, and marks work ready for review when assigned.
 
 ## Production Setup Flow
 
@@ -65,7 +65,7 @@ Each workspace has its own dashboard.
 - Report queue: incoming feedback from testers and reporters.
 - Report detail: selected element screenshot, full page screenshot, metadata, reporter note, URL, selector, and viewport.
 - Assignment: admin assigns report to developer or designer.
-- Developer queue: developer sees only assigned reports.
+- Assigned queue: developers and designers see only assigned reports.
 - Reporter view: reporter sees status of their submitted items.
 - Team management: invite, remove, and role change.
 - Domain settings: allowed websites for extension activation.

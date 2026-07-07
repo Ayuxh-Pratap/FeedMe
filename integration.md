@@ -206,7 +206,9 @@ developer
 designer
 -> can submit reports
 -> can review/comment on visual issues
--> may participate in QA/reopen flows later
+-> can be assigned reports
+-> can move assigned design/visual work through implementation statuses
+-> can mark assigned reports ready for review
 
 reporter
 -> can submit reports
@@ -216,7 +218,7 @@ viewer
 -> can view workspace reports where permitted
 ```
 
-Developers are the primary assignable implementation role. Admins can assign work to developers and can resolve reports directly when needed.
+Developers and designers are assignable implementation roles. Admins can assign work to active developers/designers and can resolve reports directly when needed.
 
 ## Report Lifecycle
 
@@ -253,11 +255,11 @@ submitted/reviewing/assigned/in_progress/ready_for_review
 
 Developer behavior:
 
-- A developer can work on assigned reports.
-- A developer can mark assigned reports as `ready_for_review`.
-- A developer does not need to be the final resolver.
-- Developer status changes are only allowed on reports assigned to that developer.
-- Admins/owners assign reports to active developers and can resolve directly.
+- A developer or designer can work on assigned reports.
+- A developer or designer can mark assigned reports as `ready_for_review`.
+- An assigned implementation member does not need to be the final resolver.
+- Assignee status changes are only allowed on reports assigned to that developer/designer.
+- Admins/owners assign reports to active developers/designers and can resolve directly.
 - My Work uses `assigneeUserId` for Assigned to me and `reporterUserId` for Reported by me.
 
 Assignment ownership rules:
@@ -764,8 +766,8 @@ In MVP:
 - Do not require hard domain verification yet.
 - Use the activeTab model for screenshot capture (no host-permission prompt); the user arms capture by opening the popup, and activation is still gated to workspace domains.
 - Let every workspace member submit reports.
-- Assign implementation work to developers.
-- Let developers mark work ready for review.
+- Assign implementation work to developers and designers.
+- Let assigned developers/designers mark work ready for review.
 - Let admins resolve reports and override status.
 - Use invite links/codes, not email-bound invites.
 - Treat the copied v1 extension as reusable UI/interaction material only.

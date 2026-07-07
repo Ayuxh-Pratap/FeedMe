@@ -955,8 +955,8 @@ Goal:
 
 ```txt
 Turn report ownership into a usable workflow.
-Admins and owners can assign reports to active developers and resolve reports.
-Developers can see assigned work in My Work and move their assigned reports through implementation statuses.
+Admins and owners can assign reports to active developers or designers and resolve reports.
+Developers and designers can see assigned work in My Work and move their assigned reports through implementation statuses.
 Reporters can see the feedback they submitted in My Work.
 ```
 
@@ -993,14 +993,14 @@ Rules:
 ```txt
 resolve workspaceSlug through the signed-in user's active membership
 scope all mutations by workspaceId and reportId
-assignment requires report:assign and only accepts active developer members
-assigning a developer moves the report to assigned
+assignment requires report:assign and only accepts active developer or designer members
+assigning a developer or designer moves the report to assigned
 assignment may be corrected while status is assigned
 assignment is locked once work reaches in_progress, ready_for_review, resolved, or archived
 resolved reports keep assigneeUserId as the completion owner for team metrics
 completed reports do not count as currently assigned work
-developer status updates require the report to be assigned to that developer
-developers can only move assigned work to in_progress or ready_for_review
+assignee status updates require the report to be assigned to that developer or designer
+assigned developers and designers can only move assigned work to in_progress or ready_for_review
 owner/admin can resolve reports directly
 resolved status sets resolvedAt; non-resolved status updates clear resolvedAt
 archived status sets archivedAt so archived reports leave the active read model
@@ -1013,12 +1013,12 @@ Dashboard wiring:
 My Work now reads real reports instead of mock report IDs.
 Assigned to me filters by assigneeUserId matching the current user and active assignment statuses only.
 Reported by me filters by reporterUserId matching the current user.
-Developers default to Assigned to me; other roles default to Reported by me.
+Developers and designers default to Assigned to me; other roles default to Reported by me.
 The Reports/My Work right rail reads workspace members from the shared members query and shows an Assignment control on the selected report.
-The right rail assignment control lists active developers only, saves through PATCH /assignment, and reconciles caches optimistically.
-For developers, the same right rail shows Start work and Ready for review actions when the selected report is assigned to the signed-in developer. These actions call PATCH /status and reconcile caches optimistically.
+The right rail assignment control lists active developers and designers, saves through PATCH /assignment, and reconciles caches optimistically.
+For assigned developers and designers, the same right rail shows Start work and Ready for review actions when the selected report is assigned to the signed-in member. These actions call PATCH /status and reconcile caches optimistically.
 For admins/owners, the same right rail can resolve reports directly without opening the full detail page.
-Report detail shows a workflow panel for admins/owners and assigned developers.
+Report detail shows a workflow panel for admins/owners and assigned developers/designers.
 ```
 
 ### Slice 9: Screenshot Storage
@@ -1191,8 +1191,8 @@ Tools (v1, read + workflow):
 whoami()                          confirm workspace + role (connection test)
 list_my_reports(status?, limit?)  reports assigned to the caller (scope=assigned)
 get_report(reportId)              full handoff text + page/element/annotated screenshots as images
-start_work(reportId)              assigned -> in_progress (assigned developer only)
-mark_ready_for_review(id, note?)  -> ready_for_review (assigned developer only)
+start_work(reportId)              assigned -> in_progress (assigned developer/designer only)
+mark_ready_for_review(id, note?)  -> ready_for_review (assigned developer/designer only)
 ```
 
 Rules:
@@ -1212,7 +1212,7 @@ Verified:
 Step 0 spike on Next 16: initialize, tools/list, tools/call all work over Streamable HTTP.
 End to end with a real PAT: no-auth -> 401; whoami -> workspace/role; get_report -> handoff
 text + 3 screenshots as image blocks; start_work on an unassigned report -> the service guard
-("Assign a developer before moving this report forward") surfaces as an MCP tool error.
+("Assign a developer or designer before moving this report forward") surfaces as an MCP tool error.
 ```
 
 Dashboard wiring:
