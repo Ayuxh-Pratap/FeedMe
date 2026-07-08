@@ -681,6 +681,73 @@ async function getReportIdByClientReportId(
   return row?.id ?? null
 }
 
+function getSubmittedStatusEventValues(
+  workspaceId: string,
+  reportId: string,
+  userId: string
+) {
+  return {
+    workspaceId,
+    reportId,
+    actorUserId: userId,
+    fromStatus: null,
+    toStatus: "submitted" as const,
+    note: "Report submitted.",
+  }
+}
+
+function getCreateReportAssetValues(
+  workspaceId: string,
+  reportId: string,
+  input: CreateReportInput
+) {
+  return input.assets.map((asset) => ({
+    workspaceId,
+    reportId,
+    type: asset.type,
+    url: asset.url,
+    mimeType: asset.mimeType,
+    width: asset.width,
+    height: asset.height,
+  }))
+}
+
+async function insertReportCreateSideEffects(
+  workspaceId: string,
+  reportId: string,
+  userId: string,
+  input: CreateReportInput
+) {
+  const statusEventInsert = db
+    .insert(reportStatusEvents)
+    .values(getSubmittedStatusEventValues(workspaceId, reportId, userId))
+
+  if (input.assets.length > 0) {
+    await db.batch([
+      statusEventInsert,
+      db
+        .insert(reportAssets)
+        .values(getCreateReportAssetValues(workspaceId, reportId, input)),
+    ])
+    return
+  }
+
+  await statusEventInsert
+}
+
+async function deleteInsertedReportAfterCreateFailure(
+  workspaceId: string,
+  reportId: string
+) {
+  try {
+    await db
+      .delete(reports)
+      .where(and(eq(reports.workspaceId, workspaceId), eq(reports.id, reportId)))
+  } catch (cleanupError) {
+    console.error("Failed to clean up report after create failure.", cleanupError)
+  }
+}
+
 async function assertAssignableReportMember(workspaceId: string, userId: string) {
   const [member] = await db
     .select({ id: workspaceMemberships.id })
@@ -887,47 +954,31 @@ export async function createWorkspaceReport(
   } satisfies typeof reports.$inferInsert
 
   if (clientReportId) {
-    const insertedReportId = await db.transaction(async (tx) => {
-      const [insertedReport] = await tx
-        .insert(reports)
-        .values(reportValues)
-        .onConflictDoNothing({
-          target: [reports.workspaceId, reports.clientReportId],
-        })
-        .returning({ id: reports.id })
-
-      if (!insertedReport) {
-        return null
-      }
-
-      await tx.insert(reportStatusEvents).values({
-        workspaceId: workspace.id,
-        reportId,
-        actorUserId: userId,
-        fromStatus: null,
-        toStatus: "submitted",
-        note: "Report submitted.",
+    const [insertedReport] = await db
+      .insert(reports)
+      .values(reportValues)
+      .onConflictDoNothing({
+        target: [reports.workspaceId, reports.clientReportId],
       })
+      .returning({ id: reports.id })
 
-      if (input.assets.length > 0) {
-        await tx.insert(reportAssets).values(
-          input.assets.map((asset) => ({
-            workspaceId: workspace.id,
-            reportId,
-            type: asset.type,
-            url: asset.url,
-            mimeType: asset.mimeType,
-            width: asset.width,
-            height: asset.height,
-          }))
+    if (insertedReport) {
+      try {
+        await insertReportCreateSideEffects(
+          workspace.id,
+          insertedReport.id,
+          userId,
+          input
         )
+      } catch (error) {
+        await deleteInsertedReportAfterCreateFailure(
+          workspace.id,
+          insertedReport.id
+        )
+        throw error
       }
 
-      return insertedReport.id
-    })
-
-    if (insertedReportId) {
-      return getWorkspaceReport(userId, workspaceSlug, insertedReportId)
+      return getWorkspaceReport(userId, workspaceSlug, insertedReport.id)
     }
 
     const existingReportId = await getReportIdByClientReportId(
@@ -943,30 +994,17 @@ export async function createWorkspaceReport(
   }
 
   const reportInsert = db.insert(reports).values(reportValues)
-  const statusEventInsert = db.insert(reportStatusEvents).values({
-    workspaceId: workspace.id,
-    reportId,
-    actorUserId: userId,
-    fromStatus: null,
-    toStatus: "submitted",
-    note: "Report submitted.",
-  })
+  const statusEventInsert = db
+    .insert(reportStatusEvents)
+    .values(getSubmittedStatusEventValues(workspace.id, reportId, userId))
 
   if (input.assets.length > 0) {
     await db.batch([
       reportInsert,
       statusEventInsert,
-      db.insert(reportAssets).values(
-        input.assets.map((asset) => ({
-          workspaceId: workspace.id,
-          reportId,
-          type: asset.type,
-          url: asset.url,
-          mimeType: asset.mimeType,
-          width: asset.width,
-          height: asset.height,
-        }))
-      ),
+      db
+        .insert(reportAssets)
+        .values(getCreateReportAssetValues(workspace.id, reportId, input)),
     ])
   } else {
     await db.batch([reportInsert, statusEventInsert])

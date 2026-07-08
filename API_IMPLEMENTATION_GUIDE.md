@@ -901,6 +901,9 @@ reports must send `clientReportId` using the local report id. The reports table
 enforces `workspaceId + clientReportId` uniqueness, and POST
 `/api/workspaces/:workspaceSlug/reports` must return the existing report on a
 duplicate client id instead of creating another report.
+Because the app uses `drizzle-orm/neon-http`, this idempotency path must not use
+`db.transaction(...)`; use conflict-safe inserts plus `db.batch(...)`/single
+queries unless the database driver changes.
 The composer collects a user-authored title, description, category, and severity instead
 of deriving the report title from the browser page title.
 The content script is no longer registered in the manifest. It is injected on
