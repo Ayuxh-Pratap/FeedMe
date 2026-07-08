@@ -663,6 +663,24 @@ async function getMutableReportRow(workspaceId: string, reportId: string) {
   return row
 }
 
+async function getReportIdByClientReportId(
+  workspaceId: string,
+  clientReportId: string
+) {
+  const [row] = await db
+    .select({ id: reports.id })
+    .from(reports)
+    .where(
+      and(
+        eq(reports.workspaceId, workspaceId),
+        eq(reports.clientReportId, clientReportId)
+      )
+    )
+    .limit(1)
+
+  return row?.id ?? null
+}
+
 async function assertAssignableReportMember(workspaceId: string, userId: string) {
   const [member] = await db
     .select({ id: workspaceMemberships.id })
@@ -845,10 +863,12 @@ export async function createWorkspaceReport(
   await assertWorkspaceAllowsReportDomain(workspace.id, domain)
 
   const reportId = randomUUID()
+  const clientReportId = input.clientReportId ?? null
   const capturedAt = parseCapturedAt(input)
-  const reportInsert = db.insert(reports).values({
+  const reportValues = {
     id: reportId,
     workspaceId: workspace.id,
+    clientReportId,
     title: buildReportTitle(input, domain),
     summary: buildReportSummary(input),
     severity: input.severity,
@@ -864,7 +884,65 @@ export async function createWorkspaceReport(
     developerPrompt: buildCreateDeveloperPrompt(input, domain),
     reporterUserId: userId,
     capturedAt,
-  })
+  } satisfies typeof reports.$inferInsert
+
+  if (clientReportId) {
+    const insertedReportId = await db.transaction(async (tx) => {
+      const [insertedReport] = await tx
+        .insert(reports)
+        .values(reportValues)
+        .onConflictDoNothing({
+          target: [reports.workspaceId, reports.clientReportId],
+        })
+        .returning({ id: reports.id })
+
+      if (!insertedReport) {
+        return null
+      }
+
+      await tx.insert(reportStatusEvents).values({
+        workspaceId: workspace.id,
+        reportId,
+        actorUserId: userId,
+        fromStatus: null,
+        toStatus: "submitted",
+        note: "Report submitted.",
+      })
+
+      if (input.assets.length > 0) {
+        await tx.insert(reportAssets).values(
+          input.assets.map((asset) => ({
+            workspaceId: workspace.id,
+            reportId,
+            type: asset.type,
+            url: asset.url,
+            mimeType: asset.mimeType,
+            width: asset.width,
+            height: asset.height,
+          }))
+        )
+      }
+
+      return insertedReport.id
+    })
+
+    if (insertedReportId) {
+      return getWorkspaceReport(userId, workspaceSlug, insertedReportId)
+    }
+
+    const existingReportId = await getReportIdByClientReportId(
+      workspace.id,
+      clientReportId
+    )
+
+    if (existingReportId) {
+      return getWorkspaceReport(userId, workspaceSlug, existingReportId)
+    }
+
+    throw new ValidationError("Report was already submitted. Refresh and try again.")
+  }
+
+  const reportInsert = db.insert(reports).values(reportValues)
   const statusEventInsert = db.insert(reportStatusEvents).values({
     workspaceId: workspace.id,
     reportId,

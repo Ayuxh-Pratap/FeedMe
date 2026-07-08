@@ -94,6 +94,13 @@ const reportAssetInputSchema = z.object({
 })
 
 export const createReportInputSchema = z.object({
+  clientReportId: z
+    .string()
+    .trim()
+    .min(8)
+    .max(160)
+    .regex(/^[a-zA-Z0-9:_-]+$/, "Invalid client report id.")
+    .optional(),
   url: z
     .string()
     .trim()

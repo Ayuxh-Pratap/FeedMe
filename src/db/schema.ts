@@ -310,6 +310,7 @@ export const reports = pgTable(
     severity: reportSeverity("severity").default("medium").notNull(),
     status: reportStatus("status").default("submitted").notNull(),
     type: reportType("type").default("ux").notNull(),
+    clientReportId: varchar("client_report_id", { length: 160 }),
     domain: varchar("domain", { length: 253 }).notNull(),
     url: text("url").notNull(),
     browser: varchar("browser", { length: 120 }),
@@ -331,6 +332,10 @@ export const reports = pgTable(
   },
   (table) => [
     unique("reports_id_workspace_id_unique").on(table.id, table.workspaceId),
+    unique("reports_workspace_client_report_id_unique").on(
+      table.workspaceId,
+      table.clientReportId
+    ),
     index("reports_workspace_status_idx").on(table.workspaceId, table.status),
     index("reports_workspace_assignee_idx").on(table.workspaceId, table.assigneeUserId),
     index("reports_workspace_reporter_idx").on(table.workspaceId, table.reporterUserId),
