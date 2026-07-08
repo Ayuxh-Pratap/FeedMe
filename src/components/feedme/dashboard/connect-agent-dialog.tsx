@@ -222,7 +222,7 @@ export function ConnectAgentDialog({
                   aria-label="Token name"
                   value={label}
                   onChange={(event) => setLabel(event.target.value)}
-                  placeholder="e.g. Ayush on Cursor"
+                  placeholder="e.g. Cursor on this workspace"
                   maxLength={120}
                   disabled={isGenerating}
                   className="h-9 w-full min-w-0 rounded-lg border border-border-subtle bg-background px-3 text-body-3 text-foreground outline-none transition-colors duration-base ease-out-soft placeholder:text-muted-foreground focus:border-border-strong disabled:cursor-not-allowed disabled:opacity-55"

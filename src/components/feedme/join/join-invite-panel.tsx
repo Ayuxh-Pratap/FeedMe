@@ -29,11 +29,17 @@ export function JoinInvitePanel({
 }: JoinInvitePanelProps) {
   const router = useRouter()
   const [isAccepting, setIsAccepting] = useState(false)
+  const [isRedirecting, setIsRedirecting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const joinPath = `/join/${encodeURIComponent(inviteCode)}`
   const nextParam = encodeURIComponent(joinPath)
+  const isBusy = isAccepting || isRedirecting
 
   async function acceptInvite() {
+    if (isBusy) {
+      return
+    }
+
     setIsAccepting(true)
     setErrorMessage(null)
 
@@ -42,6 +48,7 @@ export function JoinInvitePanel({
         `/api/invites/${encodeURIComponent(inviteCode)}/accept`
       )
 
+      setIsRedirecting(true)
       router.push(result.nextPath)
       router.refresh()
     } catch (error) {
@@ -50,8 +57,8 @@ export function JoinInvitePanel({
           ? error.message
           : "Unable to accept invite. Please try again."
       )
-    } finally {
       setIsAccepting(false)
+      setIsRedirecting(false)
     }
   }
 
@@ -94,13 +101,13 @@ export function JoinInvitePanel({
       <AuthButton
         type="button"
         className="w-full"
-        disabled={isAccepting}
+        disabled={isBusy}
         onClick={() => {
           void acceptInvite()
         }}
       >
-        {isAccepting ? "Joining..." : `Join ${workspaceName}`}
-        {!isAccepting ? <Check className="size-4" /> : null}
+        {isRedirecting ? "Opening workspace..." : isAccepting ? "Joining..." : `Join ${workspaceName}`}
+        {!isBusy ? <Check className="size-4" /> : null}
       </AuthButton>
       <p className="text-center text-caption text-text-muted">
         You will join as {role.replace(/_/g, " ")}.
