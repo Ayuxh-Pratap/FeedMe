@@ -1,21 +1,28 @@
 "use client"
 
 import Image from "next/image"
-import { usePathname, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   useCallback,
   useEffect,
   useMemo,
   useState,
   type KeyboardEvent,
+  type ReactElement,
   type ReactNode,
 } from "react"
 import {
   ArrowUpRight,
+  Bot,
   Check,
+  CheckCircle2,
   ChevronDown,
+  Code2,
+  Copy,
+  FileText,
   Globe2,
   Loader2,
+  Play,
 } from "lucide-react"
 
 import {
@@ -26,6 +33,14 @@ import {
   DashboardFreshnessNotice,
   DashboardInlineError,
 } from "@/components/feedme/dashboard/dashboard-query-status"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import {
   reportPriorityCodeBaseClass,
   reportPriorityCodePillStyle,
@@ -51,7 +66,12 @@ import {
   useReportCountsQuery,
   useReportsFreshnessQuery,
   useReportsInfiniteQuery,
+  useUpdateReportStatusMutation,
 } from "@/lib/report-queries"
+import {
+  isAssignableReportRole,
+  type WorkspaceMemberRole,
+} from "@/lib/team-members"
 
 type ReportsListProps = {
   pageInfo?: WorkspaceReportsPageInfo
@@ -171,6 +191,199 @@ function ReportAssigneeAvatar({ report }: { report: WorkspaceReport }) {
       size={24}
       value={report.assignee.name}
     />
+  )
+}
+
+const reportContextMenuItemClass =
+  "h-8 cursor-pointer rounded-md px-2.5 text-body-3 text-text-body focus:bg-fill-subtle focus:text-foreground data-highlighted:bg-fill-subtle data-highlighted:text-foreground"
+
+function buildReportMcpCommand(report: WorkspaceReport) {
+  return [
+    "Use FeedMe MCP.",
+    `Get report ${report.id}.`,
+    "Inspect the screenshots, selected element, reporter feedback, and implementation brief.",
+    "Implement the smallest production-safe fix, run relevant checks, and mark the report ready for review with a concise summary.",
+  ].join(" ")
+}
+
+function buildReportFixPrompt(report: WorkspaceReport) {
+  return [
+    "Fix this FeedMe report:",
+    "",
+    `Report ID: ${report.id}`,
+    `Title: ${report.title}`,
+    `URL: ${report.url}`,
+    `Severity: ${report.severity}`,
+    `Status: ${report.status}`,
+    `Selected element: ${report.selectedElement.selector}`,
+    "",
+    "Feedback:",
+    report.feedback.message || report.summary,
+    "",
+    "Use the screenshots and FeedMe report context. Keep the fix scoped and production-ready. Summarize changed files and verification.",
+  ].join("\n")
+}
+
+function canUseReportWorkflowAction(
+  report: WorkspaceReport,
+  currentUserId: string,
+  currentUserRole: WorkspaceMemberRole
+) {
+  return (
+    isAssignableReportRole(currentUserRole) &&
+    report.assigneeUserId === currentUserId
+  )
+}
+
+function ReportActionsContextMenu({
+  children,
+  report,
+}: {
+  children: ReactElement
+  report: WorkspaceReport
+}) {
+  const router = useRouter()
+  const {
+    currentUserId,
+    currentUserRole,
+    updateReport,
+    workspaceSlug,
+  } = useWorkspaceDashboardData()
+  const updateStatusMutation = useUpdateReportStatusMutation(workspaceSlug)
+  const [copiedAction, setCopiedAction] = useState<string | null>(null)
+  const canManageBrief =
+    currentUserRole === "owner" || currentUserRole === "admin"
+  const canUseWorkflow = canUseReportWorkflowAction(
+    report,
+    currentUserId,
+    currentUserRole
+  )
+  const canStartWork = canUseWorkflow && report.status === "assigned"
+  const canMarkReady =
+    canUseWorkflow &&
+    (report.status === "assigned" || report.status === "in_progress")
+
+  async function copyText(action: string, value: string) {
+    await navigator.clipboard.writeText(value)
+    setCopiedAction(action)
+    window.setTimeout(() => {
+      setCopiedAction((currentAction) =>
+        currentAction === action ? null : currentAction
+      )
+    }, 1400)
+  }
+
+  async function updateStatus(status: WorkspaceReport["status"]) {
+    const result = await updateStatusMutation.mutateAsync({ report, status })
+    updateReport(result.report)
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent
+        className="w-56 rounded-lg border border-border-subtle bg-surface-card p-1 text-foreground shadow-popover before:hidden"
+      >
+        <ContextMenuLabel className="px-2.5 py-1 text-caption text-text-muted">
+          Agent
+        </ContextMenuLabel>
+        <ContextMenuItem
+          className={reportContextMenuItemClass}
+          onSelect={(event) => {
+            event.preventDefault()
+            void copyText("agent", buildReportMcpCommand(report))
+          }}
+        >
+          <Bot className="size-3.5 text-text-muted" />
+          {copiedAction === "agent" ? "Agent command copied" : "Open in agent"}
+        </ContextMenuItem>
+        <ContextMenuItem
+          className={reportContextMenuItemClass}
+          onSelect={(event) => {
+            event.preventDefault()
+            void copyText("mcp", buildReportMcpCommand(report))
+          }}
+        >
+          <Copy className="size-3.5 text-text-muted" />
+          {copiedAction === "mcp" ? "MCP command copied" : "Copy MCP command"}
+        </ContextMenuItem>
+        <ContextMenuItem
+          className={reportContextMenuItemClass}
+          onSelect={(event) => {
+            event.preventDefault()
+            void copyText("prompt", buildReportFixPrompt(report))
+          }}
+        >
+          <Code2 className="size-3.5 text-text-muted" />
+          {copiedAction === "prompt" ? "Fix prompt copied" : "Copy fix prompt"}
+        </ContextMenuItem>
+
+        <ContextMenuSeparator className="bg-border-hairline" />
+        <ContextMenuLabel className="px-2.5 py-1 text-caption text-text-muted">
+          Report
+        </ContextMenuLabel>
+        <ContextMenuItem
+          className={reportContextMenuItemClass}
+          onSelect={() => router.push(`/${workspaceSlug}/reports/${report.id}`)}
+        >
+          <ArrowUpRight className="size-3.5 text-text-muted" />
+          Open report
+        </ContextMenuItem>
+        {canManageBrief ? (
+          <ContextMenuItem
+            className={reportContextMenuItemClass}
+            onSelect={() =>
+              router.push(`/${workspaceSlug}/reports/${report.id}?tab=brief`)
+            }
+          >
+            <FileText className="size-3.5 text-text-muted" />
+            Implementation brief
+          </ContextMenuItem>
+        ) : null}
+        <ContextMenuItem
+          className={reportContextMenuItemClass}
+          onSelect={() => {
+            window.open(report.url, "_blank", "noopener,noreferrer")
+          }}
+        >
+          <Globe2 className="size-3.5 text-text-muted" />
+          Open captured page
+        </ContextMenuItem>
+
+        <ContextMenuSeparator className="bg-border-hairline" />
+        <ContextMenuLabel className="px-2.5 py-1 text-caption text-text-muted">
+          Workflow
+        </ContextMenuLabel>
+        <ContextMenuItem
+          disabled={!canStartWork || updateStatusMutation.isPending}
+          className={reportContextMenuItemClass}
+          onSelect={() => {
+            void updateStatus("in_progress")
+          }}
+        >
+          {updateStatusMutation.isPending && canStartWork ? (
+            <Loader2 className="size-3.5 animate-spin text-text-muted" />
+          ) : (
+            <Play className="size-3.5 text-text-muted" />
+          )}
+          Start work
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!canMarkReady || updateStatusMutation.isPending}
+          className={reportContextMenuItemClass}
+          onSelect={() => {
+            void updateStatus("ready_for_review")
+          }}
+        >
+          {updateStatusMutation.isPending && canMarkReady ? (
+            <Loader2 className="size-3.5 animate-spin text-text-muted" />
+          ) : (
+            <CheckCircle2 className="size-3.5 text-text-muted" />
+          )}
+          Ready for review
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
@@ -465,72 +678,74 @@ export function ReportCard({
   }
 
   return (
-    <article
-      role="button"
-      tabIndex={0}
-      onClick={selectWithWarmCache}
-      onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault()
-          selectWithWarmCache()
-        }
-      }}
-      className={cn(
-        "group relative aspect-[16/9] cursor-pointer overflow-hidden rounded-xl border bg-surface-card outline-none transition-all duration-base ease-out-soft",
-        "hover:-translate-y-0.5 hover:border-border-subtle hover:shadow-popover focus-visible:border-border-strong",
-        isSelected
-          ? "border-primary-soft/75 shadow-[0_0_0_3px_color-mix(in_srgb,var(--primary-soft)_12%,transparent),0_18px_54px_color-mix(in_srgb,var(--surface-divider)_72%,transparent)] hover:border-primary-soft/80 focus-visible:border-primary-soft/80"
-          : "border-border-hairline shadow-card"
-      )}
-    >
-      <ReportEvidenceImage report={report} />
-
-      <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
-        <ReportPriorityCode title={`${report.severity} priority`}>
-          {reportSeverityPriorityLabels[report.severity]}
-        </ReportPriorityCode>
-      </div>
-
-      <div className="absolute inset-x-0 bottom-0 h-28 bg-[linear-gradient(0deg,color-mix(in_srgb,var(--surface-divider)_92%,transparent),color-mix(in_srgb,var(--surface-divider)_46%,transparent)_58%,transparent)]" />
-
-      <div className="absolute inset-x-0 bottom-0 flex flex-col gap-2 p-4 pr-12">
-        <h2
-          className={cn(
-            "line-clamp-1 text-heading-5 text-foreground transition-transform duration-base ease-out-soft"
-          )}
-        >
-          {report.title}
-        </h2>
-
-        <div
-          className={cn(
-            "flex max-h-0 min-w-0 translate-y-1 flex-wrap items-center gap-x-3 gap-y-1 overflow-hidden text-body-3 text-text-secondary opacity-0 transition-all duration-slow ease-toolbar",
-            "group-hover:max-h-5 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:max-h-5 group-focus-visible:translate-y-0 group-focus-visible:opacity-100",
-            isSelected && "max-h-5 translate-y-0 opacity-100"
-          )}
-        >
-          <span>{report.assignee?.name ?? "Unassigned"}</span>
-          <span className="text-text-muted">{report.domain}</span>
-          <span className="text-text-muted">{report.capturedAgo}</span>
-        </div>
-      </div>
-
-      <a
-        href={report.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={(event) => {
-          event.stopPropagation()
+    <ReportActionsContextMenu report={report}>
+      <article
+        role="button"
+        tabIndex={0}
+        onClick={selectWithWarmCache}
+        onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault()
+            selectWithWarmCache()
+          }
         }}
         className={cn(
-          "absolute bottom-3 right-3 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-border-subtle bg-surface-raised text-foreground shadow-button-hover transition-all duration-base ease-out-soft",
-          "hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
+          "group relative aspect-[16/9] cursor-pointer overflow-hidden rounded-xl border bg-surface-card outline-none transition-all duration-base ease-out-soft",
+          "hover:-translate-y-0.5 hover:border-border-subtle hover:shadow-popover focus-visible:border-border-strong",
+          isSelected
+            ? "border-primary-soft/75 shadow-[0_0_0_3px_color-mix(in_srgb,var(--primary-soft)_12%,transparent),0_18px_54px_color-mix(in_srgb,var(--surface-divider)_72%,transparent)] hover:border-primary-soft/80 focus-visible:border-primary-soft/80"
+            : "border-border-hairline shadow-card"
         )}
-        aria-label={`Open captured page for ${report.title}`}
       >
-        <ArrowUpRight className="size-3.5" />
-      </a>
-    </article>
+        <ReportEvidenceImage report={report} />
+
+        <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
+          <ReportPriorityCode title={`${report.severity} priority`}>
+            {reportSeverityPriorityLabels[report.severity]}
+          </ReportPriorityCode>
+        </div>
+
+        <div className="absolute inset-x-0 bottom-0 h-28 bg-[linear-gradient(0deg,color-mix(in_srgb,var(--surface-divider)_92%,transparent),color-mix(in_srgb,var(--surface-divider)_46%,transparent)_58%,transparent)]" />
+
+        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-2 p-4 pr-12">
+          <h2
+            className={cn(
+              "line-clamp-1 text-heading-5 text-foreground transition-transform duration-base ease-out-soft"
+            )}
+          >
+            {report.title}
+          </h2>
+
+          <div
+            className={cn(
+              "flex max-h-0 min-w-0 translate-y-1 flex-wrap items-center gap-x-3 gap-y-1 overflow-hidden text-body-3 text-text-secondary opacity-0 transition-all duration-slow ease-toolbar",
+              "group-hover:max-h-5 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:max-h-5 group-focus-visible:translate-y-0 group-focus-visible:opacity-100",
+              isSelected && "max-h-5 translate-y-0 opacity-100"
+            )}
+          >
+            <span>{report.assignee?.name ?? "Unassigned"}</span>
+            <span className="text-text-muted">{report.domain}</span>
+            <span className="text-text-muted">{report.capturedAgo}</span>
+          </div>
+        </div>
+
+        <a
+          href={report.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(event) => {
+            event.stopPropagation()
+          }}
+          className={cn(
+            "absolute bottom-3 right-3 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-border-subtle bg-surface-raised text-foreground shadow-button-hover transition-all duration-base ease-out-soft",
+            "hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
+          )}
+          aria-label={`Open captured page for ${report.title}`}
+        >
+          <ArrowUpRight className="size-3.5" />
+        </a>
+      </article>
+    </ReportActionsContextMenu>
   )
 }
 
@@ -558,66 +773,70 @@ export function ReportTableRow({
   }
 
   return (
-    <tr
-      role="button"
-      tabIndex={0}
-      onClick={selectWithWarmCache}
-      onKeyDown={handleKeyDown}
-      className={cn(
-        "group cursor-pointer border-b border-border-hairline outline-none transition-all duration-base ease-out-soft",
-        "hover:bg-fill-translucent focus-visible:bg-fill-subtle",
-        isSelected && "bg-fill-subtle"
-      )}
-    >
-      <td className="max-w-0 px-4 py-4 align-top">
-        <div className="min-w-0 max-w-full">
-          <p
-            className="max-w-full truncate text-heading-5 text-foreground"
-            title={report.title}
-          >
-            {report.title}
-          </p>
-          <p
-            className="mt-1 max-w-full truncate text-body-3 text-text-body"
-            title={report.summary}
-          >
-            {report.summary}
-          </p>
-        </div>
-      </td>
-      <td className="px-4 py-4 align-top">
-        <ReportPriorityCode title={`${report.severity} priority`}>
-          {reportSeverityPriorityLabels[report.severity]}
-        </ReportPriorityCode>
-      </td>
-      <td className="max-w-0 px-4 py-4 align-top">
-        <div className="flex min-w-0 items-center gap-2 text-body-3 text-text-secondary">
-          <Globe2 className="size-3.5 shrink-0 text-text-muted" />
-          <span className="truncate">{report.domain}</span>
-        </div>
-      </td>
-      <td className="max-w-0 px-4 py-4 align-top">
-        <div className="flex min-w-0 items-center justify-between gap-3 text-body-3 text-text-body">
-          <span className="inline-flex min-w-0 items-center gap-2">
-            <ReportAssigneeAvatar report={report} />
-            <span className="truncate">{report.assignee?.name ?? "Unassigned"}</span>
-          </span>
-          <span className="shrink-0 text-text-muted">{report.capturedAgo}</span>
-          <a
-            href={report.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(event) => {
-              event.stopPropagation()
-            }}
-            className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
-            aria-label={`Open captured page for ${report.title}`}
-          >
-            <ArrowUpRight className="size-3.5" />
-          </a>
-        </div>
-      </td>
-    </tr>
+    <ReportActionsContextMenu report={report}>
+      <tr
+        role="button"
+        tabIndex={0}
+        onClick={selectWithWarmCache}
+        onKeyDown={handleKeyDown}
+        className={cn(
+          "group cursor-pointer border-b border-border-hairline outline-none transition-all duration-base ease-out-soft",
+          "hover:bg-fill-translucent focus-visible:bg-fill-subtle",
+          isSelected && "bg-fill-subtle"
+        )}
+      >
+        <td className="max-w-0 px-4 py-4 align-top">
+          <div className="min-w-0 max-w-full">
+            <p
+              className="max-w-full truncate text-heading-5 text-foreground"
+              title={report.title}
+            >
+              {report.title}
+            </p>
+            <p
+              className="mt-1 max-w-full truncate text-body-3 text-text-body"
+              title={report.summary}
+            >
+              {report.summary}
+            </p>
+          </div>
+        </td>
+        <td className="px-4 py-4 align-top">
+          <ReportPriorityCode title={`${report.severity} priority`}>
+            {reportSeverityPriorityLabels[report.severity]}
+          </ReportPriorityCode>
+        </td>
+        <td className="max-w-0 px-4 py-4 align-top">
+          <div className="flex min-w-0 items-center gap-2 text-body-3 text-text-secondary">
+            <Globe2 className="size-3.5 shrink-0 text-text-muted" />
+            <span className="truncate">{report.domain}</span>
+          </div>
+        </td>
+        <td className="max-w-0 px-4 py-4 align-top">
+          <div className="flex min-w-0 items-center justify-between gap-3 text-body-3 text-text-body">
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <ReportAssigneeAvatar report={report} />
+              <span className="truncate">
+                {report.assignee?.name ?? "Unassigned"}
+              </span>
+            </span>
+            <span className="shrink-0 text-text-muted">{report.capturedAgo}</span>
+            <a
+              href={report.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => {
+                event.stopPropagation()
+              }}
+              className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+              aria-label={`Open captured page for ${report.title}`}
+            >
+              <ArrowUpRight className="size-3.5" />
+            </a>
+          </div>
+        </td>
+      </tr>
+    </ReportActionsContextMenu>
   )
 }
 

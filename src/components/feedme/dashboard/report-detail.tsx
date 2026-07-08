@@ -2,7 +2,12 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { useState, type ReactNode } from "react"
+import { usePathname, useSearchParams } from "next/navigation"
+import {
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react"
 import {
   ArrowLeft,
   Check,
@@ -12,6 +17,8 @@ import {
   Code2,
   ExternalLink,
   CheckCircle2,
+  Link2,
+  ListChecks,
   Loader2,
   Lock,
   Maximize2,
@@ -19,7 +26,9 @@ import {
   Monitor,
   MousePointer2,
   Play,
+  Plus,
   Send,
+  Trash2,
   UserRoundCheck,
   X,
 } from "lucide-react"
@@ -53,8 +62,10 @@ import {
   mergeReportCacheEntry,
   useAssignReportMutation,
   useReportDetailQuery,
+  useUpdateReportImplementationBriefMutation,
   useUpdateReportStatusMutation,
 } from "@/lib/report-queries"
+import { replaceUrlSearchParams } from "@/lib/dashboard-url"
 import { cn } from "@/lib/utils"
 
 type ReportDetailProps = {
@@ -66,6 +77,12 @@ type ReportDetailProps = {
 }
 
 type ReportScreenshot = WorkspaceReport["screenshots"][number]
+type ReportDetailTab = "evidence" | "activity" | "brief"
+type ReferenceLinkDraft = {
+  id: string
+  label: string
+  url: string
+}
 
 function DetailBadge({
   children,
@@ -663,6 +680,433 @@ function ReportWorkflowPanel({
   )
 }
 
+function getAllowedReportDetailTab(
+  tab: string | null,
+  canManageReport: boolean
+): ReportDetailTab {
+  if (tab === "activity") {
+    return "activity"
+  }
+
+  if (tab === "brief" && canManageReport) {
+    return "brief"
+  }
+
+  return "evidence"
+}
+
+function getDetailTabSearchParams(
+  searchParams: { toString: () => string },
+  tab: ReportDetailTab
+) {
+  const params = new URLSearchParams(searchParams.toString())
+
+  if (tab === "evidence") {
+    params.delete("tab")
+  } else {
+    params.set("tab", tab)
+  }
+
+  return params
+}
+
+function makeDraftId() {
+  return globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
+}
+
+function makeReferenceLinkDraft(
+  link?: NonNullable<WorkspaceReport["implementationBrief"]>["referenceLinks"][number]
+): ReferenceLinkDraft {
+  return {
+    id: makeDraftId(),
+    label: link?.label ?? "",
+    url: link?.url ?? "",
+  }
+}
+
+function normalizeBriefList(values: string[]) {
+  return values.map((value) => value.trim()).filter(Boolean)
+}
+
+function normalizeReferenceLinks(links: ReferenceLinkDraft[]) {
+  return links
+    .map((link) => ({
+      label: link.label.trim() || undefined,
+      url: link.url.trim(),
+    }))
+    .filter((link) => Boolean(link.url))
+}
+
+function BriefTextarea({
+  label,
+  onChange,
+  placeholder,
+  rows = 6,
+  value,
+}: {
+  label: string
+  onChange: (value: string) => void
+  placeholder?: string
+  rows?: number
+  value: string
+}) {
+  return (
+    <label className="grid gap-2 border-b border-border-hairline px-4 py-4 last:border-b-0">
+      <span className="text-heading-5 text-foreground">{label}</span>
+      <textarea
+        rows={rows}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className="feedme-scrollbar h-40 min-h-40 resize-y rounded-lg border border-border-hairline bg-background px-3 py-2 text-body-3 text-text-secondary outline-none transition-all duration-base ease-out-soft placeholder:text-text-muted focus:border-border-strong focus:bg-surface-card"
+      />
+    </label>
+  )
+}
+
+function BriefListEditor({
+  addLabel,
+  items,
+  label,
+  onChange,
+  placeholder,
+}: {
+  addLabel: string
+  items: string[]
+  label: string
+  onChange: (items: string[]) => void
+  placeholder: string
+}) {
+  const [draft, setDraft] = useState("")
+
+  function addItem() {
+    const value = draft.trim()
+
+    if (!value) {
+      return
+    }
+
+    onChange([...items, value])
+    setDraft("")
+  }
+
+  function updateItem(index: number, value: string) {
+    const nextItems = [...items]
+    nextItems[index] = value
+    onChange(nextItems)
+  }
+
+  function removeItem(index: number) {
+    onChange(items.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  return (
+    <section className="border-b border-border-hairline px-4 py-4 last:border-b-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ListChecks className="size-4 text-text-muted" />
+          <h3 className="text-heading-5 text-foreground">{label}</h3>
+          {items.length > 0 ? (
+            <span className="rounded-full border border-border-hairline bg-fill-translucent px-2 py-0.5 text-caption text-text-muted">
+              {items.length}
+            </span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          disabled={!draft.trim()}
+          onClick={addItem}
+          className="inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md border border-border-hairline bg-fill-translucent px-2 text-caption text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-fill-translucent disabled:hover:text-text-body disabled:active:scale-100"
+        >
+          <Plus className="size-3.5" />
+          {addLabel}
+        </button>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {items.map((item, index) => (
+          <div key={index} className="flex items-center gap-2">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border-hairline bg-fill-translucent text-caption text-text-muted">
+              {index + 1}
+            </span>
+            <input
+              value={item}
+              onChange={(event) => updateItem(index, event.target.value)}
+              className="h-11 min-w-0 flex-1 rounded-lg border border-border-hairline bg-background px-3 text-body-3 text-text-secondary outline-none transition-all duration-base ease-out-soft placeholder:text-text-muted focus:border-border-strong focus:bg-surface-card"
+            />
+            <button
+              type="button"
+              onClick={() => removeItem(index)}
+              className="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-muted shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+              aria-label={`Remove ${label.toLowerCase()} item ${index + 1}`}
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        ))}
+
+        <div>
+          <input
+            value={draft}
+            placeholder={placeholder}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                addItem()
+              }
+            }}
+            className="h-11 w-full rounded-lg border border-border-hairline bg-background px-3 text-body-3 text-text-secondary outline-none transition-all duration-base ease-out-soft placeholder:text-text-muted focus:border-border-strong focus:bg-surface-card"
+          />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function ReferenceLinksEditor({
+  links,
+  onChange,
+}: {
+  links: ReferenceLinkDraft[]
+  onChange: (links: ReferenceLinkDraft[]) => void
+}) {
+  function addLink() {
+    onChange([...links, makeReferenceLinkDraft()])
+  }
+
+  function updateLink(
+    id: string,
+    field: keyof Pick<ReferenceLinkDraft, "label" | "url">,
+    value: string
+  ) {
+    onChange(
+      links.map((link) => (link.id === id ? { ...link, [field]: value } : link))
+    )
+  }
+
+  function removeLink(id: string) {
+    onChange(links.filter((link) => link.id !== id))
+  }
+
+  return (
+    <section className="border-b border-border-hairline px-4 py-4 last:border-b-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Link2 className="size-4 text-text-muted" />
+          <h3 className="text-heading-5 text-foreground">Reference links</h3>
+        </div>
+        <button
+          type="button"
+          onClick={addLink}
+          className="inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md border border-border-hairline bg-fill-translucent px-2 text-caption text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)]"
+        >
+          <Plus className="size-3.5" />
+          Add
+        </button>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {links.length === 0 ? (
+          <div className="flex h-11 items-center rounded-lg border border-dashed border-border-hairline bg-background px-3 text-body-3 text-text-muted">
+            No reference links
+          </div>
+        ) : null}
+
+        {links.map((link) => (
+          <div key={link.id} className="grid gap-2 sm:grid-cols-[0.8fr_1.2fr_auto]">
+            <input
+              value={link.label}
+              placeholder="Label"
+              onChange={(event) => updateLink(link.id, "label", event.target.value)}
+              className="h-11 rounded-lg border border-border-hairline bg-background px-3 text-body-3 text-text-secondary outline-none transition-all duration-base ease-out-soft placeholder:text-text-muted focus:border-border-strong focus:bg-surface-card"
+            />
+            <input
+              value={link.url}
+              placeholder="https://"
+              onChange={(event) => updateLink(link.id, "url", event.target.value)}
+              className="h-11 rounded-lg border border-border-hairline bg-background px-3 text-body-3 text-text-secondary outline-none transition-all duration-base ease-out-soft placeholder:text-text-muted focus:border-border-strong focus:bg-surface-card"
+            />
+            <button
+              type="button"
+              onClick={() => removeLink(link.id)}
+              className="inline-flex size-8 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-muted shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+              aria-label="Remove reference link"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function ImplementationBriefEditor({
+  report,
+  workspaceSlug,
+}: {
+  report: WorkspaceReport
+  workspaceSlug: string
+}) {
+  const brief = report.implementationBrief
+  const hiddenAcceptanceCriteria = brief?.acceptanceCriteria ?? []
+  const hiddenConstraintsNonGoals = brief?.constraintsNonGoals ?? []
+  const [implementationNotes, setImplementationNotes] = useState(
+    () => brief?.implementationNotes ?? ""
+  )
+  const [expectedBehavior, setExpectedBehavior] = useState(
+    () => brief?.expectedBehavior ?? ""
+  )
+  const [referenceLinks, setReferenceLinks] = useState(() =>
+    (brief?.referenceLinks ?? []).map((link) => makeReferenceLinkDraft(link))
+  )
+  const [reviewChecklist, setReviewChecklist] = useState(() =>
+    brief?.reviewChecklist ?? []
+  )
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const updateBriefMutation =
+    useUpdateReportImplementationBriefMutation(workspaceSlug)
+
+  async function saveBrief(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError(null)
+    setSaved(false)
+
+    try {
+      await updateBriefMutation.mutateAsync({
+        report,
+        implementationBrief: {
+          acceptanceCriteria: normalizeBriefList(hiddenAcceptanceCriteria),
+          implementationNotes: implementationNotes.trim() || null,
+          constraintsNonGoals: normalizeBriefList(hiddenConstraintsNonGoals),
+          expectedBehavior: expectedBehavior.trim() || null,
+          referenceLinks: normalizeReferenceLinks(referenceLinks),
+          reviewChecklist: normalizeBriefList(reviewChecklist),
+          updatedAt: new Date().toISOString(),
+          updatedBy: brief?.updatedBy ?? null,
+        },
+      })
+      setSaved(true)
+    } catch (updateError) {
+      setError(getMutationErrorMessage(updateError))
+    }
+  }
+
+  return (
+    <form
+      onSubmit={saveBrief}
+      className="rounded-xl border border-border-hairline bg-fill-translucent"
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-border-hairline px-4 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <ListChecks className="size-4 shrink-0 text-text-muted" />
+          <div className="flex items-center gap-2 text-heading-5 text-foreground">
+            Implementation brief
+          </div>
+          {brief?.updatedAt ? (
+            <p className="hidden truncate text-caption text-text-muted sm:block">
+              Saved {new Date(brief.updatedAt).toLocaleString()}
+              {brief.updatedBy ? ` by ${brief.updatedBy.name}` : ""}
+            </p>
+          ) : null}
+        </div>
+
+        <button
+          type="submit"
+          disabled={updateBriefMutation.isPending}
+          className="inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-heading-5 text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-fill-translucent disabled:hover:text-text-body disabled:active:scale-100"
+        >
+          {updateBriefMutation.isPending ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Check className="size-3.5" />
+          )}
+          Save
+        </button>
+      </div>
+
+      <div className="grid xl:grid-cols-2">
+        <div className="border-b border-border-hairline xl:border-b-0 xl:border-r">
+          <BriefTextarea
+            label="Expected behavior"
+            value={expectedBehavior}
+            onChange={setExpectedBehavior}
+            placeholder="Describe the desired product behavior."
+          />
+          <BriefListEditor
+            addLabel="Add"
+            items={reviewChecklist}
+            label="Review checklist"
+            onChange={setReviewChecklist}
+            placeholder="Verify on tablet viewport"
+          />
+        </div>
+
+        <div>
+          <BriefTextarea
+            label="Implementation plan"
+            value={implementationNotes}
+            onChange={setImplementationNotes}
+            placeholder="Add the approach, context, or agent instructions."
+            rows={6}
+          />
+          <ReferenceLinksEditor
+            links={referenceLinks}
+            onChange={setReferenceLinks}
+          />
+        </div>
+      </div>
+
+      {error || saved ? (
+        <div className="border-t border-border-hairline px-4 py-3">
+          {error ? (
+            <p className="text-caption text-error">{error}</p>
+          ) : (
+            <p className="text-caption text-success">Implementation brief saved.</p>
+          )}
+        </div>
+      ) : null}
+    </form>
+  )
+}
+
+function ActivityNotesPanel({
+  currentUserId,
+  currentUserRole,
+  members,
+  report,
+  workspaceSlug,
+}: ReportDetailProps) {
+  return (
+    <div className="space-y-4">
+      <ReportWorkflowPanel
+        key={`${report.id}:${report.assigneeUserId ?? "unassigned"}`}
+        currentUserId={currentUserId}
+        currentUserRole={currentUserRole}
+        members={members}
+        report={report}
+        workspaceSlug={workspaceSlug}
+      />
+
+      <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
+        <div className="flex items-center gap-2 text-heading-5 text-foreground">
+          <MessageSquare className="size-4 text-text-muted" />
+          Activity / Notes
+        </div>
+        <div className="mt-3 rounded-lg border border-border-hairline bg-background p-3">
+          <p className="text-body-3 text-text-secondary">
+            {report.commentsCount > 0
+              ? `${report.commentsCount} comments`
+              : "No comments yet."}
+          </p>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 export function ReportDetail({
   currentUserId,
   currentUserRole,
@@ -670,6 +1114,8 @@ export function ReportDetail({
   report,
   workspaceSlug,
 }: ReportDetailProps) {
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const reportQuery = useReportDetailQuery({
     placeholderReport: report,
     reportId: report.id,
@@ -680,6 +1126,31 @@ export function ReportDetail({
     : report
   const isEvidenceHydrating =
     reportQuery.isFetching && currentReport.screenshots.length < 2
+  const canManageReport =
+    currentUserRole === "owner" || currentUserRole === "admin"
+  const [activeTab, setActiveTab] = useState<ReportDetailTab>(() =>
+    getAllowedReportDetailTab(searchParams.get("tab"), canManageReport)
+  )
+  const tabs: Array<{
+    label: string
+    value: ReportDetailTab
+  }> = [
+    { label: "Evidence", value: "evidence" },
+    { label: "Activity / Notes", value: "activity" },
+    ...(canManageReport
+      ? [{ label: "Implementation brief", value: "brief" as const }]
+      : []),
+  ]
+
+  function selectTab(tab: ReportDetailTab) {
+    const nextTab = getAllowedReportDetailTab(tab, canManageReport)
+
+    setActiveTab(nextTab)
+    replaceUrlSearchParams(
+      pathname,
+      getDetailTabSearchParams(searchParams, nextTab)
+    )
+  }
 
   return (
     <section className="feedme-scrollbar h-full min-h-0 overflow-auto">
@@ -731,69 +1202,107 @@ export function ReportDetail({
           <MetadataItem label="Comments" value={currentReport.commentsCount} />
         </div>
 
-        <div className="mt-4 space-y-4">
-          <ReportWorkflowPanel
-            key={`${currentReport.id}:${currentReport.assigneeUserId ?? "unassigned"}`}
-            currentUserId={currentUserId}
-            currentUserRole={currentUserRole}
-            members={members}
-            report={currentReport}
-            workspaceSlug={workspaceSlug}
-          />
+        <div className="mt-4">
+          <div className="flex flex-wrap gap-5 border-b border-border-hairline">
+            {tabs.map((tab) => {
+              const selected = activeTab === tab.value
 
-          <ScreenshotPanel
-            isEvidenceHydrating={isEvidenceHydrating}
-            report={currentReport}
-          />
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
-              <div className="flex items-center gap-2 text-heading-5 text-foreground">
-                <MessageSquare className="size-4 text-text-muted" />
-                Feedback
-              </div>
-              <blockquote className="mt-3 text-body-2 text-text-secondary">
-                {currentReport.feedback.message}
-              </blockquote>
-              <div className="mt-4 flex items-center gap-2 text-body-3 text-text-muted">
-                <FeedMeAvatar
-                  className="shadow-none"
-                  imageUrl={currentReport.feedback.reporterAvatarUrl}
-                  label={currentReport.feedback.reporterName}
-                  size={22}
-                  value={currentReport.feedback.reporterEmail}
-                />
-                {currentReport.feedback.reporterName} - {currentReport.feedback.reporterEmail}
-              </div>
-            </section>
-
-            <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
-              <div className="flex items-center gap-2 text-heading-5 text-foreground">
-                <MousePointer2 className="size-4 text-text-muted" />
-                Selected element
-              </div>
-              <div className="mt-3 rounded-lg border border-border-hairline bg-background p-3">
-                <p className="font-mono text-body-3 text-text-secondary">
-                  {currentReport.selectedElement.selector}
-                </p>
-                {currentReport.selectedElement.text ? (
-                  <p className="mt-2 text-body-3 text-text-body">
-                    Text: {currentReport.selectedElement.text}
-                  </p>
-                ) : null}
-              </div>
-            </section>
+              return (
+                <button
+                  key={tab.value}
+                  type="button"
+                  onClick={() => selectTab(tab.value)}
+                  className={cn(
+                    "relative -mb-px inline-flex h-9 cursor-pointer items-center justify-center border-b text-heading-5 transition-colors duration-base ease-out-soft",
+                    selected
+                      ? "border-primary-soft text-foreground"
+                      : "border-transparent text-text-muted hover:text-text-body"
+                  )}
+                >
+                  {tab.label}
+                </button>
+              )
+            })}
           </div>
 
-          <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
-            <div className="flex items-center gap-2 text-heading-5 text-foreground">
-              <Code2 className="size-4 text-text-muted" />
-              Developer prompt
-            </div>
-            <pre className="feedme-scrollbar mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-border-hairline bg-background p-3 font-mono text-caption text-text-secondary">
-              {currentReport.developerPrompt}
-            </pre>
-          </section>
+          <div className="mt-4 space-y-4">
+            {activeTab === "evidence" ? (
+              <>
+                <ScreenshotPanel
+                  isEvidenceHydrating={isEvidenceHydrating}
+                  report={currentReport}
+                />
+
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
+                    <div className="flex items-center gap-2 text-heading-5 text-foreground">
+                      <MessageSquare className="size-4 text-text-muted" />
+                      Feedback
+                    </div>
+                    <blockquote className="mt-3 text-body-2 text-text-secondary">
+                      {currentReport.feedback.message}
+                    </blockquote>
+                    <div className="mt-4 flex items-center gap-2 text-body-3 text-text-muted">
+                      <FeedMeAvatar
+                        className="shadow-none"
+                        imageUrl={currentReport.feedback.reporterAvatarUrl}
+                        label={currentReport.feedback.reporterName}
+                        size={22}
+                        value={currentReport.feedback.reporterEmail}
+                      />
+                      {currentReport.feedback.reporterName} -{" "}
+                      {currentReport.feedback.reporterEmail}
+                    </div>
+                  </section>
+
+                  <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
+                    <div className="flex items-center gap-2 text-heading-5 text-foreground">
+                      <MousePointer2 className="size-4 text-text-muted" />
+                      Selected element
+                    </div>
+                    <div className="mt-3 rounded-lg border border-border-hairline bg-background p-3">
+                      <p className="font-mono text-body-3 text-text-secondary">
+                        {currentReport.selectedElement.selector}
+                      </p>
+                      {currentReport.selectedElement.text ? (
+                        <p className="mt-2 text-body-3 text-text-body">
+                          Text: {currentReport.selectedElement.text}
+                        </p>
+                      ) : null}
+                    </div>
+                  </section>
+                </div>
+
+                <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
+                  <div className="flex items-center gap-2 text-heading-5 text-foreground">
+                    <Code2 className="size-4 text-text-muted" />
+                    Developer prompt
+                  </div>
+                  <pre className="feedme-scrollbar mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-border-hairline bg-background p-3 font-mono text-caption text-text-secondary">
+                    {currentReport.developerPrompt}
+                  </pre>
+                </section>
+              </>
+            ) : null}
+
+            {activeTab === "activity" ? (
+              <ActivityNotesPanel
+                currentUserId={currentUserId}
+                currentUserRole={currentUserRole}
+                members={members}
+                report={currentReport}
+                workspaceSlug={workspaceSlug}
+              />
+            ) : null}
+
+            {activeTab === "brief" && canManageReport ? (
+              <ImplementationBriefEditor
+                key={currentReport.id}
+                report={currentReport}
+                workspaceSlug={workspaceSlug}
+              />
+            ) : null}
+          </div>
         </div>
       </div>
     </section>
