@@ -894,6 +894,13 @@ create or sync the report. After submit starts, the composer closes and should n
 reopen around screenshot capture. The large extension surfaces are hidden during
 capture, but the bottom status pill may remain visible so the user does not see
 a blank state while FeedMe is working.
+Report submission is local-first: after screenshot capture and local persistence
+succeed, the UI can reset while Cloudinary upload and the workspace report POST
+sync in the background. Because retries can happen after network loss, extension
+reports must send `clientReportId` using the local report id. The reports table
+enforces `workspaceId + clientReportId` uniqueness, and POST
+`/api/workspaces/:workspaceSlug/reports` must return the existing report on a
+duplicate client id instead of creating another report.
 The composer collects a user-authored title, description, category, and severity instead
 of deriving the report title from the browser page title.
 The content script is no longer registered in the manifest. It is injected on
