@@ -110,6 +110,11 @@ export type ReportSelectedElement = {
   }
 }
 
+export type ReportImplementationReferenceLink = {
+  label?: string
+  url: string
+}
+
 export const users = pgTable(
   "users",
   {
@@ -371,6 +376,56 @@ export const reportAssets = pgTable(
   ]
 )
 
+export const reportImplementationBriefs = pgTable(
+  "report_implementation_briefs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    reportId: uuid("report_id")
+      .notNull()
+      .references(() => reports.id, { onDelete: "cascade" }),
+    acceptanceCriteria: jsonb("acceptance_criteria")
+      .$type<string[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    implementationNotes: text("implementation_notes"),
+    constraintsNonGoals: jsonb("constraints_non_goals")
+      .$type<string[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    expectedBehavior: text("expected_behavior"),
+    referenceLinks: jsonb("reference_links")
+      .$type<ReportImplementationReferenceLink[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    reviewChecklist: jsonb("review_checklist")
+      .$type<string[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    updatedByUserId: uuid("updated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("report_implementation_briefs_report_unique").on(
+      table.workspaceId,
+      table.reportId
+    ),
+    index("report_implementation_briefs_workspace_id_idx").on(table.workspaceId),
+    index("report_implementation_briefs_updated_by_user_id_idx").on(
+      table.updatedByUserId
+    ),
+    foreignKey({
+      name: "report_implementation_briefs_report_workspace_fk",
+      columns: [table.reportId, table.workspaceId],
+      foreignColumns: [reports.id, reports.workspaceId],
+    }).onDelete("cascade"),
+  ]
+)
+
 export const reportComments = pgTable(
   "report_comments",
   {
@@ -536,6 +591,13 @@ export const reportsRelations = relations(reports, ({ one, many }) => ({
     relationName: "assignee",
   }),
   assets: many(reportAssets),
+  implementationBrief: one(reportImplementationBriefs, {
+    fields: [reports.id, reports.workspaceId],
+    references: [
+      reportImplementationBriefs.reportId,
+      reportImplementationBriefs.workspaceId,
+    ],
+  }),
   comments: many(reportComments),
   statusEvents: many(reportStatusEvents),
 }))
@@ -550,6 +612,24 @@ export const reportAssetsRelations = relations(reportAssets, ({ one }) => ({
     references: [reports.id],
   }),
 }))
+
+export const reportImplementationBriefsRelations = relations(
+  reportImplementationBriefs,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [reportImplementationBriefs.workspaceId],
+      references: [workspaces.id],
+    }),
+    report: one(reports, {
+      fields: [reportImplementationBriefs.reportId],
+      references: [reports.id],
+    }),
+    updatedBy: one(users, {
+      fields: [reportImplementationBriefs.updatedByUserId],
+      references: [users.id],
+    }),
+  })
+)
 
 export const reportCommentsRelations = relations(reportComments, ({ one }) => ({
   workspace: one(workspaces, {
@@ -596,3 +676,5 @@ export type WorkspaceDomain = typeof workspaceDomains.$inferSelect
 export type NewWorkspaceDomain = typeof workspaceDomains.$inferInsert
 export type Report = typeof reports.$inferSelect
 export type NewReport = typeof reports.$inferInsert
+export type ReportImplementationBrief = typeof reportImplementationBriefs.$inferSelect
+export type NewReportImplementationBrief = typeof reportImplementationBriefs.$inferInsert

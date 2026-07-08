@@ -10,6 +10,7 @@ const allActions = new Set<PolicyAction>([
   "report:create",
   "report:read",
   "report:assign",
+  "report:update_brief",
   "report:update_status",
   "report:mark_ready_for_review",
   "report:resolve",

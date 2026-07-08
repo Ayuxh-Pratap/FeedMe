@@ -141,5 +141,36 @@ export const updateReportStatusInputSchema = z.object({
   note: z.string().trim().max(1000).optional(),
 })
 
+const implementationBriefListItemSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(500)
+
+const implementationBriefListSchema = z
+  .array(implementationBriefListItemSchema)
+  .max(30)
+  .default([])
+
+const implementationBriefReferenceLinkSchema = z.object({
+  label: optionalTrimmedString(120),
+  url: z.string().trim().url("Enter a valid reference link.").max(2000),
+})
+
+export const updateReportImplementationBriefInputSchema = z.object({
+  acceptanceCriteria: implementationBriefListSchema,
+  implementationNotes: optionalTrimmedString(5000),
+  constraintsNonGoals: implementationBriefListSchema,
+  expectedBehavior: optionalTrimmedString(3000),
+  referenceLinks: z
+    .array(implementationBriefReferenceLinkSchema)
+    .max(12)
+    .default([]),
+  reviewChecklist: implementationBriefListSchema,
+})
+
 export type AssignReportInput = z.infer<typeof assignReportInputSchema>
 export type UpdateReportStatusInput = z.infer<typeof updateReportStatusInputSchema>
+export type UpdateReportImplementationBriefInput = z.infer<
+  typeof updateReportImplementationBriefInputSchema
+>

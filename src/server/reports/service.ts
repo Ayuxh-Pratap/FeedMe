@@ -17,6 +17,7 @@ import { db } from "@/db"
 import {
   reportAssets,
   reportComments,
+  reportImplementationBriefs,
   reportStatusEvents,
   reports,
   userProfiles,
@@ -34,6 +35,7 @@ import {
   isWorkspaceReportAssignmentLocked,
   progressReportStatuses,
   type WorkspaceReport,
+  type WorkspaceReportImplementationBrief,
   type WorkspaceReportSort,
   type WorkspaceReportStatus,
   type WorkspaceReportsPageInfo,
@@ -53,6 +55,7 @@ import type {
   CreateReportInput,
   ListReportsInput,
   ReportCountsInput,
+  UpdateReportImplementationBriefInput,
   UpdateReportStatusInput,
 } from "@/server/reports/validation"
 
@@ -92,6 +95,17 @@ type ReportAssetRow = {
   url: string
   width: number | null
   height: number | null
+}
+
+type ReportImplementationBriefRow = {
+  acceptanceCriteria: string[]
+  implementationNotes: string | null
+  constraintsNonGoals: string[]
+  expectedBehavior: string | null
+  referenceLinks: WorkspaceReportImplementationBrief["referenceLinks"]
+  reviewChecklist: string[]
+  updatedAt: Date
+  updatedByUserId: string | null
 }
 
 const assigneeMutableStatuses = new Set<WorkspaceReportStatus>([
@@ -334,6 +348,21 @@ async function requireWorkspaceForReportAssign(userId: string, workspaceSlug: st
   return workspace
 }
 
+async function requireWorkspaceForReportBriefUpdate(
+  userId: string,
+  workspaceSlug: string
+) {
+  const workspace = await getWorkspaceForUserBySlug(userId, workspaceSlug)
+
+  if (!workspace) {
+    throw new NotFoundError("Workspace not found.")
+  }
+
+  assertCanWorkspaceRole(workspace.role, "report:update_brief")
+
+  return workspace
+}
+
 async function requireWorkspaceForReportStatusUpdate(
   userId: string,
   workspaceSlug: string,
@@ -457,6 +486,38 @@ function getScreenshotsFromAssets(
   })
 }
 
+function serializeReportImplementationBrief(
+  row: ReportImplementationBriefRow | null,
+  peopleById: Map<string, ReportPerson>
+): WorkspaceReport["implementationBrief"] {
+  if (!row) {
+    return null
+  }
+
+  const updatedBy = row.updatedByUserId
+    ? peopleById.get(row.updatedByUserId)
+    : undefined
+  const updatedByName = getPersonName(updatedBy, "Unknown teammate")
+
+  return {
+    acceptanceCriteria: row.acceptanceCriteria,
+    implementationNotes: row.implementationNotes,
+    constraintsNonGoals: row.constraintsNonGoals,
+    expectedBehavior: row.expectedBehavior,
+    referenceLinks: row.referenceLinks,
+    reviewChecklist: row.reviewChecklist,
+    updatedAt: row.updatedAt.toISOString(),
+    updatedBy: updatedBy
+      ? {
+          id: updatedBy.id,
+          name: updatedByName,
+          email: updatedBy.email,
+          avatarUrl: updatedBy.avatarUrl,
+        }
+      : null,
+  }
+}
+
 function buildDeveloperPrompt(row: ReportRow) {
   return (
     row.developerPrompt ??
@@ -537,7 +598,8 @@ async function assertWorkspaceAllowsReportDomain(
 function serializeReport(
   row: ReportRow,
   peopleById: Map<string, ReportPerson>,
-  assets: ReportAssetRow[] = []
+  assets: ReportAssetRow[] = [],
+  implementationBrief?: WorkspaceReport["implementationBrief"]
 ): WorkspaceReport {
   const reporter = row.reporterUserId
     ? peopleById.get(row.reporterUserId)
@@ -548,7 +610,7 @@ function serializeReport(
   const reporterName = getPersonName(reporter, "Unknown reporter")
   const assigneeName = getPersonName(assignee, "Unassigned")
 
-  return {
+  const report: WorkspaceReport = {
     id: row.id,
     reporterUserId: row.reporterUserId,
     assigneeUserId: row.assigneeUserId,
@@ -583,6 +645,12 @@ function serializeReport(
       : undefined,
     commentsCount: row.commentsCount,
   }
+
+  if (implementationBrief !== undefined) {
+    report.implementationBrief = implementationBrief
+  }
+
+  return report
 }
 
 // Lightweight per-report page screenshot for the list/grid. Now that assets are
@@ -641,6 +709,33 @@ async function getAssetsForReport(workspaceId: string, reportId: string) {
       )
     )
     .orderBy(asc(reportAssets.createdAt))
+}
+
+async function getImplementationBriefForReport(
+  workspaceId: string,
+  reportId: string
+) {
+  const [row] = await db
+    .select({
+      acceptanceCriteria: reportImplementationBriefs.acceptanceCriteria,
+      implementationNotes: reportImplementationBriefs.implementationNotes,
+      constraintsNonGoals: reportImplementationBriefs.constraintsNonGoals,
+      expectedBehavior: reportImplementationBriefs.expectedBehavior,
+      referenceLinks: reportImplementationBriefs.referenceLinks,
+      reviewChecklist: reportImplementationBriefs.reviewChecklist,
+      updatedAt: reportImplementationBriefs.updatedAt,
+      updatedByUserId: reportImplementationBriefs.updatedByUserId,
+    })
+    .from(reportImplementationBriefs)
+    .where(
+      and(
+        eq(reportImplementationBriefs.workspaceId, workspaceId),
+        eq(reportImplementationBriefs.reportId, reportId)
+      )
+    )
+    .limit(1)
+
+  return row ?? null
 }
 
 async function getMutableReportRow(workspaceId: string, reportId: string) {
@@ -1143,6 +1238,55 @@ export async function updateWorkspaceReportStatus(
   return getWorkspaceReport(userId, workspaceSlug, reportId)
 }
 
+export async function updateWorkspaceReportImplementationBrief(
+  userId: string,
+  workspaceSlug: string,
+  reportId: string,
+  input: UpdateReportImplementationBriefInput
+) {
+  const workspace = await requireWorkspaceForReportBriefUpdate(
+    userId,
+    workspaceSlug
+  )
+
+  await getMutableReportRow(workspace.id, reportId)
+
+  const now = new Date()
+
+  await db
+    .insert(reportImplementationBriefs)
+    .values({
+      workspaceId: workspace.id,
+      reportId,
+      acceptanceCriteria: input.acceptanceCriteria,
+      implementationNotes: input.implementationNotes ?? null,
+      constraintsNonGoals: input.constraintsNonGoals,
+      expectedBehavior: input.expectedBehavior ?? null,
+      referenceLinks: input.referenceLinks,
+      reviewChecklist: input.reviewChecklist,
+      updatedByUserId: userId,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        reportImplementationBriefs.workspaceId,
+        reportImplementationBriefs.reportId,
+      ],
+      set: {
+        acceptanceCriteria: input.acceptanceCriteria,
+        implementationNotes: input.implementationNotes ?? null,
+        constraintsNonGoals: input.constraintsNonGoals,
+        expectedBehavior: input.expectedBehavior ?? null,
+        referenceLinks: input.referenceLinks,
+        reviewChecklist: input.reviewChecklist,
+        updatedByUserId: userId,
+        updatedAt: now,
+      },
+    })
+
+  return getWorkspaceReport(userId, workspaceSlug, reportId)
+}
+
 export async function getWorkspaceReport(
   userId: string,
   workspaceSlug: string,
@@ -1165,13 +1309,24 @@ export async function getWorkspaceReport(
     throw new NotFoundError("Report not found.")
   }
 
-  const [peopleById, assets] = await Promise.all([
-    getPeopleById(compactUserIds([row.reporterUserId, row.assigneeUserId])),
+  const [assets, implementationBriefRow] = await Promise.all([
     getAssetsForReport(workspace.id, row.id),
+    getImplementationBriefForReport(workspace.id, row.id),
   ])
+  const peopleById = await getPeopleById(
+    compactUserIds([
+      row.reporterUserId,
+      row.assigneeUserId,
+      implementationBriefRow?.updatedByUserId,
+    ])
+  )
+  const implementationBrief = serializeReportImplementationBrief(
+    implementationBriefRow,
+    peopleById
+  )
 
   return {
     workspace,
-    report: serializeReport(row, peopleById, assets),
+    report: serializeReport(row, peopleById, assets, implementationBrief),
   }
 }

@@ -19,6 +19,7 @@ import {
 } from "@/lib/query-keys"
 import type {
   WorkspaceReport,
+  WorkspaceReportImplementationBrief,
   WorkspaceReportCountsResponse,
   WorkspaceReportDetailResponse,
   WorkspaceReportsListResponse,
@@ -47,6 +48,11 @@ type UpdateReportStatusVariables = {
   note?: string
   report: WorkspaceReport
   status: WorkspaceReport["status"]
+}
+
+type UpdateReportImplementationBriefVariables = {
+  implementationBrief: WorkspaceReportImplementationBrief
+  report: WorkspaceReport
 }
 
 const refetchVisibleReportsIntervalMs = 15_000
@@ -531,6 +537,42 @@ export function useUpdateReportStatusMutation(workspaceSlug: string) {
       void queryClient.invalidateQueries({
         queryKey: reportKeys.countsRoot(workspaceSlug),
       })
+    },
+    onSuccess: (result) => {
+      syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
+    },
+  })
+}
+
+export function useUpdateReportImplementationBriefMutation(workspaceSlug: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation<
+    ReportMutationResponse,
+    Error,
+    UpdateReportImplementationBriefVariables,
+    ReportMutationContext
+  >({
+    mutationFn: ({ implementationBrief, report }) =>
+      patchJson<ReportMutationResponse>(
+        `${getReportMutationBaseUrl(workspaceSlug, report.id)}/implementation-brief`,
+        implementationBrief
+      ),
+    onError: (_error, _variables, context) => {
+      restoreReportSnapshots(queryClient, context?.snapshots)
+    },
+    onMutate: async ({ implementationBrief, report }) => {
+      await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
+
+      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
+      const optimisticReport: WorkspaceReport = {
+        ...report,
+        implementationBrief,
+      }
+
+      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
+
+      return { snapshots }
     },
     onSuccess: (result) => {
       syncReportAcrossCaches(queryClient, workspaceSlug, result.report)

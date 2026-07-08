@@ -31,6 +31,25 @@ export type WorkspaceReportScreenshot = {
   height?: number | null
 }
 
+export type WorkspaceReportImplementationBrief = {
+  acceptanceCriteria: string[]
+  implementationNotes?: string | null
+  constraintsNonGoals: string[]
+  expectedBehavior?: string | null
+  referenceLinks: Array<{
+    label?: string | null
+    url: string
+  }>
+  reviewChecklist: string[]
+  updatedAt?: string | null
+  updatedBy?: {
+    id: string
+    name: string
+    email: string
+    avatarUrl?: string | null
+  } | null
+}
+
 export type WorkspaceReport = {
   id: string
   reporterUserId?: string | null
@@ -62,6 +81,7 @@ export type WorkspaceReport = {
     reporterAvatarUrl?: string | null
   }
   developerPrompt: string
+  implementationBrief?: WorkspaceReportImplementationBrief | null
   assignee?: {
     name: string
     initials: string
