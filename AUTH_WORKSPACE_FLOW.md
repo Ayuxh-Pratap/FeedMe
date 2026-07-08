@@ -86,6 +86,13 @@ Primary action:
 Log in
 ```
 
+Submit behavior:
+
+```txt
+after click, keep the button disabled while authenticating and while route navigation is pending
+do not return the button to an idle clickable state unless the request fails
+```
+
 Secondary action:
 
 ```txt
@@ -128,10 +135,28 @@ password
 confirm password
 ```
 
+Password guidance:
+
+```txt
+show inline requirements before submit
+use at least 8 characters
+include at least one letter
+include at least one number
+avoid common passwords
+confirm password must match before the account is created
+```
+
 Primary action:
 
 ```txt
 Create account
+```
+
+Submit behavior:
+
+```txt
+after click, keep the button disabled while creating the account and while route navigation is pending
+do not return the button to an idle clickable state unless the request fails
 ```
 
 Secondary action:
@@ -185,8 +210,8 @@ if display name is blank:
 Examples:
 
 ```txt
-Full name: Ayush Pratap Singh
-Display name default: Ayush
+Full name: Jordan Lee
+Display name default: Jordan
 
 Full name: Maya Chen
 Display name default: Maya
@@ -479,9 +504,9 @@ Domain rules:
 Examples:
 
 ```txt
-https://v2.bump.fm/dashboard -> v2.bump.fm
-bump.fm -> bump.fm
-test.bump.fm/anything -> test.bump.fm
+https://app.example.com/dashboard -> app.example.com
+example.com -> example.com
+staging.example.com/anything -> staging.example.com
 ```
 
 Invalid MVP examples:
@@ -490,7 +515,7 @@ Invalid MVP examples:
 localhost
 127.0.0.1
 http://localhost:3000
-*.bump.fm
+*.example.com
 ```
 
 ## Practical Role/Action Model
@@ -588,7 +613,7 @@ Signup:
 - email normalized to lowercase
 - password required
 - confirm password must match
-- password minimum strength for MVP
+- password must satisfy the shared FeedMe password policy: 8+ characters, at least one letter, at least one number, and not a common password
 
 Profile:
 
