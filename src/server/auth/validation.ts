@@ -1,5 +1,6 @@
 import { z } from "zod"
 
+import { getPasswordPolicyMessage } from "@/lib/password-policy"
 import { normalizeEmail } from "@/server/auth/email"
 
 const emailSchema = z
@@ -11,8 +12,17 @@ const emailSchema = z
 
 const passwordSchema = z
   .string()
-  .min(8, "Password must be at least 8 characters.")
   .max(200, "Password is too long.")
+  .superRefine((password, context) => {
+    const message = getPasswordPolicyMessage(password)
+
+    if (message) {
+      context.addIssue({
+        code: "custom",
+        message,
+      })
+    }
+  })
 
 export const signupInputSchema = z
   .object({

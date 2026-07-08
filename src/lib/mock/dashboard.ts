@@ -134,8 +134,8 @@ const mockReports: MockReportSummary[] = [
     developerPrompt:
       "Investigate the checkout layout at https://checkout.feedme.test/cart around viewport 820 x 1180. The selected element is form.checkout button[type='submit'] with text 'Pay now'. User feedback: The Pay now button overlaps the coupon field, so the user cannot tell whether the coupon was applied before submitting payment. Implement the smallest safe layout fix and preserve the primary CTA hierarchy.",
     assignee: {
-      name: "Ayush",
-      initials: "A",
+      name: "Morgan Lee",
+      initials: "ML",
     },
     commentsCount: 3,
   },

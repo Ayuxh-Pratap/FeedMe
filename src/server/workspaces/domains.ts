@@ -32,8 +32,8 @@ export function normalizeDomainHost(input: string, fieldName = "firstDomain") {
     const hasProtocol = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(value)
     parsedUrl = new URL(hasProtocol ? value : `https://${value}`)
   } catch {
-    throw new ValidationError("Enter a valid domain, like v2.bump.fm.", {
-      ...domainFieldError(fieldName, ["Enter a valid domain, like v2.bump.fm."]),
+    throw new ValidationError("Enter a valid domain, like app.example.com.", {
+      ...domainFieldError(fieldName, ["Enter a valid domain, like app.example.com."]),
     })
   }
 
@@ -52,8 +52,8 @@ export function normalizeDomainHost(input: string, fieldName = "firstDomain") {
   }
 
   if (!DOMAIN_PATTERN.test(host)) {
-    throw new ValidationError("Enter an exact domain, like v2.bump.fm.", {
-      ...domainFieldError(fieldName, ["Enter an exact domain, like v2.bump.fm."]),
+    throw new ValidationError("Enter an exact domain, like app.example.com.", {
+      ...domainFieldError(fieldName, ["Enter an exact domain, like app.example.com."]),
     })
   }
 
