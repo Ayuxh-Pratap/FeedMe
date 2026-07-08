@@ -27,10 +27,17 @@ export function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isRedirecting, setIsRedirecting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const isBusy = isSubmitting || isRedirecting
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    if (isBusy) {
+      return
+    }
+
     setIsSubmitting(true)
     setErrorMessage(null)
 
@@ -42,6 +49,7 @@ export function LoginForm() {
         password: formValue(formData, "password"),
       })
 
+      setIsRedirecting(true)
       router.push(getSafeNextPath(searchParams.get("next")) ?? result.nextPath)
       router.refresh()
     } catch (error) {
@@ -50,8 +58,8 @@ export function LoginForm() {
           ? error.message
           : "Unable to log in. Please try again."
       )
-    } finally {
       setIsSubmitting(false)
+      setIsRedirecting(false)
     }
   }
 
@@ -64,7 +72,7 @@ export function LoginForm() {
         type="email"
         placeholder="your@workemail.com"
         autoComplete="email"
-        disabled={isSubmitting}
+        disabled={isBusy}
         required
       />
 
@@ -86,7 +94,7 @@ export function LoginForm() {
           type="password"
           placeholder="********"
           autoComplete="current-password"
-          disabled={isSubmitting}
+          disabled={isBusy}
           required
         />
       </div>
@@ -97,8 +105,8 @@ export function LoginForm() {
         </p>
       ) : null}
 
-      <AuthButton type="submit" className="w-full" disabled={isSubmitting}>
-        {isSubmitting ? "Logging in..." : "Log in"}
+      <AuthButton type="submit" className="w-full" disabled={isBusy}>
+        {isRedirecting ? "Opening workspace..." : isSubmitting ? "Logging in..." : "Log in"}
       </AuthButton>
     </form>
   )

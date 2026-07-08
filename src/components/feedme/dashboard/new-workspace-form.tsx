@@ -32,10 +32,17 @@ function formValue(formData: FormData, key: string) {
 export function NewWorkspaceForm({ backHref }: NewWorkspaceFormProps) {
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isRedirecting, setIsRedirecting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const isBusy = isSubmitting || isRedirecting
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+
+    if (isBusy) {
+      return
+    }
+
     setIsSubmitting(true)
     setErrorMessage(null)
 
@@ -47,6 +54,7 @@ export function NewWorkspaceForm({ backHref }: NewWorkspaceFormProps) {
         firstDomain: formValue(formData, "firstDomain"),
       })
 
+      setIsRedirecting(true)
       router.push(result.nextPath)
       router.refresh()
     } catch (error) {
@@ -55,8 +63,8 @@ export function NewWorkspaceForm({ backHref }: NewWorkspaceFormProps) {
           ? error.message
           : "Unable to create your workspace. Please try again."
       )
-    } finally {
       setIsSubmitting(false)
+      setIsRedirecting(false)
     }
   }
 
@@ -72,19 +80,19 @@ export function NewWorkspaceForm({ backHref }: NewWorkspaceFormProps) {
           id="workspace-name"
           name="workspaceName"
           label="Workspace name"
-          placeholder="Bump QA"
+          placeholder="Your team workspace"
           autoComplete="organization"
-          disabled={isSubmitting}
+          disabled={isBusy}
           required
         />
         <FeedMeField
           id="workspace-domain"
           name="firstDomain"
           label="First domain"
-          placeholder="v2.bump.fm"
+          placeholder="app.yourcompany.com"
           helper="Add the first website where this workspace will capture feedback. You can add and manage domains later."
           autoComplete="url"
-          disabled={isSubmitting}
+          disabled={isBusy}
           required
         />
 
@@ -94,9 +102,13 @@ export function NewWorkspaceForm({ backHref }: NewWorkspaceFormProps) {
           </p>
         ) : null}
 
-        <AuthButton type="submit" className="mt-2 w-full" disabled={isSubmitting}>
-          {isSubmitting ? "Creating workspace..." : "Create workspace"}
-          {!isSubmitting ? <ContinueIcon /> : null}
+        <AuthButton type="submit" className="mt-2 w-full" disabled={isBusy}>
+          {isRedirecting
+            ? "Opening workspace..."
+            : isSubmitting
+              ? "Creating workspace..."
+              : "Create workspace"}
+          {!isBusy ? <ContinueIcon /> : null}
         </AuthButton>
       </form>
 

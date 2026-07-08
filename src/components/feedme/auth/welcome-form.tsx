@@ -56,6 +56,7 @@ export function WelcomeForm() {
   const [step, setStep] = useState<WelcomeStep>("profile")
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isRedirecting, setIsRedirecting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [email, setEmail] = useState("")
   const [profileDefaults, setProfileDefaults] = useState({
@@ -63,11 +64,14 @@ export function WelcomeForm() {
     displayName: "",
     title: "",
   })
+  const isBusy = isSubmitting || isRedirecting
 
   useEffect(() => {
     let isMounted = true
 
     async function loadState() {
+      let didRedirect = false
+
       try {
         const result = await getJson<OnboardingStateResponse>("/api/onboarding/state")
 
@@ -76,6 +80,8 @@ export function WelcomeForm() {
         }
 
         if (result.onboarding.nextStep === "complete") {
+          didRedirect = true
+          setIsRedirecting(true)
           router.replace(result.nextPath)
           return
         }
@@ -89,6 +95,8 @@ export function WelcomeForm() {
         })
       } catch (error) {
         if (error instanceof ApiClientError && error.code === "UNAUTHORIZED") {
+          didRedirect = true
+          setIsRedirecting(true)
           router.replace("/login")
           return
         }
@@ -97,7 +105,7 @@ export function WelcomeForm() {
           setErrorMessage("Unable to load onboarding. Please refresh and try again.")
         }
       } finally {
-        if (isMounted) {
+        if (isMounted && !didRedirect) {
           setIsLoading(false)
         }
       }
@@ -112,6 +120,11 @@ export function WelcomeForm() {
 
   const handleProfileSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    if (isBusy) {
+      return
+    }
+
     setIsSubmitting(true)
     setErrorMessage(null)
 
@@ -125,25 +138,32 @@ export function WelcomeForm() {
       })
 
       if (result.onboarding.nextStep === "complete") {
+        setIsRedirecting(true)
         router.push(result.nextPath)
         router.refresh()
         return
       }
 
       setStep("workspace")
+      setIsSubmitting(false)
     } catch (error) {
       setErrorMessage(
         error instanceof ApiClientError
           ? error.message
           : "Unable to save your profile. Please try again."
       )
-    } finally {
       setIsSubmitting(false)
+      setIsRedirecting(false)
     }
   }
 
   const handleWorkspaceSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    if (isBusy) {
+      return
+    }
+
     setIsSubmitting(true)
     setErrorMessage(null)
 
@@ -155,6 +175,7 @@ export function WelcomeForm() {
         firstDomain: formValue(formData, "firstDomain"),
       })
 
+      setIsRedirecting(true)
       router.push(result.nextPath)
       router.refresh()
     } catch (error) {
@@ -163,16 +184,33 @@ export function WelcomeForm() {
           ? error.message
           : "Unable to create your workspace. Please try again."
       )
-    } finally {
       setIsSubmitting(false)
+      setIsRedirecting(false)
     }
   }
 
   const handleLogout = async () => {
+    if (isBusy) {
+      return
+    }
+
     setIsSubmitting(true)
-    await postJson<{ nextPath: string }>("/api/auth/logout")
-    router.push("/login")
-    router.refresh()
+    setErrorMessage(null)
+
+    try {
+      await postJson<{ nextPath: string }>("/api/auth/logout")
+      setIsRedirecting(true)
+      router.push("/login")
+      router.refresh()
+    } catch (error) {
+      setErrorMessage(
+        error instanceof ApiClientError
+          ? error.message
+          : "Unable to log out. Please try again."
+      )
+      setIsSubmitting(false)
+      setIsRedirecting(false)
+    }
   }
 
   if (isLoading) {
@@ -199,21 +237,21 @@ export function WelcomeForm() {
             id="name"
             name="fullName"
             label="Full name"
-            placeholder="Ayush Pratap Singh"
+            placeholder="Your full name"
             defaultValue={profileDefaults.fullName}
             autoComplete="name"
-            disabled={isSubmitting}
+            disabled={isBusy}
             required
           />
           <FeedMeField
             id="display-name"
             name="displayName"
             label="Display name (optional)"
-            placeholder="Ayush"
+            placeholder="First name or nickname"
             defaultValue={profileDefaults.displayName}
             helper="This could be your first name or a nickname"
             autoComplete="nickname"
-            disabled={isSubmitting}
+            disabled={isBusy}
           />
           <FeedMeField
             id="title"
@@ -222,7 +260,7 @@ export function WelcomeForm() {
             placeholder="Product Designer, Founder, etc."
             defaultValue={profileDefaults.title}
             autoComplete="organization-title"
-            disabled={isSubmitting}
+            disabled={isBusy}
           />
 
           {errorMessage ? (
@@ -231,8 +269,8 @@ export function WelcomeForm() {
             </p>
           ) : null}
 
-          <AuthButton type="submit" className="mt-2 w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Saving..." : "Continue"}
+          <AuthButton type="submit" className="mt-2 w-full" disabled={isBusy}>
+            {isRedirecting ? "Opening workspace..." : isSubmitting ? "Saving..." : "Continue"}
           </AuthButton>
         </form>
       </section>
@@ -251,19 +289,19 @@ export function WelcomeForm() {
           id="workspace-name"
           name="workspaceName"
           label="Workspace name"
-          placeholder="Bump"
+          placeholder="Your team workspace"
           autoComplete="organization"
-          disabled={isSubmitting}
+          disabled={isBusy}
           required
         />
         <FeedMeField
           id="workspace-domain"
           name="firstDomain"
           label="First domain"
-          placeholder="v2.bump.fm"
+          placeholder="app.yourcompany.com"
           helper="Add the first website where your team will capture feedback. You can add and manage domains later."
           autoComplete="url"
-          disabled={isSubmitting}
+          disabled={isBusy}
           required
         />
 
@@ -273,9 +311,13 @@ export function WelcomeForm() {
           </p>
         ) : null}
 
-        <AuthButton type="submit" className="mt-2 w-full" disabled={isSubmitting}>
-          {isSubmitting ? "Creating workspace..." : "Create workspace"}
-          {!isSubmitting ? <ContinueIcon /> : null}
+        <AuthButton type="submit" className="mt-2 w-full" disabled={isBusy}>
+          {isRedirecting
+            ? "Opening workspace..."
+            : isSubmitting
+              ? "Creating workspace..."
+              : "Create workspace"}
+          {!isBusy ? <ContinueIcon /> : null}
         </AuthButton>
       </form>
 
@@ -284,10 +326,10 @@ export function WelcomeForm() {
         <button
           type="button"
           onClick={handleLogout}
-          disabled={isSubmitting}
+          disabled={isBusy}
           className="shrink-0 hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Log out
+          {isBusy ? "Working..." : "Log out"}
         </button>
       </div>
     </section>
