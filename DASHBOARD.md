@@ -171,6 +171,9 @@ The dialog uses FeedMe's dark tactile form language, reuses the Domains dialog
 shell, and shows the token/config in mono on sunken surfaces. See
 `integration.md` "Coding Agent Access (MCP)" and `API_IMPLEMENTATION_GUIDE.md`
 Slice 10 for the server side.
+`MCP_DEVELOPER_WORKFLOW.md` owns the next developer workflow layer: report row
+context menu actions, admin-authored implementation briefs, developer work
+notes, and MCP presets.
 
 The extension card should act like a small product teaser, not a generic upsell. It should borrow the active sidebar item surface language, stay gray/charcoal, and use a tonal install CTA that already feels slightly lifted at rest. Avoid icons, playful blue gradient washes, or terminal mockups here. The card should be dismissible with a small top-right close control and persist that dismissal in local storage.
 
@@ -357,6 +360,31 @@ Open report action
 While report data is loading, the Reports right rail should reserve the final selected-report inspector layout with a premium skeleton. Match the final badge row, title/summary block, evidence tabs, screenshot frame, open action, metadata grid, selected element block, and developer prompt block so there is no visible jump when the first report resolves.
 
 Opening a report leads to `/[workspaceSlug]/reports/[reportId]`. The detail route should give the main canvas to the report itself: screenshot evidence, full feedback, selected element data, metadata, and the full developer prompt. Avoid adding another internal right-side report panel on the detail page. The workspace shell should not render the right rail or right-rail toggle on report detail routes. Detail screenshot cards use the same expanded evidence viewer pattern as the rail: an image-first dialog with floating controls over a top gradient. Workflow controls on the detail page should use the same compact tactile charcoal menu and secondary raised action language as the report inspector rail.
+
+Report detail uses three tabs so the page stays focused:
+
+```txt
+Evidence
+Activity / Notes
+Implementation brief
+```
+
+Evidence and Activity / Notes are visible to every member who can open the report. Implementation brief is visible only to owners/admins and contains the editable handoff fields from `MCP_DEVELOPER_WORKFLOW.md`: acceptance criteria, implementation notes, constraints/non-goals, expected behavior, reference links, and review checklist. The right rail should not absorb these fields; it remains for quick inspection and workflow actions.
+
+The report detail tab control should be quiet and line-based: active text with a thin bottom rule, not a framed segmented control. Switching between these tabs is local UI state plus URL search-param replacement and must not trigger a server round-trip or full route loading state.
+
+Implementation brief must not be a dump of generic textareas. Use structured controls that match the data:
+
+```txt
+left top: expected behavior -> focused textarea
+left bottom: review checklist -> editable list rows
+right top: implementation plan -> focused textarea backed by implementationNotes
+right bottom: reference links -> label + URL rows
+```
+
+`acceptanceCriteria` and `constraintsNonGoals` stay in the schema/API/MCP contract, but they are hidden in the dashboard UI for now. They are optional fields reserved for deeper workflow maturity; do not surface them until they solve a real product problem.
+
+Activity / Notes owns the future comments and work-notes stream. It should not repeat status, owner, captured time, or other metadata already visible in the report header.
 
 ## My Work Direction
 

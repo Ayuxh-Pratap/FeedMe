@@ -326,6 +326,26 @@ When merging cached reports, preserve the richer evidence set by screenshot
 source count/quality unless the incoming report is equally rich or richer.
 ```
 
+Report detail tab rule:
+
+```txt
+The full report detail page owns three tabs:
+Evidence
+Activity / Notes
+Implementation brief
+
+Evidence and Activity / Notes are available to everyone with report detail
+access. Implementation brief is owner/admin only and is read from the report
+detail contract. Do not put implementation brief data into lightweight report
+list summaries.
+
+Changing detail tabs is instant local UI state that replaces the URL search
+param (`?tab=activity` or `?tab=brief`) through the native history helper. Do
+not use `router.replace` for these tab changes because it can trigger an
+unnecessary server round-trip. The Evidence tab is the default and does not
+need a query param.
+```
+
 No empty click should feel dead. If a refetch is happening, show a thin progress signal or subtle refreshing indicator without replacing already-visible content.
 
 ## Mutations

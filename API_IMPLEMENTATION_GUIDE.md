@@ -8,6 +8,7 @@ Read this with:
 - `integration.md` for workspace, dashboard, extension, domain, invite, and report behavior.
 - `PROJECT_VISION.md` for the product shape we are protecting.
 - `FRONTEND_DATA_ARCHITECTURE.md` for TanStack Query, Zustand, caching, optimistic updates, and production dashboard data rules.
+- `MCP_DEVELOPER_WORKFLOW.md` for coding-agent workflow, report handoff fields, developer notes, MCP presets, and report row context menu actions.
 
 ## Readiness
 
@@ -1366,6 +1367,78 @@ Reference:
 
 ```txt
 See FRONTEND_DATA_ARCHITECTURE.md for the full production data architecture.
+```
+
+### Slice 12: Report Implementation Brief
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Owners/admins can turn a raw report into a developer-ready handoff without
+crowding the right rail. The handoff is stored separately from the captured
+feedback, appears on the full report detail page, and is included in MCP
+get_report output for coding agents.
+```
+
+Routes:
+
+```txt
+PATCH /api/workspaces/:workspaceSlug/reports/:reportId/implementation-brief
+```
+
+Input:
+
+```txt
+acceptanceCriteria string[]
+implementationNotes optional string
+constraintsNonGoals string[]
+expectedBehavior optional string
+referenceLinks { label optional, url }[]
+reviewChecklist string[]
+```
+
+Server files:
+
+```txt
+src/db/schema.ts                                                   report_implementation_briefs table
+src/server/reports/validation.ts                                   updateReportImplementationBriefInputSchema
+src/server/reports/service.ts                                      read/write brief service methods
+src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/implementation-brief/route.ts
+src/server/policies/actions.ts                                     report:update_brief action
+src/server/policies/can.ts                                         owner/admin permission
+src/app/api/mcp/route.ts                                           brief included in get_report handoff text
+```
+
+Dashboard files:
+
+```txt
+src/lib/reports.ts                                                 WorkspaceReport.implementationBrief
+src/lib/report-queries.ts                                          optimistic update brief mutation
+src/components/feedme/dashboard/report-detail.tsx                  Evidence / Activity / Implementation brief tabs
+```
+
+Rules:
+
+```txt
+only owners/admins can edit the implementation brief
+the Implementation brief tab is visible only to owners/admins
+Evidence and Activity / Notes are visible to anyone with report detail access
+brief edits do not change assignment or status
+brief data is fetched with the report detail contract, not report list summaries
+brief mutation patches report detail and list caches optimistically
+MCP get_report omits empty brief sections to avoid noisy handoffs
+```
+
+Migration:
+
+```txt
+drizzle/0002_small_iron_lad.sql
 ```
 
 ## API Contract For The First Flow
