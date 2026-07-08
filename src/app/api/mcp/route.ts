@@ -306,9 +306,69 @@ function formatReportHandoff(report: WorkspaceReport): string {
     element.text ? `Text: ${element.text}` : "Text: none",
     `Attributes: ${attributes}`,
     "",
+    formatImplementationBrief(report),
+    "",
     "## Developer prompt",
     report.developerPrompt,
-  ].join("\n")
+  ]
+    .filter((line) => line !== null)
+    .join("\n")
+}
+
+function formatImplementationBrief(report: WorkspaceReport) {
+  const brief = report.implementationBrief
+
+  if (!brief) {
+    return null
+  }
+
+  const hasBriefContent =
+    brief.acceptanceCriteria.length > 0 ||
+    Boolean(brief.implementationNotes) ||
+    brief.constraintsNonGoals.length > 0 ||
+    Boolean(brief.expectedBehavior) ||
+    brief.referenceLinks.length > 0 ||
+    brief.reviewChecklist.length > 0
+
+  if (!hasBriefContent) {
+    return null
+  }
+
+  return [
+    "## Implementation brief",
+    formatListSection("Acceptance criteria", brief.acceptanceCriteria),
+    brief.implementationNotes
+      ? `Implementation notes:\n${brief.implementationNotes}`
+      : null,
+    formatListSection("Constraints / non-goals", brief.constraintsNonGoals),
+    brief.expectedBehavior
+      ? `Expected behavior:\n${brief.expectedBehavior}`
+      : null,
+    formatReferenceLinks(brief.referenceLinks),
+    formatListSection("Review checklist", brief.reviewChecklist),
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n\n")
+}
+
+function formatListSection(label: string, values: string[]) {
+  if (values.length === 0) {
+    return null
+  }
+
+  return `${label}:\n${values.map((value) => `- ${value}`).join("\n")}`
+}
+
+function formatReferenceLinks(
+  links: NonNullable<WorkspaceReport["implementationBrief"]>["referenceLinks"]
+) {
+  if (links.length === 0) {
+    return null
+  }
+
+  return `Reference links:\n${links
+    .map((link) => `- ${link.label ? `${link.label}: ` : ""}${link.url}`)
+    .join("\n")}`
 }
 
 // Embed up to three screenshots as images the agent can actually see. Uses the
