@@ -11,7 +11,7 @@ import {
 } from "@tanstack/react-query"
 import { useCallback, useEffect } from "react"
 
-import { getJson, patchJson } from "@/lib/api-client"
+import { deleteJson, getJson, patchJson, postJson, putJson } from "@/lib/api-client"
 import {
   reportKeys,
   type ReportCountFilters,
@@ -19,7 +19,14 @@ import {
 } from "@/lib/query-keys"
 import type {
   WorkspaceReport,
+  WorkspaceReportActivityItem,
+  WorkspaceReportComment,
+  WorkspaceReportCommentReactionKind,
+  WorkspaceReportCommentMutationResponse,
+  WorkspaceReportCommentsPageInfo,
+  WorkspaceReportCommentsResponse,
   WorkspaceReportImplementationBrief,
+  WorkspaceReportNoteKind,
   WorkspaceReportCountsResponse,
   WorkspaceReportDetailResponse,
   WorkspaceReportsListResponse,
@@ -54,6 +61,53 @@ type UpdateReportImplementationBriefVariables = {
   implementationBrief: WorkspaceReportImplementationBrief
   report: WorkspaceReport
 }
+
+type CreateReportNoteVariables = {
+  body: string
+  kind: WorkspaceReportNoteKind
+  optimisticActivityItem: WorkspaceReportActivityItem
+  report: WorkspaceReport
+}
+
+type CreateReportCommentVariables = {
+  body: string
+  onOptimisticCommit?: () => void
+  optimisticComment: WorkspaceReportComment
+  parentCommentId?: string | null
+  report: WorkspaceReport
+}
+
+type UpdateReportCommentVariables = {
+  body: string
+  comment: WorkspaceReportComment
+  optimisticComment: WorkspaceReportComment
+  report: WorkspaceReport
+}
+
+type DeleteReportCommentVariables = {
+  comment: WorkspaceReportComment
+  optimisticComment: WorkspaceReportComment
+  report: WorkspaceReport
+}
+
+type UpdateReportCommentReactionVariables = {
+  comment: WorkspaceReportComment
+  enabled: boolean
+  reaction: WorkspaceReportCommentReactionKind
+  report: WorkspaceReport
+}
+
+type LoadReportCommentsVariables = {
+  cursor?: string | null
+  limit?: number
+  parentCommentId?: string | null
+  report: WorkspaceReport
+}
+
+type WorkspaceReportCommentDeleteResponse =
+  WorkspaceReportCommentMutationResponse & {
+    removed: boolean
+  }
 
 const refetchVisibleReportsIntervalMs = 15_000
 const optimisticUnassignResetStatuses: WorkspaceReport["status"][] = [
@@ -94,6 +148,46 @@ function getReportsListUrl({
 
 function getReportDetailUrl(workspaceSlug: string, reportId: string) {
   return `/api/workspaces/${encodeURIComponent(workspaceSlug)}/reports/${encodeURIComponent(reportId)}`
+}
+
+function getReportCommentsUrl({
+  cursor,
+  limit = 10,
+  parentCommentId,
+  reportId,
+  workspaceSlug,
+}: {
+  cursor?: string | null
+  limit?: number
+  parentCommentId?: string | null
+  reportId: string
+  workspaceSlug: string
+}) {
+  const searchParams = new URLSearchParams({
+    limit: String(limit),
+  })
+
+  if (cursor) {
+    searchParams.set("cursor", cursor)
+  }
+
+  if (parentCommentId) {
+    searchParams.set("parentCommentId", parentCommentId)
+  }
+
+  return `${getReportDetailUrl(workspaceSlug, reportId)}/comments?${searchParams}`
+}
+
+function getReportCommentMutationUrl({
+  commentId,
+  reportId,
+  workspaceSlug,
+}: {
+  commentId: string
+  reportId: string
+  workspaceSlug: string
+}) {
+  return `${getReportDetailUrl(workspaceSlug, reportId)}/comments/${encodeURIComponent(commentId)}`
 }
 
 function getReportCountsUrl({
@@ -141,6 +235,24 @@ export async function fetchReportsList({
 export async function fetchReportDetail(workspaceSlug: string, reportId: string) {
   return getJson<WorkspaceReportDetailResponse>(
     getReportDetailUrl(workspaceSlug, reportId)
+  )
+}
+
+export async function fetchReportComments({
+  cursor,
+  limit,
+  parentCommentId,
+  reportId,
+  workspaceSlug,
+}: {
+  cursor?: string | null
+  limit?: number
+  parentCommentId?: string | null
+  reportId: string
+  workspaceSlug: string
+}) {
+  return getJson<WorkspaceReportCommentsResponse>(
+    getReportCommentsUrl({ cursor, limit, parentCommentId, reportId, workspaceSlug })
   )
 }
 
@@ -210,6 +322,252 @@ function patchReportList(
   )
 }
 
+function addCommentToTree(
+  comments: WorkspaceReportComment[],
+  nextComment: WorkspaceReportComment
+): WorkspaceReportComment[] {
+  if (comments.some((comment) => comment.id === nextComment.id)) {
+    return comments.map((comment) =>
+      comment.id === nextComment.id
+        ? mergeReportComment(comment, nextComment)
+        : comment
+    )
+  }
+
+  if (!nextComment.parentCommentId) {
+    return [...comments, nextComment]
+  }
+
+  return comments.map((comment) => {
+    if (comment.id === nextComment.parentCommentId) {
+      const hasReply = comment.replies.some((reply) => reply.id === nextComment.id)
+      const replies = hasReply
+        ? comment.replies
+        : [...comment.replies, nextComment]
+
+      return {
+        ...comment,
+        replies,
+        replyCount: hasReply
+          ? comment.replyCount
+          : Math.max(comment.replyCount + 1, replies.length),
+      }
+    }
+
+    return {
+      ...comment,
+      replies: addCommentToTree(comment.replies, nextComment),
+    }
+  })
+}
+
+function mergeCommentTrees(
+  currentComments: WorkspaceReportComment[] = [],
+  nextComments: WorkspaceReportComment[] = []
+) {
+  return nextComments.reduce(
+    (comments, comment) => addCommentToTree(comments, comment),
+    currentComments
+  )
+}
+
+function mergeCommentListById(
+  currentComments: WorkspaceReportComment[] = [],
+  nextComments: WorkspaceReportComment[] = []
+) {
+  const commentsById = new Map(
+    currentComments.map((comment) => [comment.id, comment])
+  )
+
+  for (const comment of nextComments) {
+    commentsById.set(
+      comment.id,
+      commentsById.has(comment.id)
+        ? mergeReportComment(commentsById.get(comment.id) as WorkspaceReportComment, comment)
+        : comment
+    )
+  }
+
+  return [...commentsById.values()]
+}
+
+function mergeReportComment(
+  currentComment: WorkspaceReportComment,
+  nextComment: WorkspaceReportComment
+): WorkspaceReportComment {
+  return {
+    ...currentComment,
+    ...nextComment,
+    replies: mergeCommentListById(currentComment.replies, nextComment.replies),
+    repliesPageInfo:
+      nextComment.repliesPageInfo ?? currentComment.repliesPageInfo,
+  }
+}
+
+function mergeRepliesIntoCommentTree({
+  comments,
+  pageInfo,
+  parentCommentId,
+  replies,
+}: {
+  comments: WorkspaceReportComment[]
+  pageInfo: WorkspaceReportCommentsPageInfo
+  parentCommentId: string
+  replies: WorkspaceReportComment[]
+}): WorkspaceReportComment[] {
+  return comments.map((comment) => {
+    if (comment.id === parentCommentId) {
+      const mergedReplies = mergeCommentListById(comment.replies, replies)
+
+      return {
+        ...comment,
+        replies: mergedReplies,
+        repliesPageInfo: pageInfo,
+        replyCount: Math.max(comment.replyCount, mergedReplies.length),
+      }
+    }
+
+    return {
+      ...comment,
+      replies: mergeRepliesIntoCommentTree({
+        comments: comment.replies,
+        pageInfo,
+        parentCommentId,
+        replies,
+      }),
+    }
+  })
+}
+
+function removeCommentFromTree(
+  comments: WorkspaceReportComment[],
+  commentId: string
+): WorkspaceReportComment[] {
+  return comments
+    .filter((comment) => comment.id !== commentId)
+    .map((comment) => ({
+      ...comment,
+      replies: removeCommentFromTree(comment.replies, commentId),
+      replyCount: Math.max(
+        0,
+        comment.replyCount -
+          (comment.replies.some((reply) => reply.id === commentId) ? 1 : 0)
+      ),
+    }))
+}
+
+function replaceCommentInTree(
+  comments: WorkspaceReportComment[],
+  optimisticCommentId: string,
+  nextComment: WorkspaceReportComment
+) {
+  return addCommentToTree(
+    removeCommentFromTree(comments, optimisticCommentId),
+    nextComment
+  )
+}
+
+function updateCommentInTree(
+  comments: WorkspaceReportComment[],
+  nextComment: WorkspaceReportComment
+): WorkspaceReportComment[] {
+  return comments.map((comment) => {
+    if (comment.id === nextComment.id) {
+      return mergeReportComment(comment, nextComment)
+    }
+
+    return {
+      ...comment,
+      replies: updateCommentInTree(comment.replies, nextComment),
+    }
+  })
+}
+
+function sortCommentReactions(
+  reactions: WorkspaceReportComment["reactions"]
+) {
+  const order: WorkspaceReportCommentReactionKind[] = [
+    "seen",
+    "agree",
+    "blocked",
+    "helpful",
+  ]
+
+  return [...reactions].sort(
+    (first, second) =>
+      order.indexOf(first.reaction) - order.indexOf(second.reaction)
+  )
+}
+
+function setCommentReaction(
+  comment: WorkspaceReportComment,
+  reaction: WorkspaceReportCommentReactionKind,
+  enabled: boolean
+): WorkspaceReportComment {
+  const existingReaction = comment.reactions.find(
+    (item) => item.reaction === reaction
+  )
+  const nextReactions = comment.reactions
+    .map((item) => {
+      if (item.reaction !== reaction) {
+        return item
+      }
+
+      if (enabled) {
+        return item.reactedByCurrentUser
+          ? item
+          : {
+              ...item,
+              count: item.count + 1,
+              reactedByCurrentUser: true,
+            }
+      }
+
+      return {
+        ...item,
+        count: item.reactedByCurrentUser ? item.count - 1 : item.count,
+        reactedByCurrentUser: false,
+      }
+    })
+    .filter((item) => item.count > 0)
+
+  if (enabled && !existingReaction) {
+    nextReactions.push({
+      reaction,
+      count: 1,
+      reactedByCurrentUser: true,
+    })
+  }
+
+  return {
+    ...comment,
+    reactions: sortCommentReactions(nextReactions),
+  }
+}
+
+function setCommentReactionInTree(
+  comments: WorkspaceReportComment[],
+  commentId: string,
+  reaction: WorkspaceReportCommentReactionKind,
+  enabled: boolean
+): WorkspaceReportComment[] {
+  return comments.map((comment) => {
+    if (comment.id === commentId) {
+      return setCommentReaction(comment, reaction, enabled)
+    }
+
+    return {
+      ...comment,
+      replies: setCommentReactionInTree(
+        comment.replies,
+        commentId,
+        reaction,
+        enabled
+      ),
+    }
+  })
+}
+
 function getScreenshotEvidenceScore(report: WorkspaceReport) {
   return report.screenshots.reduce((score, screenshot) => {
     const hasSource = Boolean(screenshot.url || screenshot.thumbnailUrl)
@@ -227,6 +585,12 @@ export function mergeReportCacheEntry(
   return {
     ...currentReport,
     ...nextReport,
+    comments:
+      nextReport.comments === undefined
+        ? currentReport.comments
+        : mergeCommentTrees(currentReport.comments, nextReport.comments),
+    commentsPageInfo:
+      nextReport.commentsPageInfo ?? currentReport.commentsPageInfo,
     screenshots:
       nextEvidenceScore >= currentEvidenceScore
         ? nextReport.screenshots
@@ -240,6 +604,16 @@ function isReportCacheEntry(value: unknown): value is WorkspaceReport {
   }
 
   return typeof value.id === "string"
+}
+
+function isReportDetailResponse(
+  value: unknown
+): value is WorkspaceReportDetailResponse {
+  if (!value || typeof value !== "object" || !("report" in value)) {
+    return false
+  }
+
+  return isReportCacheEntry(value.report)
 }
 
 function patchReportDetailCacheData<T>(data: T, nextReport: WorkspaceReport): T {
@@ -308,6 +682,105 @@ export function syncReportAcrossCaches(
   queryClient.setQueriesData(
     { queryKey: reportKeys.all(workspaceSlug) },
     (currentData) => patchReportCacheData(currentData, report)
+  )
+}
+
+function patchReportCommentsCacheData<T>(
+  data: T,
+  reportId: string,
+  patcher: (report: WorkspaceReport) => WorkspaceReport
+): T {
+  if (!data || typeof data !== "object") {
+    return data
+  }
+
+  if ("report" in data && isReportCacheEntry(data.report)) {
+    if (data.report.id !== reportId) {
+      return data
+    }
+
+    return {
+      ...data,
+      report: patcher(data.report),
+    } as T
+  }
+
+  if ("reports" in data && Array.isArray(data.reports)) {
+    return {
+      ...data,
+      reports: data.reports.map((report) =>
+        isReportCacheEntry(report) && report.id === reportId
+          ? patcher(report)
+          : report
+      ),
+    } as T
+  }
+
+  if ("pages" in data && Array.isArray(data.pages)) {
+    return {
+      ...data,
+      pages: data.pages.map((page) =>
+        page && typeof page === "object" && "reports" in page
+          ? {
+              ...page,
+              reports: Array.isArray(page.reports)
+                ? page.reports.map((report: unknown) =>
+                    isReportCacheEntry(report) && report.id === reportId
+                      ? patcher(report)
+                      : report
+                  )
+                : page.reports,
+            }
+          : page
+      ),
+    } as T
+  }
+
+  return data
+}
+
+function patchReportCommentsAcrossCaches({
+  pageInfo,
+  patcher,
+  queryClient,
+  reportId,
+  workspaceSlug,
+}: {
+  pageInfo?: WorkspaceReportCommentsPageInfo
+  patcher: (comments: WorkspaceReportComment[]) => WorkspaceReportComment[]
+  queryClient: QueryClient
+  reportId: string
+  workspaceSlug: string
+}) {
+  queryClient.setQueriesData(
+    { queryKey: reportKeys.all(workspaceSlug) },
+    (currentData) =>
+      patchReportCommentsCacheData(currentData, reportId, (report) => ({
+        ...report,
+        comments: patcher(report.comments ?? []),
+        commentsPageInfo: pageInfo ?? report.commentsPageInfo,
+      }))
+  )
+}
+
+function setReportCommentsCountAcrossCaches({
+  commentsCount,
+  queryClient,
+  reportId,
+  workspaceSlug,
+}: {
+  commentsCount: number
+  queryClient: QueryClient
+  reportId: string
+  workspaceSlug: string
+}) {
+  queryClient.setQueriesData(
+    { queryKey: reportKeys.all(workspaceSlug) },
+    (currentData) =>
+      patchReportCommentsCacheData(currentData, reportId, (report) => ({
+        ...report,
+        commentsCount,
+      }))
   )
 }
 
@@ -414,6 +887,19 @@ export function useReportDetailQuery({
       : reportKeys.detail(workspaceSlug, "__none__"),
     refetchOnMount: "always",
     staleTime: 45 * 1000,
+    structuralSharing: (oldData, newData) => {
+      if (
+        !isReportDetailResponse(oldData) ||
+        !isReportDetailResponse(newData)
+      ) {
+        return newData
+      }
+
+      return {
+        ...newData,
+        report: mergeReportCacheEntry(oldData.report, newData.report),
+      }
+    },
   })
 
   useEffect(() => {
@@ -576,6 +1062,312 @@ export function useUpdateReportImplementationBriefMutation(workspaceSlug: string
     },
     onSuccess: (result) => {
       syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
+    },
+  })
+}
+
+export function useCreateReportNoteMutation(workspaceSlug: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation<
+    ReportMutationResponse,
+    Error,
+    CreateReportNoteVariables,
+    ReportMutationContext
+  >({
+    mutationFn: ({ body, kind, report }) =>
+      postJson<ReportMutationResponse>(
+        `${getReportMutationBaseUrl(workspaceSlug, report.id)}/notes`,
+        { body, kind }
+      ),
+    onError: (_error, _variables, context) => {
+      restoreReportSnapshots(queryClient, context?.snapshots)
+    },
+    onMutate: async ({ optimisticActivityItem, report }) => {
+      await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
+
+      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
+      const optimisticReport: WorkspaceReport = {
+        ...report,
+        activity: [optimisticActivityItem, ...(report.activity ?? [])],
+      }
+
+      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
+
+      return { snapshots }
+    },
+    onSuccess: (result) => {
+      syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
+    },
+  })
+}
+
+export function useCreateReportCommentMutation(workspaceSlug: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation<
+    WorkspaceReportCommentMutationResponse,
+    Error,
+    CreateReportCommentVariables,
+    ReportMutationContext
+  >({
+    mutationFn: ({ body, parentCommentId, report }) =>
+      postJson<WorkspaceReportCommentMutationResponse>(
+        `${getReportMutationBaseUrl(workspaceSlug, report.id)}/comments`,
+        { body, parentCommentId: parentCommentId ?? null }
+      ),
+    onError: (_error, _variables, context) => {
+      restoreReportSnapshots(queryClient, context?.snapshots)
+    },
+    onMutate: async ({ onOptimisticCommit, optimisticComment, report }) => {
+      await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
+
+      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
+      const optimisticReport: WorkspaceReport = {
+        ...report,
+        comments: addCommentToTree(report.comments ?? [], optimisticComment),
+        commentsCount: report.commentsCount + 1,
+      }
+
+      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
+      onOptimisticCommit?.()
+
+      return { snapshots }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: reportKeys.countsRoot(workspaceSlug),
+      })
+    },
+    onSuccess: (result, variables) => {
+      const commentsCount = Math.max(
+        result.report.commentsCount,
+        variables.report.commentsCount + 1
+      )
+
+      patchReportCommentsAcrossCaches({
+        queryClient,
+        reportId: variables.report.id,
+        workspaceSlug,
+        patcher: (comments) =>
+          replaceCommentInTree(
+            comments,
+            variables.optimisticComment.id,
+            result.comment
+          ),
+      })
+      setReportCommentsCountAcrossCaches({
+        commentsCount,
+        queryClient,
+        reportId: variables.report.id,
+        workspaceSlug,
+      })
+    },
+  })
+}
+
+export function useUpdateReportCommentMutation(workspaceSlug: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation<
+    WorkspaceReportCommentMutationResponse,
+    Error,
+    UpdateReportCommentVariables,
+    ReportMutationContext
+  >({
+    mutationFn: ({ body, comment, report }) =>
+      patchJson<WorkspaceReportCommentMutationResponse>(
+        getReportCommentMutationUrl({
+          commentId: comment.id,
+          reportId: report.id,
+          workspaceSlug,
+        }),
+        { body }
+      ),
+    onError: (_error, _variables, context) => {
+      restoreReportSnapshots(queryClient, context?.snapshots)
+    },
+    onMutate: async ({ optimisticComment, report }) => {
+      await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
+
+      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
+      const optimisticReport: WorkspaceReport = {
+        ...report,
+        comments: updateCommentInTree(report.comments ?? [], optimisticComment),
+      }
+
+      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
+
+      return { snapshots }
+    },
+    onSuccess: (result) => {
+      syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
+      patchReportCommentsAcrossCaches({
+        queryClient,
+        reportId: result.report.id,
+        workspaceSlug,
+        patcher: (comments) => updateCommentInTree(comments, result.comment),
+      })
+    },
+  })
+}
+
+export function useDeleteReportCommentMutation(workspaceSlug: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation<
+    WorkspaceReportCommentDeleteResponse,
+    Error,
+    DeleteReportCommentVariables,
+    ReportMutationContext
+  >({
+    mutationFn: ({ comment, report }) =>
+      deleteJson<WorkspaceReportCommentDeleteResponse>(
+        getReportCommentMutationUrl({
+          commentId: comment.id,
+          reportId: report.id,
+          workspaceSlug,
+        })
+      ),
+    onError: (_error, _variables, context) => {
+      restoreReportSnapshots(queryClient, context?.snapshots)
+    },
+    onMutate: async ({ comment, optimisticComment, report }) => {
+      await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
+
+      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
+      const nextComments =
+        comment.replyCount > 0
+          ? updateCommentInTree(report.comments ?? [], optimisticComment)
+          : removeCommentFromTree(report.comments ?? [], comment.id)
+      const optimisticReport: WorkspaceReport = {
+        ...report,
+        comments: nextComments,
+        commentsCount: Math.max(0, report.commentsCount - 1),
+      }
+
+      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
+
+      return { snapshots }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: reportKeys.countsRoot(workspaceSlug),
+      })
+    },
+    onSuccess: (result) => {
+      syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
+      patchReportCommentsAcrossCaches({
+        queryClient,
+        reportId: result.report.id,
+        workspaceSlug,
+        patcher: (comments) =>
+          result.removed
+            ? removeCommentFromTree(comments, result.comment.id)
+            : updateCommentInTree(comments, result.comment),
+      })
+      setReportCommentsCountAcrossCaches({
+        commentsCount: result.report.commentsCount,
+        queryClient,
+        reportId: result.report.id,
+        workspaceSlug,
+      })
+    },
+  })
+}
+
+export function useUpdateReportCommentReactionMutation(workspaceSlug: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation<
+    WorkspaceReportCommentMutationResponse,
+    Error,
+    UpdateReportCommentReactionVariables,
+    ReportMutationContext
+  >({
+    mutationFn: ({ comment, enabled, reaction, report }) =>
+      putJson<WorkspaceReportCommentMutationResponse>(
+        `${getReportCommentMutationUrl({
+          commentId: comment.id,
+          reportId: report.id,
+          workspaceSlug,
+        })}/reactions`,
+        { enabled, reaction }
+      ),
+    onError: (_error, _variables, context) => {
+      restoreReportSnapshots(queryClient, context?.snapshots)
+    },
+    onMutate: async ({ enabled, reaction, report, comment }) => {
+      await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
+
+      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
+      const optimisticReport: WorkspaceReport = {
+        ...report,
+        comments: setCommentReactionInTree(
+          report.comments ?? [],
+          comment.id,
+          reaction,
+          enabled
+        ),
+      }
+
+      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
+
+      return { snapshots }
+    },
+    onSuccess: (result) => {
+      syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
+      patchReportCommentsAcrossCaches({
+        queryClient,
+        reportId: result.report.id,
+        workspaceSlug,
+        patcher: (comments) => updateCommentInTree(comments, result.comment),
+      })
+    },
+  })
+}
+
+export function useLoadReportCommentsMutation(workspaceSlug: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation<
+    WorkspaceReportCommentsResponse,
+    Error,
+    LoadReportCommentsVariables
+  >({
+    mutationFn: ({ cursor, limit, parentCommentId, report }) =>
+      fetchReportComments({
+        cursor,
+        limit,
+        parentCommentId,
+        reportId: report.id,
+        workspaceSlug,
+      }),
+    onSuccess: (result, variables) => {
+      if (variables.parentCommentId) {
+        patchReportCommentsAcrossCaches({
+          queryClient,
+          reportId: variables.report.id,
+          workspaceSlug,
+          patcher: (comments) =>
+            mergeRepliesIntoCommentTree({
+              comments,
+              pageInfo: result.pageInfo,
+              parentCommentId: variables.parentCommentId as string,
+              replies: result.comments,
+            }),
+        })
+
+        return
+      }
+
+      patchReportCommentsAcrossCaches({
+        pageInfo: result.pageInfo,
+        queryClient,
+        reportId: variables.report.id,
+        workspaceSlug,
+        patcher: (comments) => mergeCommentTrees(comments, result.comments),
+      })
     },
   })
 }

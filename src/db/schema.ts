@@ -11,6 +11,7 @@ import {
   timestamp,
   unique,
   uniqueIndex,
+  type AnyPgColumn,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core"
@@ -79,6 +80,20 @@ export const reportAssetType = pgEnum("report_asset_type", [
   "page_screenshot",
   "element_screenshot",
   "annotated_screenshot",
+])
+
+export const reportNoteKind = pgEnum("report_note_kind", [
+  "work_note",
+  "blocker",
+  "clarification",
+  "review_note",
+])
+
+export const reportCommentReaction = pgEnum("report_comment_reaction", [
+  "seen",
+  "agree",
+  "blocked",
+  "helpful",
 ])
 
 const timestamps = () => ({
@@ -426,6 +441,36 @@ export const reportImplementationBriefs = pgTable(
   ]
 )
 
+export const reportNotes = pgTable(
+  "report_notes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    reportId: uuid("report_id")
+      .notNull()
+      .references(() => reports.id, { onDelete: "cascade" }),
+    authorUserId: uuid("author_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    kind: reportNoteKind("kind").notNull(),
+    body: text("body").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    ...timestamps(),
+  },
+  (table) => [
+    index("report_notes_workspace_id_idx").on(table.workspaceId),
+    index("report_notes_report_id_idx").on(table.reportId),
+    index("report_notes_author_user_id_idx").on(table.authorUserId),
+    foreignKey({
+      name: "report_notes_report_workspace_fk",
+      columns: [table.reportId, table.workspaceId],
+      foreignColumns: [reports.id, reports.workspaceId],
+    }).onDelete("cascade"),
+  ]
+)
+
 export const reportComments = pgTable(
   "report_comments",
   {
@@ -439,7 +484,12 @@ export const reportComments = pgTable(
     authorUserId: uuid("author_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    parentCommentId: uuid("parent_comment_id").references(
+      (): AnyPgColumn => reportComments.id,
+      { onDelete: "set null" }
+    ),
     body: text("body").notNull(),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     ...timestamps(),
   },
@@ -447,8 +497,46 @@ export const reportComments = pgTable(
     index("report_comments_workspace_id_idx").on(table.workspaceId),
     index("report_comments_report_id_idx").on(table.reportId),
     index("report_comments_author_user_id_idx").on(table.authorUserId),
+    index("report_comments_parent_comment_id_idx").on(table.parentCommentId),
     foreignKey({
       name: "report_comments_report_workspace_fk",
+      columns: [table.reportId, table.workspaceId],
+      foreignColumns: [reports.id, reports.workspaceId],
+    }).onDelete("cascade"),
+  ]
+)
+
+export const reportCommentReactions = pgTable(
+  "report_comment_reactions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    reportId: uuid("report_id")
+      .notNull()
+      .references(() => reports.id, { onDelete: "cascade" }),
+    commentId: uuid("comment_id")
+      .notNull()
+      .references(() => reportComments.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    reaction: reportCommentReaction("reaction").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("report_comment_reactions_unique").on(
+      table.commentId,
+      table.userId,
+      table.reaction
+    ),
+    index("report_comment_reactions_workspace_id_idx").on(table.workspaceId),
+    index("report_comment_reactions_report_id_idx").on(table.reportId),
+    index("report_comment_reactions_comment_id_idx").on(table.commentId),
+    index("report_comment_reactions_user_id_idx").on(table.userId),
+    foreignKey({
+      name: "report_comment_reactions_report_workspace_fk",
       columns: [table.reportId, table.workspaceId],
       foreignColumns: [reports.id, reports.workspaceId],
     }).onDelete("cascade"),
@@ -599,6 +687,7 @@ export const reportsRelations = relations(reports, ({ one, many }) => ({
     ],
   }),
   comments: many(reportComments),
+  notes: many(reportNotes),
   statusEvents: many(reportStatusEvents),
 }))
 
@@ -644,6 +733,48 @@ export const reportCommentsRelations = relations(reportComments, ({ one }) => ({
     fields: [reportComments.authorUserId],
     references: [users.id],
   }),
+  parent: one(reportComments, {
+    fields: [reportComments.parentCommentId],
+    references: [reportComments.id],
+    relationName: "reportCommentReplies",
+  }),
+}))
+
+export const reportCommentReactionsRelations = relations(
+  reportCommentReactions,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [reportCommentReactions.workspaceId],
+      references: [workspaces.id],
+    }),
+    report: one(reports, {
+      fields: [reportCommentReactions.reportId],
+      references: [reports.id],
+    }),
+    comment: one(reportComments, {
+      fields: [reportCommentReactions.commentId],
+      references: [reportComments.id],
+    }),
+    user: one(users, {
+      fields: [reportCommentReactions.userId],
+      references: [users.id],
+    }),
+  })
+)
+
+export const reportNotesRelations = relations(reportNotes, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [reportNotes.workspaceId],
+    references: [workspaces.id],
+  }),
+  report: one(reports, {
+    fields: [reportNotes.reportId],
+    references: [reports.id],
+  }),
+  author: one(users, {
+    fields: [reportNotes.authorUserId],
+    references: [users.id],
+  }),
 }))
 
 export const reportStatusEventsRelations = relations(
@@ -678,3 +809,5 @@ export type Report = typeof reports.$inferSelect
 export type NewReport = typeof reports.$inferInsert
 export type ReportImplementationBrief = typeof reportImplementationBriefs.$inferSelect
 export type NewReportImplementationBrief = typeof reportImplementationBriefs.$inferInsert
+export type ReportNote = typeof reportNotes.$inferSelect
+export type NewReportNote = typeof reportNotes.$inferInsert

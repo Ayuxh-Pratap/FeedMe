@@ -50,6 +50,73 @@ export type WorkspaceReportImplementationBrief = {
   } | null
 }
 
+export type WorkspaceReportNoteKind =
+  | "work_note"
+  | "blocker"
+  | "clarification"
+  | "review_note"
+
+export type WorkspaceReportActivityActor = {
+  id: string
+  name: string
+  email: string
+  avatarUrl?: string | null
+}
+
+export type WorkspaceReportActivityItem =
+  | {
+      id: string
+      type: "note"
+      kind: WorkspaceReportNoteKind
+      body: string
+      createdAt: string
+      createdAgo: string
+      author?: WorkspaceReportActivityActor | null
+    }
+  | {
+      id: string
+      type: "status"
+      fromStatus?: WorkspaceReportStatus | null
+      toStatus: WorkspaceReportStatus
+      note?: string | null
+      createdAt: string
+      createdAgo: string
+      actor?: WorkspaceReportActivityActor | null
+    }
+
+export type WorkspaceReportComment = {
+  id: string
+  parentCommentId?: string | null
+  body: string
+  createdAt: string
+  createdAgo: string
+  editedAt?: string | null
+  isDeleted?: boolean
+  author?: WorkspaceReportActivityActor | null
+  reactions: WorkspaceReportCommentReactionSummary[]
+  replyCount: number
+  replies: WorkspaceReportComment[]
+  repliesPageInfo?: WorkspaceReportCommentsPageInfo
+}
+
+export type WorkspaceReportCommentReactionKind =
+  | "seen"
+  | "agree"
+  | "blocked"
+  | "helpful"
+
+export type WorkspaceReportCommentReactionSummary = {
+  reaction: WorkspaceReportCommentReactionKind
+  count: number
+  reactedByCurrentUser: boolean
+}
+
+export type WorkspaceReportCommentsPageInfo = {
+  hasNextPage: boolean
+  limit: number
+  nextCursor: string | null
+}
+
 export type WorkspaceReport = {
   id: string
   reporterUserId?: string | null
@@ -82,6 +149,9 @@ export type WorkspaceReport = {
   }
   developerPrompt: string
   implementationBrief?: WorkspaceReportImplementationBrief | null
+  activity?: WorkspaceReportActivityItem[]
+  comments?: WorkspaceReportComment[]
+  commentsPageInfo?: WorkspaceReportCommentsPageInfo
   assignee?: {
     name: string
     initials: string
@@ -132,6 +202,16 @@ export type WorkspaceReportCountsResponse = {
 }
 
 export type WorkspaceReportDetailResponse = {
+  report: WorkspaceReportDetail
+}
+
+export type WorkspaceReportCommentsResponse = {
+  comments: WorkspaceReportComment[]
+  pageInfo: WorkspaceReportCommentsPageInfo
+}
+
+export type WorkspaceReportCommentMutationResponse = {
+  comment: WorkspaceReportComment
   report: WorkspaceReportDetail
 }
 

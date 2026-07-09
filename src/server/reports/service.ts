@@ -16,8 +16,10 @@ import {
 import { db } from "@/db"
 import {
   reportAssets,
+  reportCommentReactions,
   reportComments,
   reportImplementationBriefs,
+  reportNotes,
   reportStatusEvents,
   reports,
   userProfiles,
@@ -35,7 +37,14 @@ import {
   isWorkspaceReportAssignmentLocked,
   progressReportStatuses,
   type WorkspaceReport,
+  type WorkspaceReportActivityActor,
+  type WorkspaceReportActivityItem,
+  type WorkspaceReportComment,
+  type WorkspaceReportCommentReactionKind,
+  type WorkspaceReportCommentReactionSummary,
+  type WorkspaceReportCommentsPageInfo,
   type WorkspaceReportImplementationBrief,
+  type WorkspaceReportNoteKind,
   type WorkspaceReportSort,
   type WorkspaceReportStatus,
   type WorkspaceReportsPageInfo,
@@ -45,6 +54,7 @@ import {
   getInitialsFromName,
   getNameFromEmail,
   isAssignableReportRole,
+  type WorkspaceMemberRole,
 } from "@/lib/team-members"
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/http/errors"
 import { assertCanWorkspaceRole } from "@/server/policies/can"
@@ -52,9 +62,14 @@ import { normalizeDomainHost } from "@/server/workspaces/domains"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
 import type {
   AssignReportInput,
+  CreateReportCommentInput,
   CreateReportInput,
+  CreateReportNoteInput,
+  ListReportCommentsInput,
   ListReportsInput,
   ReportCountsInput,
+  UpdateReportCommentInput,
+  UpdateReportCommentReactionInput,
   UpdateReportImplementationBriefInput,
   UpdateReportStatusInput,
 } from "@/server/reports/validation"
@@ -108,6 +123,35 @@ type ReportImplementationBriefRow = {
   updatedByUserId: string | null
 }
 
+type ReportCommentRow = {
+  id: string
+  parentCommentId: string | null
+  authorUserId: string | null
+  body: string
+  createdAt: Date
+  editedAt: Date | null
+  deletedAt: Date | null
+  reactions: WorkspaceReportCommentReactionSummary[]
+  replyCount: number
+}
+
+type ReportNoteRow = {
+  id: string
+  authorUserId: string | null
+  kind: WorkspaceReportNoteKind
+  body: string
+  createdAt: Date
+}
+
+type ReportStatusEventRow = {
+  id: string
+  actorUserId: string | null
+  fromStatus: WorkspaceReportStatus | null
+  toStatus: WorkspaceReportStatus
+  note: string | null
+  createdAt: Date
+}
+
 const assigneeMutableStatuses = new Set<WorkspaceReportStatus>([
   "in_progress",
   "ready_for_review",
@@ -120,18 +164,27 @@ const statusRequiresAssignee = new Set<WorkspaceReportStatus>([
 ])
 
 const statusResetsWhenUnassigned = new Set<WorkspaceReportStatus>(["assigned"])
+const defaultReportCommentsPageSize = 10
 
 function canAdministerReports(role: string) {
   return role === "owner" || role === "admin"
 }
 
+function isAssignedImplementationMember(
+  role: WorkspaceMemberRole,
+  userId: string,
+  report: Pick<ReportRow, "assigneeUserId">
+) {
+  return isAssignableReportRole(role) && report.assigneeUserId === userId
+}
+
 function commentsCountSql() {
   return sql<number>`(
     select count(*)::int
-    from ${reportComments}
-    where ${reportComments.workspaceId} = ${reports.workspaceId}
-      and ${reportComments.reportId} = ${reports.id}
-      and ${reportComments.deletedAt} is null
+    from report_comments as counted_comments
+    where counted_comments.workspace_id = ${reports.workspaceId}
+      and counted_comments.report_id = ${reports.id}
+      and counted_comments.deleted_at is null
   )`.mapWith(Number)
 }
 
@@ -170,6 +223,54 @@ function decodeReportsCursor(cursor?: string) {
   throw new ValidationError("The report page cursor is invalid.", {
     cursor: ["Refresh the page and try again."],
   })
+}
+
+function encodeCommentsCursor(offset: number) {
+  return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url")
+}
+
+function decodeCommentsCursor(cursor?: string) {
+  if (!cursor) {
+    return 0
+  }
+
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8")
+    ) as { offset?: unknown }
+
+    if (
+      typeof decoded.offset === "number" &&
+      Number.isInteger(decoded.offset) &&
+      decoded.offset >= 0
+    ) {
+      return decoded.offset
+    }
+  } catch {
+    // The validation error below keeps the API response consistent.
+  }
+
+  throw new ValidationError("The comments page cursor is invalid.", {
+    cursor: ["Refresh the page and try again."],
+  })
+}
+
+function getCommentsPageInfo({
+  hasNextPage,
+  limit,
+  offset,
+  pageSize,
+}: {
+  hasNextPage: boolean
+  limit: number
+  offset: number
+  pageSize: number
+}): WorkspaceReportCommentsPageInfo {
+  return {
+    hasNextPage,
+    limit,
+    nextCursor: hasNextPage ? encodeCommentsCursor(offset + pageSize) : null,
+  }
 }
 
 function getReportStatusCondition(status: ListReportsInput["status"]) {
@@ -363,6 +464,21 @@ async function requireWorkspaceForReportBriefUpdate(
   return workspace
 }
 
+async function requireWorkspaceForReportNote(
+  userId: string,
+  workspaceSlug: string
+) {
+  const workspace = await getWorkspaceForUserBySlug(userId, workspaceSlug)
+
+  if (!workspace) {
+    throw new NotFoundError("Workspace not found.")
+  }
+
+  assertCanWorkspaceRole(workspace.role, "report:comment")
+
+  return workspace
+}
+
 async function requireWorkspaceForReportStatusUpdate(
   userId: string,
   workspaceSlug: string,
@@ -518,6 +634,130 @@ function serializeReportImplementationBrief(
   }
 }
 
+function serializeActivityActor(
+  userId: string | null,
+  peopleById: Map<string, ReportPerson>
+): WorkspaceReportActivityActor | null {
+  if (!userId) {
+    return null
+  }
+
+  const person = peopleById.get(userId)
+
+  if (!person) {
+    return null
+  }
+
+  return {
+    id: person.id,
+    name: getPersonName(person, "Unknown teammate"),
+    email: person.email,
+    avatarUrl: person.avatarUrl,
+  }
+}
+
+function serializeReportActivity(
+  notes: ReportNoteRow[],
+  statusEvents: ReportStatusEventRow[],
+  peopleById: Map<string, ReportPerson>
+): WorkspaceReportActivityItem[] {
+  const noteItems: WorkspaceReportActivityItem[] = notes.map((note) => ({
+    id: note.id,
+    type: "note",
+    kind: note.kind,
+    body: note.body,
+    createdAt: note.createdAt.toISOString(),
+    createdAgo: formatReportCapturedAgo(note.createdAt),
+    author: serializeActivityActor(note.authorUserId, peopleById),
+  }))
+  const statusItems: WorkspaceReportActivityItem[] = statusEvents.map((event) => ({
+    id: event.id,
+    type: "status",
+    fromStatus: event.fromStatus,
+    toStatus: event.toStatus,
+    note: event.note,
+    createdAt: event.createdAt.toISOString(),
+    createdAgo: formatReportCapturedAgo(event.createdAt),
+    actor: serializeActivityActor(event.actorUserId, peopleById),
+  }))
+
+  return [...noteItems, ...statusItems].sort(
+    (first, second) =>
+      new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime()
+  )
+}
+
+function serializeReportComments(
+  comments: ReportCommentRow[],
+  peopleById: Map<string, ReportPerson>
+): WorkspaceReportComment[] {
+  const commentsById = new Map<string, WorkspaceReportComment>()
+  const roots: WorkspaceReportComment[] = []
+
+  for (const comment of comments) {
+    const isDeleted = Boolean(comment.deletedAt)
+
+    commentsById.set(comment.id, {
+      id: comment.id,
+      parentCommentId: comment.parentCommentId,
+      body: isDeleted ? "Comment deleted" : comment.body,
+      createdAt: comment.createdAt.toISOString(),
+      createdAgo: formatReportCapturedAgo(comment.createdAt),
+      editedAt: comment.editedAt?.toISOString() ?? null,
+      isDeleted,
+      author: isDeleted
+        ? null
+        : serializeActivityActor(comment.authorUserId, peopleById),
+      reactions: isDeleted ? [] : comment.reactions,
+      replyCount: comment.replyCount,
+      replies: [],
+    })
+  }
+
+  for (const comment of comments) {
+    const serializedComment = commentsById.get(comment.id)
+
+    if (!serializedComment) {
+      continue
+    }
+
+    const parent = comment.parentCommentId
+      ? commentsById.get(comment.parentCommentId)
+      : undefined
+
+    if (parent) {
+      parent.replies.push(serializedComment)
+    } else {
+      roots.push(serializedComment)
+    }
+  }
+
+  return roots
+}
+
+function serializeReportComment(
+  comment: ReportCommentRow,
+  peopleById: Map<string, ReportPerson>
+): WorkspaceReportComment {
+  const isDeleted = Boolean(comment.deletedAt)
+
+  return {
+    id: comment.id,
+    parentCommentId: comment.parentCommentId,
+    body: isDeleted ? "Comment deleted" : comment.body,
+    createdAt: comment.createdAt.toISOString(),
+    createdAgo: formatReportCapturedAgo(comment.createdAt),
+    editedAt: comment.editedAt?.toISOString() ?? null,
+    isDeleted,
+    author: isDeleted
+      ? null
+      : serializeActivityActor(comment.authorUserId, peopleById),
+    reactions: isDeleted ? [] : comment.reactions,
+    replyCount: comment.replyCount,
+    replies: [],
+  }
+}
+
 function buildDeveloperPrompt(row: ReportRow) {
   return (
     row.developerPrompt ??
@@ -599,7 +839,10 @@ function serializeReport(
   row: ReportRow,
   peopleById: Map<string, ReportPerson>,
   assets: ReportAssetRow[] = [],
-  implementationBrief?: WorkspaceReport["implementationBrief"]
+  implementationBrief?: WorkspaceReport["implementationBrief"],
+  activity?: WorkspaceReport["activity"],
+  comments?: WorkspaceReport["comments"],
+  commentsPageInfo?: WorkspaceReport["commentsPageInfo"]
 ): WorkspaceReport {
   const reporter = row.reporterUserId
     ? peopleById.get(row.reporterUserId)
@@ -648,6 +891,18 @@ function serializeReport(
 
   if (implementationBrief !== undefined) {
     report.implementationBrief = implementationBrief
+  }
+
+  if (activity !== undefined) {
+    report.activity = activity
+  }
+
+  if (comments !== undefined) {
+    report.comments = comments
+  }
+
+  if (commentsPageInfo !== undefined) {
+    report.commentsPageInfo = commentsPageInfo
   }
 
   return report
@@ -736,6 +991,299 @@ async function getImplementationBriefForReport(
     .limit(1)
 
   return row ?? null
+}
+
+function reportCommentSelectFields() {
+  return {
+    id: reportComments.id,
+    parentCommentId: reportComments.parentCommentId,
+    authorUserId: reportComments.authorUserId,
+    body: reportComments.body,
+    createdAt: reportComments.createdAt,
+    editedAt: reportComments.editedAt,
+    deletedAt: reportComments.deletedAt,
+  }
+}
+
+const reportCommentReactionOrder: WorkspaceReportCommentReactionKind[] = [
+  "seen",
+  "agree",
+  "blocked",
+  "helpful",
+]
+
+async function getReplyCountsForComments(
+  workspaceId: string,
+  reportId: string,
+  commentIds: string[]
+) {
+  const countsByCommentId = new Map<string, number>()
+
+  if (commentIds.length === 0) {
+    return countsByCommentId
+  }
+
+  const rows = await db
+    .select({
+      count: sql<number>`count(*)::int`.mapWith(Number),
+      parentCommentId: reportComments.parentCommentId,
+    })
+    .from(reportComments)
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspaceId),
+        eq(reportComments.reportId, reportId),
+        inArray(reportComments.parentCommentId, commentIds),
+        isNull(reportComments.deletedAt)
+      )
+    )
+    .groupBy(reportComments.parentCommentId)
+
+  for (const row of rows) {
+    if (row.parentCommentId) {
+      countsByCommentId.set(row.parentCommentId, row.count)
+    }
+  }
+
+  return countsByCommentId
+}
+
+async function getReactionSummariesForComments(
+  workspaceId: string,
+  reportId: string,
+  commentIds: string[],
+  userId: string
+) {
+  const reactionsByCommentId = new Map<
+    string,
+    WorkspaceReportCommentReactionSummary[]
+  >()
+
+  if (commentIds.length === 0) {
+    return reactionsByCommentId
+  }
+
+  const rows = await db
+    .select({
+      commentId: reportCommentReactions.commentId,
+      count: sql<number>`count(*)::int`.mapWith(Number),
+      reactedByCurrentUser:
+        sql<boolean>`bool_or(${reportCommentReactions.userId} = ${userId})`,
+      reaction: reportCommentReactions.reaction,
+    })
+    .from(reportCommentReactions)
+    .where(
+      and(
+        eq(reportCommentReactions.workspaceId, workspaceId),
+        eq(reportCommentReactions.reportId, reportId),
+        inArray(reportCommentReactions.commentId, commentIds)
+      )
+    )
+    .groupBy(reportCommentReactions.commentId, reportCommentReactions.reaction)
+
+  for (const row of rows) {
+    const reactions = reactionsByCommentId.get(row.commentId) ?? []
+
+    reactions.push({
+      reaction: row.reaction,
+      count: row.count,
+      reactedByCurrentUser: Boolean(row.reactedByCurrentUser),
+    })
+    reactionsByCommentId.set(row.commentId, reactions)
+  }
+
+  for (const [commentId, reactions] of reactionsByCommentId.entries()) {
+    reactionsByCommentId.set(
+      commentId,
+      reactions.sort(
+        (first, second) =>
+          reportCommentReactionOrder.indexOf(first.reaction) -
+          reportCommentReactionOrder.indexOf(second.reaction)
+      )
+    )
+  }
+
+  return reactionsByCommentId
+}
+
+async function withCommentMetadata(
+  workspaceId: string,
+  reportId: string,
+  userId: string,
+  rows: Array<Omit<ReportCommentRow, "reactions" | "replyCount">>
+): Promise<ReportCommentRow[]> {
+  const commentIds = rows.map((row) => row.id)
+  const [countsByCommentId, reactionsByCommentId] = await Promise.all([
+    getReplyCountsForComments(workspaceId, reportId, commentIds),
+    getReactionSummariesForComments(workspaceId, reportId, commentIds, userId),
+  ])
+
+  return rows.map((row) => ({
+    ...row,
+    reactions: reactionsByCommentId.get(row.id) ?? [],
+    replyCount: countsByCommentId.get(row.id) ?? 0,
+  }))
+}
+
+async function getCommentRowsForReportPage(
+  workspaceId: string,
+  reportId: string,
+  userId: string,
+  input: ListReportCommentsInput = {
+    limit: defaultReportCommentsPageSize,
+  }
+) {
+  const offset = decodeCommentsCursor(input.cursor)
+  const limit = input.limit ?? defaultReportCommentsPageSize
+  const parentCondition = input.parentCommentId
+    ? eq(reportComments.parentCommentId, input.parentCommentId)
+    : isNull(reportComments.parentCommentId)
+  const hasVisibleDescendantSql = sql`exists (
+    with recursive visible_descendants as (
+      select child_comments.id, child_comments.deleted_at
+      from report_comments as child_comments
+      where child_comments.parent_comment_id = ${reportComments.id}
+        and child_comments.workspace_id = ${workspaceId}
+        and child_comments.report_id = ${reportId}
+
+      union all
+
+      select child_comments.id, child_comments.deleted_at
+      from report_comments as child_comments
+      inner join visible_descendants
+        on child_comments.parent_comment_id = visible_descendants.id
+      where child_comments.workspace_id = ${workspaceId}
+        and child_comments.report_id = ${reportId}
+    )
+    select 1
+    from visible_descendants
+    where visible_descendants.deleted_at is null
+  )`
+  const rows = await db
+    .select({
+      ...reportCommentSelectFields(),
+    })
+    .from(reportComments)
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspaceId),
+        eq(reportComments.reportId, reportId),
+        parentCondition,
+        or(isNull(reportComments.deletedAt), hasVisibleDescendantSql)
+      )
+    )
+    .orderBy(asc(reportComments.createdAt), asc(reportComments.id))
+    .limit(limit + 1)
+    .offset(offset)
+  const pageRows = rows.slice(0, limit)
+  const hasNextPage = rows.length > limit
+  const countedRows = await withCommentMetadata(
+    workspaceId,
+    reportId,
+    userId,
+    pageRows
+  )
+
+  return {
+    rows: countedRows,
+    pageInfo: getCommentsPageInfo({
+      hasNextPage,
+      limit,
+      offset,
+      pageSize: pageRows.length,
+    }),
+  }
+}
+
+async function getReportCommentsCount(workspaceId: string, reportId: string) {
+  const [row] = await db
+    .select({
+      count: sql<number>`count(*)::int`.mapWith(Number),
+    })
+    .from(reportComments)
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspaceId),
+        eq(reportComments.reportId, reportId),
+        isNull(reportComments.deletedAt)
+      )
+    )
+
+  return row?.count ?? 0
+}
+
+async function getReportCommentsCounts(
+  workspaceId: string,
+  reportIds: string[]
+) {
+  const countsByReportId = new Map<string, number>()
+
+  if (reportIds.length === 0) {
+    return countsByReportId
+  }
+
+  const rows = await db
+    .select({
+      count: sql<number>`count(*)::int`.mapWith(Number),
+      reportId: reportComments.reportId,
+    })
+    .from(reportComments)
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspaceId),
+        inArray(reportComments.reportId, reportIds),
+        isNull(reportComments.deletedAt)
+      )
+    )
+    .groupBy(reportComments.reportId)
+
+  for (const row of rows) {
+    countsByReportId.set(row.reportId, row.count)
+  }
+
+  return countsByReportId
+}
+
+async function getNotesForReport(workspaceId: string, reportId: string) {
+  return db
+    .select({
+      id: reportNotes.id,
+      authorUserId: reportNotes.authorUserId,
+      kind: reportNotes.kind,
+      body: reportNotes.body,
+      createdAt: reportNotes.createdAt,
+    })
+    .from(reportNotes)
+    .where(
+      and(
+        eq(reportNotes.workspaceId, workspaceId),
+        eq(reportNotes.reportId, reportId),
+        isNull(reportNotes.deletedAt)
+      )
+    )
+    .orderBy(desc(reportNotes.createdAt))
+    .limit(30)
+}
+
+async function getStatusEventsForReport(workspaceId: string, reportId: string) {
+  return db
+    .select({
+      id: reportStatusEvents.id,
+      actorUserId: reportStatusEvents.actorUserId,
+      fromStatus: reportStatusEvents.fromStatus,
+      toStatus: reportStatusEvents.toStatus,
+      note: reportStatusEvents.note,
+      createdAt: reportStatusEvents.createdAt,
+    })
+    .from(reportStatusEvents)
+    .where(
+      and(
+        eq(reportStatusEvents.workspaceId, workspaceId),
+        eq(reportStatusEvents.reportId, reportId)
+      )
+    )
+    .orderBy(desc(reportStatusEvents.createdAt))
+    .limit(30)
 }
 
 async function getMutableReportRow(workspaceId: string, reportId: string) {
@@ -893,6 +1441,34 @@ function getResolvedAtForStatus(status: WorkspaceReportStatus) {
   return status === "resolved" ? new Date() : null
 }
 
+function assertCanCreateReportNoteKind({
+  input,
+  report,
+  role,
+  userId,
+}: {
+  input: CreateReportNoteInput
+  report: ReportRow
+  role: WorkspaceMemberRole
+  userId: string
+}) {
+  if (
+    (input.kind === "work_note" || input.kind === "blocker") &&
+    isAssignedImplementationMember(role, userId, report)
+  ) {
+    return
+  }
+
+  if (
+    (input.kind === "clarification" || input.kind === "review_note") &&
+    canAdministerReports(role)
+  ) {
+    return
+  }
+
+  throw new ForbiddenError("You cannot add this type of note to the report.")
+}
+
 export async function getWorkspaceReportCount(workspaceId: string) {
   const [row] = await db
     .select({
@@ -987,7 +1563,7 @@ export async function listWorkspaceReports(
   const pageRows = rows.slice(0, input.limit)
   const hasNextPage = rows.length > input.limit
 
-  const [peopleById, pageAssetsByReportId] = await Promise.all([
+  const [peopleById, pageAssetsByReportId, commentsCountByReportId] = await Promise.all([
     getPeopleById(
       compactUserIds(
         pageRows.flatMap((row) => [row.reporterUserId, row.assigneeUserId])
@@ -997,13 +1573,24 @@ export async function listWorkspaceReports(
       workspace.id,
       pageRows.map((row) => row.id)
     ),
+    getReportCommentsCounts(
+      workspace.id,
+      pageRows.map((row) => row.id)
+    ),
   ])
 
   return {
     workspace,
     reports: pageRows.map((row) => {
       const pageAsset = pageAssetsByReportId.get(row.id)
-      return serializeReport(row, peopleById, pageAsset ? [pageAsset] : [])
+      return serializeReport(
+        {
+          ...row,
+          commentsCount: commentsCountByReportId.get(row.id) ?? 0,
+        },
+        peopleById,
+        pageAsset ? [pageAsset] : []
+      )
     }),
     pageInfo: getReportsPageInfo({
       hasNextPage,
@@ -1186,13 +1773,18 @@ export async function updateWorkspaceReportStatus(
   )
   const row = await getMutableReportRow(workspace.id, reportId)
   const isReportAdmin = canAdministerReports(workspace.role)
+  const isAssignedMember = isAssignedImplementationMember(
+    workspace.role,
+    userId,
+    row
+  )
 
   if (!isReportAdmin) {
-    if (!isAssignableReportRole(workspace.role)) {
+    if (!isAssignedMember && !isAssignableReportRole(workspace.role)) {
       throw new ForbiddenError()
     }
 
-    if (row.assigneeUserId !== userId) {
+    if (!isAssignedMember) {
       throw new ForbiddenError("Only the assigned teammate can update this report.")
     }
 
@@ -1216,26 +1808,442 @@ export async function updateWorkspaceReportStatus(
     return getWorkspaceReport(userId, workspaceSlug, reportId)
   }
 
-  await db.batch([
-    db
-      .update(reports)
-      .set({
-        archivedAt: input.status === "archived" ? new Date() : null,
-        status: input.status,
-        resolvedAt: getResolvedAtForStatus(input.status),
-      })
-      .where(and(eq(reports.workspaceId, workspace.id), eq(reports.id, reportId))),
-    db.insert(reportStatusEvents).values({
-      workspaceId: workspace.id,
-      reportId,
-      actorUserId: userId,
-      fromStatus: row.status,
-      toStatus: input.status,
-      note: input.note ?? `Status changed to ${input.status.replace(/_/g, " ")}.`,
-    }),
-  ])
+  const reportUpdate = db
+    .update(reports)
+    .set({
+      archivedAt: input.status === "archived" ? new Date() : null,
+      status: input.status,
+      resolvedAt: getResolvedAtForStatus(input.status),
+    })
+    .where(and(eq(reports.workspaceId, workspace.id), eq(reports.id, reportId)))
+  const statusEventInsert = db.insert(reportStatusEvents).values({
+    workspaceId: workspace.id,
+    reportId,
+    actorUserId: userId,
+    fromStatus: row.status,
+    toStatus: input.status,
+    note: input.note ?? `Status changed to ${input.status.replace(/_/g, " ")}.`,
+  })
+  const readyForReviewNote = input.note?.trim()
+
+  if (input.status === "ready_for_review" && readyForReviewNote) {
+    await db.batch([
+      reportUpdate,
+      statusEventInsert,
+      db.insert(reportNotes).values({
+        workspaceId: workspace.id,
+        reportId,
+        authorUserId: userId,
+        kind: "work_note",
+        body: readyForReviewNote,
+      }),
+    ])
+  } else {
+    await db.batch([reportUpdate, statusEventInsert])
+  }
 
   return getWorkspaceReport(userId, workspaceSlug, reportId)
+}
+
+export async function createWorkspaceReportNote(
+  userId: string,
+  workspaceSlug: string,
+  reportId: string,
+  input: CreateReportNoteInput
+) {
+  const workspace = await requireWorkspaceForReportNote(userId, workspaceSlug)
+  const row = await getMutableReportRow(workspace.id, reportId)
+
+  assertCanCreateReportNoteKind({
+    input,
+    report: row,
+    role: workspace.role,
+    userId,
+  })
+
+  await db.insert(reportNotes).values({
+    workspaceId: workspace.id,
+    reportId,
+    authorUserId: userId,
+    kind: input.kind,
+    body: input.body,
+  })
+
+  return getWorkspaceReport(userId, workspaceSlug, reportId)
+}
+
+async function assertReportCommentParent(
+  workspaceId: string,
+  reportId: string,
+  parentCommentId?: string | null
+) {
+  if (!parentCommentId) {
+    return
+  }
+
+  const [parent] = await db
+    .select({ id: reportComments.id })
+    .from(reportComments)
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspaceId),
+        eq(reportComments.reportId, reportId),
+        eq(reportComments.id, parentCommentId),
+        isNull(reportComments.deletedAt)
+      )
+    )
+    .limit(1)
+
+  if (!parent) {
+    throw new ValidationError("Parent comment not found.", {
+      parentCommentId: ["Choose an existing comment on this report."],
+    })
+  }
+}
+
+export async function createWorkspaceReportComment(
+  userId: string,
+  workspaceSlug: string,
+  reportId: string,
+  input: CreateReportCommentInput
+) {
+  const workspace = await requireWorkspaceForReportNote(userId, workspaceSlug)
+
+  await getMutableReportRow(workspace.id, reportId)
+  await assertReportCommentParent(
+    workspace.id,
+    reportId,
+    input.parentCommentId
+  )
+
+  const [insertedComment] = await db
+    .insert(reportComments)
+    .values({
+      workspaceId: workspace.id,
+      reportId,
+      authorUserId: userId,
+      parentCommentId: input.parentCommentId ?? null,
+      body: input.body,
+    })
+    .returning(reportCommentSelectFields())
+  const reportResult = await getWorkspaceReport(userId, workspaceSlug, reportId)
+  const peopleById = await getPeopleById(
+    compactUserIds([insertedComment?.authorUserId])
+  )
+
+  if (!insertedComment) {
+    throw new Error("Failed to create report comment.")
+  }
+  const commentsCount = await getReportCommentsCount(workspace.id, reportId)
+
+  return {
+    ...reportResult,
+    report: {
+      ...reportResult.report,
+      commentsCount,
+    },
+    comment: serializeReportComment(
+      {
+        ...insertedComment,
+        reactions: [],
+        replyCount: 0,
+      },
+      peopleById
+    ),
+  }
+}
+
+async function getReportCommentForView(
+  workspaceId: string,
+  reportId: string,
+  commentId: string,
+  userId: string
+) {
+  const [row] = await db
+    .select({
+      ...reportCommentSelectFields(),
+    })
+    .from(reportComments)
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspaceId),
+        eq(reportComments.reportId, reportId),
+        eq(reportComments.id, commentId)
+      )
+    )
+    .limit(1)
+
+  if (!row) {
+    throw new NotFoundError("Comment not found.")
+  }
+
+  const [comment] = await withCommentMetadata(workspaceId, reportId, userId, [row])
+
+  if (!comment) {
+    throw new NotFoundError("Comment not found.")
+  }
+
+  return comment
+}
+
+function assertCanEditReportComment(
+  userId: string,
+  comment: ReportCommentRow
+) {
+  if (comment.deletedAt) {
+    throw new ValidationError("Deleted comments cannot be edited.")
+  }
+
+  if (comment.authorUserId !== userId) {
+    throw new ForbiddenError("Only the comment author can edit this comment.")
+  }
+}
+
+function assertCanDeleteReportComment({
+  comment,
+  role,
+  userId,
+}: {
+  comment: ReportCommentRow
+  role: WorkspaceMemberRole
+  userId: string
+}) {
+  if (comment.deletedAt) {
+    throw new ValidationError("Comment is already deleted.")
+  }
+
+  if (comment.authorUserId === userId || canAdministerReports(role)) {
+    return
+  }
+
+  throw new ForbiddenError("Only the author or an admin can delete this comment.")
+}
+
+export async function updateWorkspaceReportComment(
+  userId: string,
+  workspaceSlug: string,
+  reportId: string,
+  commentId: string,
+  input: UpdateReportCommentInput
+) {
+  const workspace = await requireWorkspaceForReportNote(userId, workspaceSlug)
+
+  await getMutableReportRow(workspace.id, reportId)
+  const currentComment = await getReportCommentForView(
+    workspace.id,
+    reportId,
+    commentId,
+    userId
+  )
+
+  assertCanEditReportComment(userId, currentComment)
+
+  const editedAt = new Date()
+  const [updatedComment] = await db
+    .update(reportComments)
+    .set({
+      body: input.body,
+      editedAt,
+    })
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspace.id),
+        eq(reportComments.reportId, reportId),
+        eq(reportComments.id, commentId),
+        isNull(reportComments.deletedAt)
+      )
+    )
+    .returning(reportCommentSelectFields())
+
+  if (!updatedComment) {
+    throw new NotFoundError("Comment not found.")
+  }
+
+  const [hydratedComment] = await withCommentMetadata(
+    workspace.id,
+    reportId,
+    userId,
+    [updatedComment]
+  )
+  const reportResult = await getWorkspaceReport(userId, workspaceSlug, reportId)
+  const peopleById = await getPeopleById(
+    compactUserIds([hydratedComment?.authorUserId])
+  )
+
+  if (!hydratedComment) {
+    throw new Error("Failed to update report comment.")
+  }
+
+  return {
+    ...reportResult,
+    comment: serializeReportComment(hydratedComment, peopleById),
+  }
+}
+
+export async function deleteWorkspaceReportComment(
+  userId: string,
+  workspaceSlug: string,
+  reportId: string,
+  commentId: string
+) {
+  const workspace = await requireWorkspaceForReportNote(userId, workspaceSlug)
+
+  await getMutableReportRow(workspace.id, reportId)
+  const currentComment = await getReportCommentForView(
+    workspace.id,
+    reportId,
+    commentId,
+    userId
+  )
+
+  assertCanDeleteReportComment({
+    comment: currentComment,
+    role: workspace.role,
+    userId,
+  })
+
+  const deletedAt = new Date()
+  const [deletedComment] = await db
+    .update(reportComments)
+    .set({
+      deletedAt,
+    })
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspace.id),
+        eq(reportComments.reportId, reportId),
+        eq(reportComments.id, commentId),
+        isNull(reportComments.deletedAt)
+      )
+    )
+    .returning(reportCommentSelectFields())
+
+  if (!deletedComment) {
+    throw new NotFoundError("Comment not found.")
+  }
+
+  const reportResult = await getWorkspaceReport(userId, workspaceSlug, reportId)
+  const commentsCount = await getReportCommentsCount(workspace.id, reportId)
+  const peopleById = await getPeopleById(
+    compactUserIds([deletedComment.authorUserId])
+  )
+  const hydratedDeletedComment: ReportCommentRow = {
+    ...deletedComment,
+    reactions: [],
+    replyCount: currentComment.replyCount,
+  }
+
+  return {
+    ...reportResult,
+    report: {
+      ...reportResult.report,
+      commentsCount,
+    },
+    comment: serializeReportComment(hydratedDeletedComment, peopleById),
+    removed: currentComment.replyCount === 0,
+  }
+}
+
+export async function updateWorkspaceReportCommentReaction(
+  userId: string,
+  workspaceSlug: string,
+  reportId: string,
+  commentId: string,
+  input: UpdateReportCommentReactionInput
+) {
+  const workspace = await requireWorkspaceForReportNote(userId, workspaceSlug)
+
+  await getMutableReportRow(workspace.id, reportId)
+  const currentComment = await getReportCommentForView(
+    workspace.id,
+    reportId,
+    commentId,
+    userId
+  )
+
+  if (currentComment.deletedAt) {
+    throw new ValidationError("Deleted comments cannot receive reactions.")
+  }
+
+  if (input.enabled) {
+    await db
+      .insert(reportCommentReactions)
+      .values({
+        workspaceId: workspace.id,
+        reportId,
+        commentId,
+        userId,
+        reaction: input.reaction,
+      })
+      .onConflictDoNothing({
+        target: [
+          reportCommentReactions.commentId,
+          reportCommentReactions.userId,
+          reportCommentReactions.reaction,
+        ],
+      })
+  } else {
+    await db
+      .delete(reportCommentReactions)
+      .where(
+        and(
+          eq(reportCommentReactions.workspaceId, workspace.id),
+          eq(reportCommentReactions.reportId, reportId),
+          eq(reportCommentReactions.commentId, commentId),
+          eq(reportCommentReactions.userId, userId),
+          eq(reportCommentReactions.reaction, input.reaction)
+        )
+      )
+  }
+
+  const updatedComment = await getReportCommentForView(
+    workspace.id,
+    reportId,
+    commentId,
+    userId
+  )
+  const reportResult = await getWorkspaceReport(userId, workspaceSlug, reportId)
+  const peopleById = await getPeopleById(
+    compactUserIds([updatedComment.authorUserId])
+  )
+
+  return {
+    ...reportResult,
+    comment: serializeReportComment(updatedComment, peopleById),
+  }
+}
+
+export async function listWorkspaceReportComments(
+  userId: string,
+  workspaceSlug: string,
+  reportId: string,
+  input: ListReportCommentsInput = {
+    limit: defaultReportCommentsPageSize,
+  }
+) {
+  const workspace = await requireWorkspaceForReportsRead(userId, workspaceSlug)
+
+  await getMutableReportRow(workspace.id, reportId)
+  await assertReportCommentParent(
+    workspace.id,
+    reportId,
+    input.parentCommentId
+  )
+
+  const { rows, pageInfo } = await getCommentRowsForReportPage(
+    workspace.id,
+    reportId,
+    userId,
+    input
+  )
+  const peopleById = await getPeopleById(
+    compactUserIds(rows.map((comment) => comment.authorUserId))
+  )
+
+  return {
+    comments: serializeReportComments(rows, peopleById),
+    pageInfo,
+  }
 }
 
 export async function updateWorkspaceReportImplementationBrief(
@@ -1309,24 +2317,51 @@ export async function getWorkspaceReport(
     throw new NotFoundError("Report not found.")
   }
 
-  const [assets, implementationBriefRow] = await Promise.all([
+  const [
+    assets,
+    implementationBriefRow,
+    notes,
+    commentsPage,
+    statusEvents,
+    commentsCount,
+  ] = await Promise.all([
     getAssetsForReport(workspace.id, row.id),
     getImplementationBriefForReport(workspace.id, row.id),
+    getNotesForReport(workspace.id, row.id),
+    getCommentRowsForReportPage(workspace.id, row.id, userId),
+    getStatusEventsForReport(workspace.id, row.id),
+    getReportCommentsCount(workspace.id, row.id),
   ])
   const peopleById = await getPeopleById(
     compactUserIds([
       row.reporterUserId,
       row.assigneeUserId,
       implementationBriefRow?.updatedByUserId,
+      ...notes.map((note) => note.authorUserId),
+      ...commentsPage.rows.map((comment) => comment.authorUserId),
+      ...statusEvents.map((event) => event.actorUserId),
     ])
   )
   const implementationBrief = serializeReportImplementationBrief(
     implementationBriefRow,
     peopleById
   )
+  const activity = serializeReportActivity(notes, statusEvents, peopleById)
+  const serializedComments = serializeReportComments(commentsPage.rows, peopleById)
 
   return {
     workspace,
-    report: serializeReport(row, peopleById, assets, implementationBrief),
+    report: serializeReport(
+      {
+        ...row,
+        commentsCount,
+      },
+      peopleById,
+      assets,
+      implementationBrief,
+      activity,
+      serializedComments,
+      commentsPage.pageInfo
+    ),
   }
 }

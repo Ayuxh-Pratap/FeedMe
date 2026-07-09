@@ -32,6 +32,12 @@ export const reportCountsInputSchema = z.object({
   scope: z.enum(["assigned", "reported"]).optional(),
 })
 
+export const listReportCommentsInputSchema = z.object({
+  cursor: optionalTrimmedString(500),
+  limit: z.coerce.number().int().min(1).max(30).default(10),
+  parentCommentId: z.string().uuid("Choose a valid parent comment.").optional(),
+})
+
 export const mutableReportStatusSchema = z.enum([
   "reviewing",
   "accepted",
@@ -129,6 +135,9 @@ export const createReportInputSchema = z.object({
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>
 export type ListReportsInput = z.infer<typeof listReportsInputSchema>
+export type ListReportCommentsInput = z.infer<
+  typeof listReportCommentsInputSchema
+>
 export type ReportCountsInput = z.infer<typeof reportCountsInputSchema>
 
 export const assignReportInputSchema = z.object({
@@ -169,8 +178,53 @@ export const updateReportImplementationBriefInputSchema = z.object({
   reviewChecklist: implementationBriefListSchema,
 })
 
+export const reportNoteKindInputSchema = z.enum([
+  "work_note",
+  "blocker",
+  "clarification",
+  "review_note",
+])
+
+export const createReportNoteInputSchema = z.object({
+  body: z.string().trim().min(1).max(5000),
+  kind: reportNoteKindInputSchema,
+})
+
+export const createReportCommentInputSchema = z.object({
+  body: z.string().trim().min(1).max(5000),
+  parentCommentId: z.string().uuid("Choose a valid parent comment.").nullable().optional(),
+})
+
+export const updateReportCommentInputSchema = z.object({
+  body: z.string().trim().min(1).max(5000),
+})
+
+export const reportCommentReactionInputSchema = z.enum([
+  "seen",
+  "agree",
+  "blocked",
+  "helpful",
+])
+
+export const updateReportCommentReactionInputSchema = z.object({
+  enabled: z.boolean(),
+  reaction: reportCommentReactionInputSchema,
+})
+
+export const commentIdParamSchema = z.string().uuid("Choose a valid comment.")
+
 export type AssignReportInput = z.infer<typeof assignReportInputSchema>
 export type UpdateReportStatusInput = z.infer<typeof updateReportStatusInputSchema>
 export type UpdateReportImplementationBriefInput = z.infer<
   typeof updateReportImplementationBriefInputSchema
+>
+export type CreateReportNoteInput = z.infer<typeof createReportNoteInputSchema>
+export type CreateReportCommentInput = z.infer<
+  typeof createReportCommentInputSchema
+>
+export type UpdateReportCommentInput = z.infer<
+  typeof updateReportCommentInputSchema
+>
+export type UpdateReportCommentReactionInput = z.infer<
+  typeof updateReportCommentReactionInputSchema
 >
