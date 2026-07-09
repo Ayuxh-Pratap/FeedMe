@@ -384,6 +384,28 @@
   .feedme-scrollbar-hidden::-webkit-scrollbar {
     display: none;
   }
+
+  .feedme-comment-text-shimmer {
+    color: transparent;
+    background: linear-gradient(
+      90deg,
+      var(--text-body) 0%,
+      var(--text-body) 36%,
+      color-mix(in srgb, var(--text-primary) 86%, var(--primary-soft) 14%) 50%,
+      var(--text-body) 64%,
+      var(--text-body) 100%
+    );
+    background-size: 220% 100%;
+    background-position: 120% 0;
+    background-clip: text;
+    -webkit-background-clip: text;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .feedme-comment-text-shimmer {
+      animation: feedme-comment-text-shimmer 1.35s var(--motion-out) infinite;
+    }
+  }
 }
 
 @keyframes feedme-bar-candy-life {
@@ -420,6 +442,16 @@
   100% {
     background-position: -118% 0;
     opacity: 0.58;
+  }
+}
+
+@keyframes feedme-comment-text-shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+
+  100% {
+    background-position: -120% 0;
   }
 }
 

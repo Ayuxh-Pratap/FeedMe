@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react"
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   ChevronLeft,
@@ -17,6 +18,7 @@ import {
   Code2,
   ExternalLink,
   CheckCircle2,
+  Info,
   Link2,
   ListChecks,
   Loader2,
@@ -27,6 +29,7 @@ import {
   MousePointer2,
   Play,
   Plus,
+  PencilLine,
   Send,
   Trash2,
   UserRoundCheck,
@@ -50,6 +53,11 @@ import {
   getReportStatusLabel,
   isWorkspaceReportAssignmentLocked,
   type WorkspaceReport,
+  type WorkspaceReportActivityActor,
+  type WorkspaceReportActivityItem,
+  type WorkspaceReportComment,
+  type WorkspaceReportCommentReactionKind,
+  type WorkspaceReportNoteKind,
   type WorkspaceReportStatus,
 } from "@/lib/reports"
 import {
@@ -61,7 +69,13 @@ import { ApiClientError } from "@/lib/api-client"
 import {
   mergeReportCacheEntry,
   useAssignReportMutation,
+  useCreateReportCommentMutation,
+  useCreateReportNoteMutation,
+  useDeleteReportCommentMutation,
+  useLoadReportCommentsMutation,
   useReportDetailQuery,
+  useUpdateReportCommentMutation,
+  useUpdateReportCommentReactionMutation,
   useUpdateReportImplementationBriefMutation,
   useUpdateReportStatusMutation,
 } from "@/lib/report-queries"
@@ -77,7 +91,7 @@ type ReportDetailProps = {
 }
 
 type ReportScreenshot = WorkspaceReport["screenshots"][number]
-type ReportDetailTab = "evidence" | "activity" | "brief"
+type ReportDetailTab = "evidence" | "activity" | "comments" | "brief"
 type ReferenceLinkDraft = {
   id: string
   label: string
@@ -688,6 +702,10 @@ function getAllowedReportDetailTab(
     return "activity"
   }
 
+  if (tab === "comments") {
+    return "comments"
+  }
+
   if (tab === "brief" && canManageReport) {
     return "brief"
   }
@@ -1072,6 +1090,105 @@ function ImplementationBriefEditor({
   )
 }
 
+const noteKindLabels: Record<WorkspaceReportNoteKind, string> = {
+  blocker: "Blocker",
+  clarification: "Clarification",
+  review_note: "Review note",
+  work_note: "Work note",
+}
+
+const noteKindDescriptions: Record<WorkspaceReportNoteKind, string> = {
+  blocker: "Call out what is stopping progress.",
+  clarification: "Add direction the assignee should know.",
+  review_note: "Add reviewer feedback or QA context.",
+  work_note: "Share what changed or what you found.",
+}
+
+const noteKindIcon: Record<WorkspaceReportNoteKind, typeof MessageSquare> = {
+  blocker: AlertTriangle,
+  clarification: Info,
+  review_note: CheckCircle2,
+  work_note: PencilLine,
+}
+
+function getAvailableNoteKinds({
+  currentUserId,
+  currentUserRole,
+  report,
+}: {
+  currentUserId: string
+  currentUserRole: WorkspaceMemberRole
+  report: WorkspaceReport
+}) {
+  const kinds: WorkspaceReportNoteKind[] = []
+  const canManageReport =
+    currentUserRole === "owner" || currentUserRole === "admin"
+  const isAssignedImplementationMember =
+    isAssignableReportRole(currentUserRole) && report.assigneeUserId === currentUserId
+
+  if (isAssignedImplementationMember) {
+    kinds.push("work_note", "blocker")
+  }
+
+  if (canManageReport) {
+    kinds.push("clarification", "review_note")
+  }
+
+  return kinds
+}
+
+function getActivityActorLabel(actor: WorkspaceReportActivityActor | null | undefined) {
+  return actor?.name ?? "Unknown teammate"
+}
+
+function ActivityItem({ item }: { item: WorkspaceReportActivityItem }) {
+  if (item.type === "status") {
+    return (
+      <li className="flex gap-3 border-b border-border-hairline px-4 py-3 last:border-b-0">
+        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border-hairline bg-fill-translucent text-text-muted">
+          <CheckCircle2 className="size-3.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-heading-5 text-foreground">
+              {getActivityActorLabel(item.actor)} moved status to{" "}
+              {getReportStatusLabel(item.toStatus)}
+            </p>
+            <span className="text-caption text-text-muted">{item.createdAgo}</span>
+          </div>
+          {item.note ? (
+            <p className="mt-1 text-body-3 text-text-body">{item.note}</p>
+          ) : null}
+        </div>
+      </li>
+    )
+  }
+
+  const Icon = noteKindIcon[item.kind]
+
+  return (
+    <li className="flex gap-3 border-b border-border-hairline px-4 py-3 last:border-b-0">
+      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border-hairline bg-fill-translucent text-text-muted">
+        <Icon className="size-3.5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <p className="text-heading-5 text-foreground">
+            {getActivityActorLabel(item.author)}
+          </p>
+          <span className="rounded-full border border-border-hairline bg-fill-translucent px-2 py-0.5 text-caption text-text-muted">
+            {noteKindLabels[item.kind]}
+          </span>
+          <span className="text-caption text-text-muted">{item.createdAgo}</span>
+        </div>
+        <p className="mt-1 whitespace-pre-wrap text-body-3 text-text-body">
+          {item.body}
+        </p>
+      </div>
+    </li>
+  )
+}
+
 function ActivityNotesPanel({
   currentUserId,
   currentUserRole,
@@ -1079,6 +1196,64 @@ function ActivityNotesPanel({
   report,
   workspaceSlug,
 }: ReportDetailProps) {
+  const availableKinds = getAvailableNoteKinds({
+    currentUserId,
+    currentUserRole,
+    report,
+  })
+  const currentMember = members.find((member) => member.userId === currentUserId)
+  const [noteDialogOpen, setNoteDialogOpen] = useState(false)
+  const [selectedKind, setSelectedKind] = useState<WorkspaceReportNoteKind | null>(
+    availableKinds.includes("work_note") ? "work_note" : availableKinds[0] ?? null
+  )
+  const [body, setBody] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const createNoteMutation = useCreateReportNoteMutation(workspaceSlug)
+  const activity = report.activity ?? []
+  const effectiveKind =
+    selectedKind && availableKinds.includes(selectedKind)
+      ? selectedKind
+      : availableKinds[0]
+
+  async function createNote(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const trimmedBody = body.trim()
+
+    if (!trimmedBody || !effectiveKind) {
+      return
+    }
+
+    setError(null)
+
+    try {
+      await createNoteMutation.mutateAsync({
+        body: trimmedBody,
+        kind: effectiveKind,
+        optimisticActivityItem: {
+          id: `optimistic-${makeDraftId()}`,
+          type: "note",
+          kind: effectiveKind,
+          body: trimmedBody,
+          createdAt: new Date().toISOString(),
+          createdAgo: "Just now",
+          author: currentMember
+            ? {
+                id: currentMember.userId,
+                name: currentMember.name,
+                email: currentMember.email,
+                avatarUrl: currentMember.avatarUrl,
+              }
+            : null,
+        },
+        report,
+      })
+      setBody("")
+      setNoteDialogOpen(false)
+    } catch (updateError) {
+      setError(getMutationErrorMessage(updateError))
+    }
+  }
+
   return (
     <div className="space-y-4">
       <ReportWorkflowPanel
@@ -1090,20 +1265,889 @@ function ActivityNotesPanel({
         workspaceSlug={workspaceSlug}
       />
 
-      <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
-        <div className="flex items-center gap-2 text-heading-5 text-foreground">
-          <MessageSquare className="size-4 text-text-muted" />
-          Activity / Notes
+      <section className="overflow-hidden rounded-xl border border-border-hairline bg-fill-translucent">
+        <div className="flex items-center justify-between gap-3 border-b border-border-hairline px-4 py-2.5">
+          <div className="flex items-center gap-2 text-heading-5 text-foreground">
+            <MessageSquare className="size-4 text-text-muted" />
+            Activity / Notes
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-caption text-text-muted">
+              {activity.length} {activity.length === 1 ? "item" : "items"}
+            </span>
+            {availableKinds.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null)
+                  setNoteDialogOpen(true)
+                }}
+                className="inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-heading-5 text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+              >
+                <Plus className="size-3.5" />
+                Add note
+              </button>
+            ) : null}
+          </div>
         </div>
-        <div className="mt-3 rounded-lg border border-border-hairline bg-background p-3">
-          <p className="text-body-3 text-text-secondary">
-            {report.commentsCount > 0
-              ? `${report.commentsCount} comments`
-              : "No comments yet."}
-          </p>
+
+        <Dialog open={noteDialogOpen} onOpenChange={setNoteDialogOpen}>
+          <DialogContent className="gap-0 overflow-hidden rounded-xl border border-border-hairline bg-surface-card p-0 text-foreground shadow-popover sm:max-w-[520px]">
+            <form onSubmit={createNote}>
+              <div className="border-b border-border-hairline px-4 py-3">
+                <DialogTitle className="text-heading-4 text-foreground">
+                  Add workflow note
+                </DialogTitle>
+                <DialogDescription className="mt-1 text-body-3 text-text-body">
+                  Notes are visible to the workspace and included in MCP handoff.
+                </DialogDescription>
+              </div>
+
+              <div className="p-4">
+                <div className="flex flex-wrap gap-1.5">
+                  {availableKinds.map((kind) => {
+                    const selected = effectiveKind === kind
+                    const Icon = noteKindIcon[kind]
+
+                    return (
+                      <button
+                        key={kind}
+                        type="button"
+                        onClick={() => setSelectedKind(kind)}
+                        className={cn(
+                          "inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border px-2.5 text-heading-5 shadow-button-secondary transition-all duration-base ease-out-soft active:scale-[var(--press-scale)]",
+                          selected
+                            ? "border-border-subtle bg-surface-raised text-foreground shadow-button-hover"
+                            : "border-border-hairline bg-fill-translucent text-text-body hover:bg-fill-subtle hover:text-foreground"
+                        )}
+                      >
+                        <Icon className="size-3.5" />
+                        {noteKindLabels[kind]}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <label className="mt-3 block">
+                  <span className="sr-only">
+                    {effectiveKind ? noteKindLabels[effectiveKind] : "Workflow note"}
+                  </span>
+                  <textarea
+                    value={body}
+                    rows={5}
+                    placeholder={
+                      effectiveKind
+                        ? noteKindDescriptions[effectiveKind]
+                        : "Add context for this report."
+                    }
+                    onChange={(event) => setBody(event.target.value)}
+                    className="feedme-scrollbar min-h-32 w-full resize-y rounded-lg border border-border-hairline bg-background px-3 py-2 text-body-3 text-text-secondary outline-none transition-all duration-base ease-out-soft placeholder:text-text-muted focus:border-border-strong focus:bg-surface-card"
+                  />
+                </label>
+
+                {error ? (
+                  <p className="mt-2 text-caption text-error">{error}</p>
+                ) : null}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-border-hairline px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setNoteDialogOpen(false)}
+                  className="inline-flex h-8 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-heading-5 text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!body.trim() || !effectiveKind || createNoteMutation.isPending}
+                  className="inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-2.5 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-subtle disabled:hover:brightness-100 disabled:active:scale-100"
+                >
+                  {createNoteMutation.isPending ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Send className="size-3.5" />
+                  )}
+                  Add note
+                </button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        <div>
+          {activity.length > 0 ? (
+            <ul>
+              {activity.map((item) => (
+                <ActivityItem key={`${item.type}-${item.id}`} item={item} />
+              ))}
+            </ul>
+          ) : (
+            <div className="p-4">
+              <div className="rounded-lg border border-dashed border-border-hairline bg-background p-4 text-body-3 text-text-muted">
+                No activity yet.
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </div>
+  )
+}
+
+function getCommentAuthorLabel(comment: WorkspaceReportComment) {
+  if (comment.isDeleted) {
+    return "Deleted comment"
+  }
+
+  return comment.author?.name ?? "Unknown teammate"
+}
+
+const commentReactionOptions: Array<{
+  icon: typeof CheckCircle2
+  label: string
+  value: WorkspaceReportCommentReactionKind
+}> = [
+  { icon: UserRoundCheck, label: "Seen", value: "seen" },
+  { icon: CheckCircle2, label: "Agree", value: "agree" },
+  { icon: AlertTriangle, label: "Blocked", value: "blocked" },
+  { icon: Info, label: "Helpful", value: "helpful" },
+]
+
+function CommentThread({
+  canComment,
+  comment,
+  currentUserId,
+  currentUserRole,
+  depth = 0,
+  editBody,
+  editingCommentId,
+  isPending,
+  isRepliesCollapsed,
+  isUpdatingComment,
+  loadingRepliesForId,
+  onCancelEdit,
+  onDelete,
+  onEdit,
+  onLoadReplies,
+  onReply,
+  onStartReply,
+  onStartEdit,
+  onToggleReplies,
+  onToggleReaction,
+  replyBody,
+  replyTargetId,
+  setEditBody,
+  setReplyBody,
+}: {
+  canComment: boolean
+  comment: WorkspaceReportComment
+  currentUserId: string
+  currentUserRole: WorkspaceMemberRole
+  depth?: number
+  editBody: string
+  editingCommentId: string | null
+  isPending: boolean
+  isRepliesCollapsed: (commentId: string) => boolean
+  isUpdatingComment: boolean
+  loadingRepliesForId: string | null
+  onCancelEdit: () => void
+  onDelete: (comment: WorkspaceReportComment) => void
+  onEdit: (event: FormEvent<HTMLFormElement>, comment: WorkspaceReportComment) => void
+  onLoadReplies: (comment: WorkspaceReportComment) => void
+  onReply: (event: FormEvent<HTMLFormElement>, parentCommentId: string) => void
+  onStartEdit: (comment: WorkspaceReportComment) => void
+  onStartReply: (commentId: string) => void
+  onToggleReplies: (comment: WorkspaceReportComment) => void
+  onToggleReaction: (
+    comment: WorkspaceReportComment,
+    reaction: WorkspaceReportCommentReactionKind
+  ) => void
+  replyBody: string
+  replyTargetId: string | null
+  setEditBody: (value: string) => void
+  setReplyBody: (value: string) => void
+}) {
+  const isReplying = replyTargetId === comment.id
+  const isEditing = editingCommentId === comment.id
+  const canReply = canComment && !comment.isDeleted
+  const loadedRepliesCount = comment.replies.length
+  const hiddenRepliesCount = Math.max(comment.replyCount - loadedRepliesCount, 0)
+  const isOptimisticComment = comment.id.startsWith("optimistic-")
+  const isOwnComment = comment.author?.id === currentUserId
+  const isCommentAdmin = currentUserRole === "owner" || currentUserRole === "admin"
+  const canEdit = !comment.isDeleted && !isOptimisticComment && isOwnComment
+  const canDelete =
+    !comment.isDeleted && !isOptimisticComment && (isOwnComment || isCommentAdmin)
+  const hasReplies = comment.replyCount > 0
+  const hasLoadedReplies = loadedRepliesCount > 0
+  const canLoadReplies =
+    hasReplies &&
+    (loadedRepliesCount === 0 || Boolean(comment.repliesPageInfo?.hasNextPage))
+  const repliesCollapsed = isRepliesCollapsed(comment.id)
+  const showReplies = hasLoadedReplies && !repliesCollapsed
+  const isLoadingReplies = loadingRepliesForId === comment.id
+  const repliesActionLabel = !hasLoadedReplies
+    ? `View ${comment.replyCount} ${comment.replyCount === 1 ? "reply" : "replies"}`
+    : repliesCollapsed
+      ? `Show ${comment.replyCount} ${comment.replyCount === 1 ? "reply" : "replies"}`
+      : "Hide replies"
+  const replyActionLabel = isReplying ? "Cancel" : "Reply"
+
+  return (
+    <li
+      className={cn(
+        "px-4 py-3",
+        depth === 0 ? "border-b border-border-hairline last:border-b-0" : "px-0 py-2"
+      )}
+    >
+      <div className="flex gap-3">
+        <FeedMeAvatar
+          className="mt-0.5 shadow-none"
+          imageUrl={comment.author?.avatarUrl}
+          label={getCommentAuthorLabel(comment)}
+          size={28}
+          value={comment.author?.email ?? comment.id}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-heading-5 text-foreground">
+              {getCommentAuthorLabel(comment)}
+            </p>
+            <span className="text-caption text-text-muted">
+              {comment.createdAgo}
+            </span>
+            {comment.editedAt && !comment.isDeleted ? (
+              <span className="text-caption text-text-muted">Edited</span>
+            ) : null}
+          </div>
+
+          {isEditing ? (
+            <form
+              onSubmit={(event) => onEdit(event, comment)}
+              className="mt-1 space-y-2"
+            >
+              <textarea
+                value={editBody}
+                rows={2}
+                onChange={(event) => setEditBody(event.target.value)}
+                className="feedme-scrollbar min-h-16 w-full resize-y rounded-lg border border-border-hairline bg-background px-3 py-2 text-body-3 text-text-secondary outline-none transition-all duration-base ease-out-soft placeholder:text-text-muted focus:border-border-strong focus:bg-surface-card"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={!editBody.trim() || isUpdatingComment}
+                  className="inline-flex h-7 cursor-pointer items-center justify-center gap-1 rounded-md border border-border-hairline bg-fill-translucent px-2 text-caption text-text-body transition-colors hover:bg-fill-subtle hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isUpdatingComment ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Check className="size-3" />
+                  )}
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancelEdit}
+                  className="inline-flex h-7 cursor-pointer items-center justify-center rounded-md px-0 text-caption text-text-muted transition-colors hover:text-foreground"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+            <p
+              className={cn(
+                "mt-1 whitespace-pre-wrap text-body-3",
+                comment.isDeleted
+                  ? "text-text-muted"
+                  : "text-text-body",
+                isOptimisticComment ? "feedme-comment-text-shimmer" : ""
+              )}
+            >
+              {comment.body}
+            </p>
+          )}
+
+          {!comment.isDeleted ? (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {commentReactionOptions.map((option) => {
+                const reaction = comment.reactions.find(
+                  (item) => item.reaction === option.value
+                )
+                const active = Boolean(reaction?.reactedByCurrentUser)
+                const count = reaction?.count ?? 0
+                const Icon = option.icon
+
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => onToggleReaction(comment, option.value)}
+                    disabled={isOptimisticComment || isUpdatingComment}
+                    className={cn(
+                      "inline-flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2 text-caption transition-all duration-base ease-out-soft active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:active:scale-100",
+                      active
+                        ? "border-border-strong bg-fill-subtle text-foreground"
+                        : "border-border-hairline bg-transparent text-text-muted hover:bg-fill-translucent hover:text-foreground"
+                    )}
+                  >
+                    <Icon className="size-3" />
+                    {option.label}
+                    {count > 0 ? <span>{count}</span> : null}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
+
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {canReply && !isOptimisticComment ? (
+              <button
+                type="button"
+                onClick={() => onStartReply(comment.id)}
+                className="inline-flex h-7 cursor-pointer items-center justify-center rounded-md px-0 text-caption text-text-muted transition-colors hover:text-foreground"
+              >
+                {replyActionLabel}
+              </button>
+            ) : null}
+
+            {canEdit ? (
+              <button
+                type="button"
+                onClick={() => onStartEdit(comment)}
+                className="inline-flex h-7 cursor-pointer items-center justify-center rounded-md px-0 text-caption text-text-muted transition-colors hover:text-foreground"
+              >
+                Edit
+              </button>
+            ) : null}
+
+            {canDelete ? (
+              <button
+                type="button"
+                onClick={() => onDelete(comment)}
+                className="inline-flex h-7 cursor-pointer items-center justify-center rounded-md px-0 text-caption text-text-muted transition-colors hover:text-error"
+              >
+                Delete
+              </button>
+            ) : null}
+
+            {hasReplies ? (
+              <button
+                type="button"
+                onClick={() => onToggleReplies(comment)}
+                disabled={isLoadingReplies}
+                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-0 text-caption text-text-muted transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLoadingReplies ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <ChevronDown
+                    className={cn(
+                      "size-3.5 transition-transform duration-base ease-out-soft",
+                      hasLoadedReplies && !repliesCollapsed ? "rotate-180" : ""
+                    )}
+                  />
+                )}
+                {repliesActionLabel}
+              </button>
+            ) : null}
+          </div>
+
+          {isReplying ? (
+            <form
+              onSubmit={(event) => onReply(event, comment.id)}
+              className="mt-1 flex items-center gap-2"
+            >
+              <input
+                type="text"
+                value={replyBody}
+                placeholder="Enter your message"
+                onChange={(event) => setReplyBody(event.target.value)}
+                className="h-8 min-w-0 flex-1 border-0 border-b border-border-hairline bg-transparent px-0 text-body-3 text-text-secondary outline-none transition-colors placeholder:text-text-muted focus:border-border-strong"
+              />
+              <button
+                type="submit"
+                aria-label="Send reply"
+                disabled={!replyBody.trim() || isPending}
+                className="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted transition-all duration-base ease-out-soft hover:bg-fill-translucent hover:text-foreground active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-text-muted disabled:active:scale-100"
+              >
+                {isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Send className="size-3.5" />
+                )}
+              </button>
+            </form>
+          ) : null}
+        </div>
+      </div>
+
+      {showReplies && canLoadReplies && loadedRepliesCount > 0 ? (
+        <button
+          type="button"
+          onClick={() => onLoadReplies(comment)}
+          disabled={isLoadingReplies}
+          className="ml-10 mt-1 inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-0 text-caption text-text-muted transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isLoadingReplies ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <ChevronDown className="size-3.5" />
+          )}
+          {hiddenRepliesCount > 0
+            ? `Load ${hiddenRepliesCount} more ${
+                hiddenRepliesCount === 1 ? "reply" : "replies"
+              }`
+            : "Load more replies"}
+        </button>
+      ) : null}
+
+      {showReplies ? (
+        <ul className="ml-10 mt-2 border-l border-border-hairline pl-4">
+          {comment.replies.map((reply) => (
+            <CommentThread
+              key={reply.id}
+              canComment={canComment}
+              comment={reply}
+              currentUserId={currentUserId}
+              currentUserRole={currentUserRole}
+              depth={depth + 1}
+              editBody={editBody}
+              editingCommentId={editingCommentId}
+              isPending={isPending}
+              isRepliesCollapsed={isRepliesCollapsed}
+              isUpdatingComment={isUpdatingComment}
+              loadingRepliesForId={loadingRepliesForId}
+              onCancelEdit={onCancelEdit}
+              onDelete={onDelete}
+              onEdit={onEdit}
+              onLoadReplies={onLoadReplies}
+              onReply={onReply}
+              onStartEdit={onStartEdit}
+              onStartReply={onStartReply}
+              onToggleReplies={onToggleReplies}
+              onToggleReaction={onToggleReaction}
+              replyBody={replyBody}
+              replyTargetId={replyTargetId}
+              setEditBody={setEditBody}
+              setReplyBody={setReplyBody}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  )
+}
+
+function CommentsPanel({
+  currentUserId,
+  currentUserRole,
+  isRepliesCollapsed,
+  members,
+  report,
+  setRepliesCollapsed,
+  workspaceSlug,
+}: ReportDetailProps & {
+  isRepliesCollapsed: (commentId: string) => boolean
+  setRepliesCollapsed: (commentId: string, collapsed: boolean) => void
+}) {
+  const comments = report.comments ?? []
+  const commentsPageInfo = report.commentsPageInfo
+  const currentMember = members.find((member) => member.userId === currentUserId)
+  const [commentDialogOpen, setCommentDialogOpen] = useState(false)
+  const [body, setBody] = useState("")
+  const [editBody, setEditBody] = useState("")
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
+  const [replyBody, setReplyBody] = useState("")
+  const [replyTargetId, setReplyTargetId] = useState<string | null>(null)
+  const [loadingRepliesForId, setLoadingRepliesForId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const createCommentMutation = useCreateReportCommentMutation(workspaceSlug)
+  const deleteCommentMutation = useDeleteReportCommentMutation(workspaceSlug)
+  const loadCommentsMutation = useLoadReportCommentsMutation(workspaceSlug)
+  const updateCommentMutation = useUpdateReportCommentMutation(workspaceSlug)
+  const updateReactionMutation =
+    useUpdateReportCommentReactionMutation(workspaceSlug)
+  const canComment = currentUserRole !== "viewer"
+  const isCommentActionPending =
+    deleteCommentMutation.isPending ||
+    updateCommentMutation.isPending ||
+    updateReactionMutation.isPending
+
+  async function createComment({
+    body: nextBody,
+    parentCommentId,
+  }: {
+    body: string
+    parentCommentId?: string | null
+  }) {
+    const trimmedBody = nextBody.trim()
+
+    if (!trimmedBody || !canComment) {
+      return
+    }
+
+    setError(null)
+
+    try {
+      await createCommentMutation.mutateAsync({
+        body: trimmedBody,
+        onOptimisticCommit: () => {
+          if (parentCommentId) {
+            setReplyBody("")
+            setReplyTargetId(null)
+            setRepliesCollapsed(parentCommentId, false)
+          } else {
+            setBody("")
+            setCommentDialogOpen(false)
+          }
+        },
+        parentCommentId,
+        optimisticComment: {
+          id: `optimistic-${makeDraftId()}`,
+          parentCommentId: parentCommentId ?? null,
+          body: trimmedBody,
+          createdAt: new Date().toISOString(),
+          createdAgo: "Just now",
+          author: currentMember
+            ? {
+                id: currentMember.userId,
+                name: currentMember.name,
+                email: currentMember.email,
+                avatarUrl: currentMember.avatarUrl,
+              }
+            : null,
+          reactions: [],
+          replyCount: 0,
+          replies: [],
+        },
+        report,
+      })
+    } catch (updateError) {
+      if (parentCommentId) {
+        setReplyBody(trimmedBody)
+        setReplyTargetId(parentCommentId)
+      } else {
+        setBody(trimmedBody)
+        setCommentDialogOpen(true)
+      }
+
+      setError(getMutationErrorMessage(updateError))
+    }
+  }
+
+  function createTopLevelComment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void createComment({ body })
+  }
+
+  function createReply(event: FormEvent<HTMLFormElement>, parentCommentId: string) {
+    event.preventDefault()
+    void createComment({ body: replyBody, parentCommentId })
+  }
+
+  function startEditComment(comment: WorkspaceReportComment) {
+    setError(null)
+    setReplyTargetId(null)
+    setEditingCommentId((currentId) => {
+      if (currentId === comment.id) {
+        setEditBody("")
+        return null
+      }
+
+      setEditBody(comment.body)
+      return comment.id
+    })
+  }
+
+  function cancelEditComment() {
+    setEditBody("")
+    setEditingCommentId(null)
+  }
+
+  function updateComment(
+    event: FormEvent<HTMLFormElement>,
+    comment: WorkspaceReportComment
+  ) {
+    event.preventDefault()
+
+    const trimmedBody = editBody.trim()
+
+    if (!trimmedBody || comment.isDeleted) {
+      return
+    }
+
+    setError(null)
+    setEditingCommentId(null)
+    setEditBody("")
+    updateCommentMutation.mutate(
+      {
+        body: trimmedBody,
+        comment,
+        optimisticComment: {
+          ...comment,
+          body: trimmedBody,
+          editedAt: new Date().toISOString(),
+        },
+        report,
+      },
+      {
+        onError: (updateError) => {
+          setEditBody(trimmedBody)
+          setEditingCommentId(comment.id)
+          setError(getMutationErrorMessage(updateError))
+        },
+      }
+    )
+  }
+
+  function deleteComment(comment: WorkspaceReportComment) {
+    if (comment.isDeleted) {
+      return
+    }
+
+    setError(null)
+    deleteCommentMutation.mutate(
+      {
+        comment,
+        optimisticComment: {
+          ...comment,
+          author: null,
+          body: "Comment deleted",
+          isDeleted: true,
+          reactions: [],
+        },
+        report,
+      },
+      {
+        onError: (deleteError) => {
+          setError(getMutationErrorMessage(deleteError))
+        },
+      }
+    )
+  }
+
+  function toggleCommentReaction(
+    comment: WorkspaceReportComment,
+    reaction: WorkspaceReportCommentReactionKind
+  ) {
+    if (comment.isDeleted) {
+      return
+    }
+
+    const existingReaction = comment.reactions.find(
+      (item) => item.reaction === reaction
+    )
+    const enabled = !existingReaction?.reactedByCurrentUser
+
+    setError(null)
+    updateReactionMutation.mutate(
+      {
+        comment,
+        enabled,
+        reaction,
+        report,
+      },
+      {
+        onError: (reactionError) => {
+          setError(getMutationErrorMessage(reactionError))
+        },
+      }
+    )
+  }
+
+  function loadMoreComments() {
+    if (!commentsPageInfo?.nextCursor) {
+      return
+    }
+
+    loadCommentsMutation.mutate({
+      cursor: commentsPageInfo.nextCursor,
+      limit: commentsPageInfo.limit,
+      report,
+    })
+  }
+
+  function loadReplies(comment: WorkspaceReportComment) {
+    if (loadingRepliesForId || !comment.replyCount) {
+      return
+    }
+
+    const nextCursor =
+      comment.replies.length > 0
+        ? comment.repliesPageInfo?.nextCursor
+        : null
+
+    if (comment.replies.length > 0 && !nextCursor) {
+      return
+    }
+
+    setLoadingRepliesForId(comment.id)
+    loadCommentsMutation.mutate(
+      {
+        cursor: nextCursor,
+        limit: comment.repliesPageInfo?.limit ?? 5,
+        parentCommentId: comment.id,
+        report,
+      },
+      {
+        onSettled: () => setLoadingRepliesForId(null),
+      }
+    )
+  }
+
+  function toggleReplies(comment: WorkspaceReportComment) {
+    if (!comment.replyCount || loadingRepliesForId) {
+      return
+    }
+
+    if (comment.replies.length === 0) {
+      setRepliesCollapsed(comment.id, false)
+      loadReplies(comment)
+      return
+    }
+
+    setRepliesCollapsed(comment.id, !isRepliesCollapsed(comment.id))
+  }
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-border-hairline bg-fill-translucent">
+      <div className="flex items-center justify-between gap-3 border-b border-border-hairline px-4 py-2.5">
+        <div className="flex items-center gap-2 text-heading-5 text-foreground">
+          <MessageSquare className="size-4 text-text-muted" />
+          Comments
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-caption text-text-muted">
+            {report.commentsCount} {report.commentsCount === 1 ? "comment" : "comments"}
+          </span>
+          {canComment ? (
+            <button
+              type="button"
+              onClick={() => {
+                setError(null)
+                setCommentDialogOpen(true)
+              }}
+              className="inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-heading-5 text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+            >
+              <Plus className="size-3.5" />
+              Add comment
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <Dialog open={commentDialogOpen} onOpenChange={setCommentDialogOpen}>
+        <DialogContent className="gap-0 overflow-hidden rounded-xl border border-border-hairline bg-surface-card p-0 text-foreground shadow-popover sm:max-w-[520px]">
+          <form onSubmit={createTopLevelComment}>
+            <div className="border-b border-border-hairline px-4 py-3">
+              <DialogTitle className="text-heading-4 text-foreground">
+                Add comment
+              </DialogTitle>
+              <DialogDescription className="mt-1 text-body-3 text-text-body">
+                Use comments for discussion. Use Activity for implementation handoff.
+              </DialogDescription>
+            </div>
+
+            <div className="p-4">
+              <textarea
+                value={body}
+                rows={5}
+                placeholder="Write a comment"
+                onChange={(event) => setBody(event.target.value)}
+                className="feedme-scrollbar min-h-32 w-full resize-y rounded-lg border border-border-hairline bg-background px-3 py-2 text-body-3 text-text-secondary outline-none transition-all duration-base ease-out-soft placeholder:text-text-muted focus:border-border-strong focus:bg-surface-card"
+              />
+              {error ? <p className="mt-2 text-caption text-error">{error}</p> : null}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-border-hairline px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setCommentDialogOpen(false)}
+                className="inline-flex h-8 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-heading-5 text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!body.trim() || createCommentMutation.isPending}
+                className="inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-2.5 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-subtle disabled:hover:brightness-100 disabled:active:scale-100"
+              >
+                {createCommentMutation.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Send className="size-3.5" />
+                )}
+                Comment
+              </button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {comments.length > 0 ? (
+        <ul>
+          {comments.map((comment) => (
+            <CommentThread
+              key={comment.id}
+              canComment={canComment}
+              comment={comment}
+              currentUserId={currentUserId}
+              currentUserRole={currentUserRole}
+              editBody={editBody}
+              editingCommentId={editingCommentId}
+              isPending={createCommentMutation.isPending}
+              isRepliesCollapsed={isRepliesCollapsed}
+              isUpdatingComment={isCommentActionPending}
+              loadingRepliesForId={loadingRepliesForId}
+              onCancelEdit={cancelEditComment}
+              onDelete={deleteComment}
+              onEdit={updateComment}
+              onLoadReplies={loadReplies}
+              onReply={createReply}
+              onStartEdit={startEditComment}
+              onStartReply={(commentId) => {
+                setError(null)
+                setEditingCommentId(null)
+                setReplyBody("")
+                setReplyTargetId((currentTargetId) =>
+                  currentTargetId === commentId ? null : commentId
+                )
+              }}
+              onToggleReplies={toggleReplies}
+              onToggleReaction={toggleCommentReaction}
+              replyBody={replyBody}
+              replyTargetId={replyTargetId}
+              setEditBody={setEditBody}
+              setReplyBody={setReplyBody}
+            />
+          ))}
+        </ul>
+      ) : (
+        <div className="p-4">
+          <div className="rounded-lg border border-dashed border-border-hairline bg-background p-4 text-body-3 text-text-muted">
+            No comments yet.
+          </div>
+        </div>
+      )}
+
+      {commentsPageInfo?.hasNextPage ? (
+        <div className="border-t border-border-hairline p-3">
+          <button
+            type="button"
+            onClick={loadMoreComments}
+            disabled={loadCommentsMutation.isPending}
+            className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-heading-5 text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-fill-translucent disabled:hover:text-text-body disabled:active:scale-100"
+          >
+            {loadCommentsMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : null}
+            Load more comments
+          </button>
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -1131,12 +2175,16 @@ export function ReportDetail({
   const [activeTab, setActiveTab] = useState<ReportDetailTab>(() =>
     getAllowedReportDetailTab(searchParams.get("tab"), canManageReport)
   )
+  const [collapsedReplyIds, setCollapsedReplyIds] = useState<Set<string>>(
+    () => new Set()
+  )
   const tabs: Array<{
     label: string
     value: ReportDetailTab
   }> = [
     { label: "Evidence", value: "evidence" },
     { label: "Activity / Notes", value: "activity" },
+    { label: "Comments", value: "comments" },
     ...(canManageReport
       ? [{ label: "Implementation brief", value: "brief" as const }]
       : []),
@@ -1150,6 +2198,24 @@ export function ReportDetail({
       pathname,
       getDetailTabSearchParams(searchParams, nextTab)
     )
+  }
+
+  function isRepliesCollapsed(commentId: string) {
+    return collapsedReplyIds.has(commentId)
+  }
+
+  function setRepliesCollapsed(commentId: string, collapsed: boolean) {
+    setCollapsedReplyIds((currentIds) => {
+      const nextIds = new Set(currentIds)
+
+      if (collapsed) {
+        nextIds.add(commentId)
+      } else {
+        nextIds.delete(commentId)
+      }
+
+      return nextIds
+    })
   }
 
   return (
@@ -1291,6 +2357,18 @@ export function ReportDetail({
                 currentUserRole={currentUserRole}
                 members={members}
                 report={currentReport}
+                workspaceSlug={workspaceSlug}
+              />
+            ) : null}
+
+            {activeTab === "comments" ? (
+              <CommentsPanel
+                currentUserId={currentUserId}
+                currentUserRole={currentUserRole}
+                isRepliesCollapsed={isRepliesCollapsed}
+                members={members}
+                report={currentReport}
+                setRepliesCollapsed={setRepliesCollapsed}
                 workspaceSlug={workspaceSlug}
               />
             ) : null}
