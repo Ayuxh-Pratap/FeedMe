@@ -1,0 +1,2 @@
+CREATE TYPE "public"."report_comment_kind" AS ENUM('comment', 'work_note', 'blocker', 'clarification', 'review_note');--> statement-breakpoint
+ALTER TABLE "report_comments" ADD COLUMN "kind" "report_comment_kind" DEFAULT 'comment' NOT NULL;
