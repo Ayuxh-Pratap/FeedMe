@@ -36,6 +36,7 @@ export const listReportCommentsInputSchema = z.object({
   cursor: optionalTrimmedString(500),
   limit: z.coerce.number().int().min(1).max(30).default(10),
   parentCommentId: z.string().uuid("Choose a valid parent comment.").optional(),
+  targetCommentId: z.string().uuid("Choose a valid comment.").optional(),
 })
 
 export const mutableReportStatusSchema = z.enum([
@@ -192,11 +193,13 @@ export const createReportNoteInputSchema = z.object({
 
 export const createReportCommentInputSchema = z.object({
   body: z.string().trim().min(1).max(5000),
+  mentionedUserIds: z.array(z.string().uuid()).max(20).default([]),
   parentCommentId: z.string().uuid("Choose a valid parent comment.").nullable().optional(),
 })
 
 export const updateReportCommentInputSchema = z.object({
   body: z.string().trim().min(1).max(5000),
+  mentionedUserIds: z.array(z.string().uuid()).max(20).optional(),
 })
 
 export const reportCommentReactionInputSchema = z.enum([

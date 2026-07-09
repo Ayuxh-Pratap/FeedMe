@@ -16,6 +16,7 @@ import {
 import { db } from "@/db"
 import {
   reportAssets,
+  reportCommentMentions,
   reportCommentReactions,
   reportComments,
   reportImplementationBriefs,
@@ -57,6 +58,11 @@ import {
   type WorkspaceMemberRole,
 } from "@/lib/team-members"
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/http/errors"
+import {
+  createWorkspaceNotifications,
+  getActiveWorkspaceUserIdsByRoles,
+  type CreateWorkspaceNotificationInput,
+} from "@/server/notifications/service"
 import { assertCanWorkspaceRole } from "@/server/policies/can"
 import { normalizeDomainHost } from "@/server/workspaces/domains"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
@@ -131,6 +137,7 @@ type ReportCommentRow = {
   createdAt: Date
   editedAt: Date | null
   deletedAt: Date | null
+  mentions: WorkspaceReportActivityActor[]
   reactions: WorkspaceReportCommentReactionSummary[]
   replyCount: number
 }
@@ -165,9 +172,53 @@ const statusRequiresAssignee = new Set<WorkspaceReportStatus>([
 
 const statusResetsWhenUnassigned = new Set<WorkspaceReportStatus>(["assigned"])
 const defaultReportCommentsPageSize = 10
+const notificationTextMaxLength = 180
 
 function canAdministerReports(role: string) {
   return role === "owner" || role === "admin"
+}
+
+function getReportNotificationHref(
+  workspaceSlug: string,
+  reportId: string,
+  tab?: "activity" | "comments",
+  commentId?: string
+) {
+  const searchParams = new URLSearchParams()
+
+  if (tab) {
+    searchParams.set("tab", tab)
+  }
+
+  if (commentId) {
+    searchParams.set("comment", commentId)
+  }
+
+  const queryString = searchParams.toString()
+
+  return `/${workspaceSlug}/reports/${reportId}${
+    queryString ? `?${queryString}` : ""
+  }`
+}
+
+function truncateNotificationBody(value: string) {
+  const normalized = value.trim().replace(/\s+/g, " ")
+
+  if (normalized.length <= notificationTextMaxLength) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, notificationTextMaxLength - 1).trim()}…`
+}
+
+async function createWorkspaceNotificationsSafely(
+  input: CreateWorkspaceNotificationInput
+) {
+  try {
+    await createWorkspaceNotifications(input)
+  } catch (error) {
+    console.error("Failed to create workspace notification.", error)
+  }
 }
 
 function isAssignedImplementationMember(
@@ -708,6 +759,7 @@ function serializeReportComments(
       author: isDeleted
         ? null
         : serializeActivityActor(comment.authorUserId, peopleById),
+      mentions: isDeleted ? [] : comment.mentions,
       reactions: isDeleted ? [] : comment.reactions,
       replyCount: comment.replyCount,
       replies: [],
@@ -752,6 +804,7 @@ function serializeReportComment(
     author: isDeleted
       ? null
       : serializeActivityActor(comment.authorUserId, peopleById),
+    mentions: isDeleted ? [] : comment.mentions,
     reactions: isDeleted ? [] : comment.reactions,
     replyCount: comment.replyCount,
     replies: [],
@@ -1106,20 +1159,73 @@ async function getReactionSummariesForComments(
   return reactionsByCommentId
 }
 
+async function getMentionSummariesForComments(
+  workspaceId: string,
+  reportId: string,
+  commentIds: string[]
+) {
+  const mentionsByCommentId = new Map<string, WorkspaceReportActivityActor[]>()
+
+  if (commentIds.length === 0) {
+    return mentionsByCommentId
+  }
+
+  const rows = await db
+    .select({
+      avatarUrl: userProfiles.avatarUrl,
+      commentId: reportCommentMentions.commentId,
+      displayName: userProfiles.displayName,
+      email: users.email,
+      fullName: userProfiles.fullName,
+      id: users.id,
+    })
+    .from(reportCommentMentions)
+    .innerJoin(users, eq(users.id, reportCommentMentions.mentionedUserId))
+    .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+    .where(
+      and(
+        eq(reportCommentMentions.workspaceId, workspaceId),
+        eq(reportCommentMentions.reportId, reportId),
+        inArray(reportCommentMentions.commentId, commentIds)
+      )
+    )
+    .orderBy(asc(reportCommentMentions.createdAt), asc(reportCommentMentions.id))
+
+  for (const row of rows) {
+    const mentions = mentionsByCommentId.get(row.commentId) ?? []
+
+    mentions.push({
+      id: row.id,
+      name: getPersonName(row, "Unknown teammate"),
+      email: row.email,
+      avatarUrl: row.avatarUrl,
+    })
+    mentionsByCommentId.set(row.commentId, mentions)
+  }
+
+  return mentionsByCommentId
+}
+
 async function withCommentMetadata(
   workspaceId: string,
   reportId: string,
   userId: string,
-  rows: Array<Omit<ReportCommentRow, "reactions" | "replyCount">>
+  rows: Array<Omit<ReportCommentRow, "mentions" | "reactions" | "replyCount">>
 ): Promise<ReportCommentRow[]> {
   const commentIds = rows.map((row) => row.id)
-  const [countsByCommentId, reactionsByCommentId] = await Promise.all([
+  const [
+    countsByCommentId,
+    mentionsByCommentId,
+    reactionsByCommentId,
+  ] = await Promise.all([
     getReplyCountsForComments(workspaceId, reportId, commentIds),
+    getMentionSummariesForComments(workspaceId, reportId, commentIds),
     getReactionSummariesForComments(workspaceId, reportId, commentIds, userId),
   ])
 
   return rows.map((row) => ({
     ...row,
+    mentions: mentionsByCommentId.get(row.id) ?? [],
     reactions: reactionsByCommentId.get(row.id) ?? [],
     replyCount: countsByCommentId.get(row.id) ?? 0,
   }))
@@ -1133,6 +1239,10 @@ async function getCommentRowsForReportPage(
     limit: defaultReportCommentsPageSize,
   }
 ) {
+  if (input.targetCommentId) {
+    return getCommentRowsForTarget(workspaceId, reportId, userId, input)
+  }
+
   const offset = decodeCommentsCursor(input.cursor)
   const limit = input.limit ?? defaultReportCommentsPageSize
   const parentCondition = input.parentCommentId
@@ -1191,6 +1301,63 @@ async function getCommentRowsForReportPage(
       limit,
       offset,
       pageSize: pageRows.length,
+    }),
+  }
+}
+
+async function getCommentRowsForTarget(
+  workspaceId: string,
+  reportId: string,
+  userId: string,
+  input: ListReportCommentsInput
+) {
+  const targetCommentId = input.targetCommentId
+  const limit = input.limit ?? defaultReportCommentsPageSize
+  const commentRows: Array<
+    Omit<ReportCommentRow, "mentions" | "reactions" | "replyCount">
+  > = []
+  const visitedCommentIds = new Set<string>()
+  let currentCommentId: string | null | undefined = targetCommentId
+
+  while (currentCommentId && !visitedCommentIds.has(currentCommentId)) {
+    visitedCommentIds.add(currentCommentId)
+
+    const [row] = await db
+      .select({
+        ...reportCommentSelectFields(),
+      })
+      .from(reportComments)
+      .where(
+        and(
+          eq(reportComments.workspaceId, workspaceId),
+          eq(reportComments.reportId, reportId),
+          eq(reportComments.id, currentCommentId)
+        )
+      )
+      .limit(1)
+
+    if (!row) {
+      break
+    }
+
+    commentRows.push(row)
+    currentCommentId = row.parentCommentId
+  }
+
+  const countedRows = await withCommentMetadata(
+    workspaceId,
+    reportId,
+    userId,
+    commentRows.reverse()
+  )
+
+  return {
+    rows: countedRows,
+    pageInfo: getCommentsPageInfo({
+      hasNextPage: false,
+      limit,
+      offset: 0,
+      pageSize: countedRows.length,
     }),
   }
 }
@@ -1741,6 +1908,7 @@ export async function assignWorkspaceReport(
   const note =
     input.note ??
     (nextAssigneeUserId ? "Report assigned." : "Report unassigned.")
+  const statusEventId = randomUUID()
 
   await db.batch([
     db
@@ -1748,6 +1916,7 @@ export async function assignWorkspaceReport(
       .set(updateValues)
       .where(and(eq(reports.workspaceId, workspace.id), eq(reports.id, reportId))),
     db.insert(reportStatusEvents).values({
+      id: statusEventId,
       workspaceId: workspace.id,
       reportId,
       actorUserId: userId,
@@ -1756,6 +1925,20 @@ export async function assignWorkspaceReport(
       note,
     }),
   ])
+
+  if (didChangeAssignee && nextAssigneeUserId) {
+    await createWorkspaceNotificationsSafely({
+      workspaceId: workspace.id,
+      recipientUserIds: [nextAssigneeUserId],
+      actorUserId: userId,
+      reportId,
+      type: "report_assigned",
+      title: "Report assigned to you",
+      body: truncateNotificationBody(row.title),
+      href: getReportNotificationHref(workspaceSlug, reportId),
+      dedupeKey: `report-assigned:${statusEventId}`,
+    })
+  }
 
   return getWorkspaceReport(userId, workspaceSlug, reportId)
 }
@@ -1816,7 +1999,9 @@ export async function updateWorkspaceReportStatus(
       resolvedAt: getResolvedAtForStatus(input.status),
     })
     .where(and(eq(reports.workspaceId, workspace.id), eq(reports.id, reportId)))
+  const statusEventId = randomUUID()
   const statusEventInsert = db.insert(reportStatusEvents).values({
+    id: statusEventId,
     workspaceId: workspace.id,
     reportId,
     actorUserId: userId,
@@ -1842,6 +2027,42 @@ export async function updateWorkspaceReportStatus(
     await db.batch([reportUpdate, statusEventInsert])
   }
 
+  if (input.status === "ready_for_review") {
+    const adminUserIds = await getActiveWorkspaceUserIdsByRoles(
+      workspace.id,
+      ["owner", "admin"],
+      [userId]
+    )
+
+    await createWorkspaceNotificationsSafely({
+      workspaceId: workspace.id,
+      recipientUserIds: adminUserIds,
+      actorUserId: userId,
+      reportId,
+      type: "ready_for_review",
+      title: "Report ready for review",
+      body: truncateNotificationBody(row.title),
+      href: getReportNotificationHref(workspaceSlug, reportId, "activity"),
+      dedupeKey: `ready-for-review:${statusEventId}`,
+    })
+  }
+
+  if (input.status === "resolved") {
+    await createWorkspaceNotificationsSafely({
+      workspaceId: workspace.id,
+      recipientUserIds: [row.assigneeUserId, row.reporterUserId].filter(
+        Boolean
+      ) as string[],
+      actorUserId: userId,
+      reportId,
+      type: "report_resolved",
+      title: "Report resolved",
+      body: truncateNotificationBody(row.title),
+      href: getReportNotificationHref(workspaceSlug, reportId),
+      dedupeKey: `report-resolved:${statusEventId}`,
+    })
+  }
+
   return getWorkspaceReport(userId, workspaceSlug, reportId)
 }
 
@@ -1861,13 +2082,56 @@ export async function createWorkspaceReportNote(
     userId,
   })
 
-  await db.insert(reportNotes).values({
-    workspaceId: workspace.id,
-    reportId,
-    authorUserId: userId,
-    kind: input.kind,
-    body: input.body,
-  })
+  const [insertedNote] = await db
+    .insert(reportNotes)
+    .values({
+      workspaceId: workspace.id,
+      reportId,
+      authorUserId: userId,
+      kind: input.kind,
+      body: input.body,
+    })
+    .returning({ id: reportNotes.id })
+
+  if (!insertedNote) {
+    throw new Error("Failed to create report note.")
+  }
+
+  if (input.kind === "clarification" && row.assigneeUserId) {
+    await createWorkspaceNotificationsSafely({
+      workspaceId: workspace.id,
+      recipientUserIds: [row.assigneeUserId],
+      actorUserId: userId,
+      reportId,
+      noteId: insertedNote.id,
+      type: "clarification_added",
+      title: "Clarification added",
+      body: truncateNotificationBody(input.body),
+      href: getReportNotificationHref(workspaceSlug, reportId, "activity"),
+      dedupeKey: `clarification:${insertedNote.id}`,
+    })
+  }
+
+  if (input.kind === "blocker") {
+    const adminUserIds = await getActiveWorkspaceUserIdsByRoles(
+      workspace.id,
+      ["owner", "admin"],
+      [userId]
+    )
+
+    await createWorkspaceNotificationsSafely({
+      workspaceId: workspace.id,
+      recipientUserIds: adminUserIds,
+      actorUserId: userId,
+      reportId,
+      noteId: insertedNote.id,
+      type: "blocker_added",
+      title: "Blocker added",
+      body: truncateNotificationBody(input.body),
+      href: getReportNotificationHref(workspaceSlug, reportId, "activity"),
+      dedupeKey: `blocker:${insertedNote.id}`,
+    })
+  }
 
   return getWorkspaceReport(userId, workspaceSlug, reportId)
 }
@@ -1901,6 +2165,117 @@ async function assertReportCommentParent(
   }
 }
 
+async function getReportCommentParentForCreate(
+  workspaceId: string,
+  reportId: string,
+  parentCommentId?: string | null
+) {
+  if (!parentCommentId) {
+    return null
+  }
+
+  const [parent] = await db
+    .select({
+      authorUserId: reportComments.authorUserId,
+      id: reportComments.id,
+    })
+    .from(reportComments)
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspaceId),
+        eq(reportComments.reportId, reportId),
+        eq(reportComments.id, parentCommentId),
+        isNull(reportComments.deletedAt)
+      )
+    )
+    .limit(1)
+
+  if (!parent) {
+    throw new ValidationError("Parent comment not found.", {
+      parentCommentId: ["Choose an existing comment on this report."],
+    })
+  }
+
+  return parent
+}
+
+async function getActiveMentionedUserIds(
+  workspaceId: string,
+  mentionedUserIds: string[] = []
+) {
+  const uniqueMentionedUserIds = [...new Set(mentionedUserIds)]
+
+  if (uniqueMentionedUserIds.length === 0) {
+    return []
+  }
+
+  const rows = await db
+    .select({ userId: workspaceMemberships.userId })
+    .from(workspaceMemberships)
+    .where(
+      and(
+        eq(workspaceMemberships.workspaceId, workspaceId),
+        eq(workspaceMemberships.status, "active"),
+        inArray(workspaceMemberships.userId, uniqueMentionedUserIds)
+      )
+    )
+  const activeMentionedUserIds = rows.map((row) => row.userId)
+
+  if (activeMentionedUserIds.length !== uniqueMentionedUserIds.length) {
+    throw new ValidationError("Choose active teammates in this workspace.", {
+      mentionedUserIds: ["One or more mentioned teammates are not active."],
+    })
+  }
+
+  return activeMentionedUserIds
+}
+
+async function replaceReportCommentMentions({
+  commentId,
+  mentionedUserIds,
+  reportId,
+  userId,
+  workspaceId,
+}: {
+  commentId: string
+  mentionedUserIds: string[]
+  reportId: string
+  userId: string
+  workspaceId: string
+}) {
+  await db
+    .delete(reportCommentMentions)
+    .where(
+      and(
+        eq(reportCommentMentions.workspaceId, workspaceId),
+        eq(reportCommentMentions.reportId, reportId),
+        eq(reportCommentMentions.commentId, commentId)
+      )
+    )
+
+  if (mentionedUserIds.length === 0) {
+    return
+  }
+
+  await db
+    .insert(reportCommentMentions)
+    .values(
+      mentionedUserIds.map((mentionedUserId) => ({
+        workspaceId,
+        reportId,
+        commentId,
+        mentionedUserId,
+        createdByUserId: userId,
+      }))
+    )
+    .onConflictDoNothing({
+      target: [
+        reportCommentMentions.commentId,
+        reportCommentMentions.mentionedUserId,
+      ],
+    })
+}
+
 export async function createWorkspaceReportComment(
   userId: string,
   workspaceSlug: string,
@@ -1909,12 +2284,15 @@ export async function createWorkspaceReportComment(
 ) {
   const workspace = await requireWorkspaceForReportNote(userId, workspaceSlug)
 
-  await getMutableReportRow(workspace.id, reportId)
-  await assertReportCommentParent(
-    workspace.id,
-    reportId,
-    input.parentCommentId
-  )
+  const row = await getMutableReportRow(workspace.id, reportId)
+  const [parentComment, mentionedUserIds] = await Promise.all([
+    getReportCommentParentForCreate(
+      workspace.id,
+      reportId,
+      input.parentCommentId
+    ),
+    getActiveMentionedUserIds(workspace.id, input.mentionedUserIds),
+  ])
 
   const [insertedComment] = await db
     .insert(reportComments)
@@ -1926,30 +2304,120 @@ export async function createWorkspaceReportComment(
       body: input.body,
     })
     .returning(reportCommentSelectFields())
-  const reportResult = await getWorkspaceReport(userId, workspaceSlug, reportId)
-  const peopleById = await getPeopleById(
-    compactUserIds([insertedComment?.authorUserId])
-  )
 
   if (!insertedComment) {
     throw new Error("Failed to create report comment.")
   }
-  const commentsCount = await getReportCommentsCount(workspace.id, reportId)
+
+  if (mentionedUserIds.length > 0) {
+    await replaceReportCommentMentions({
+      commentId: insertedComment.id,
+      mentionedUserIds,
+      reportId,
+      userId,
+      workspaceId: workspace.id,
+    })
+  }
+
+  const notifiedRecipientIds = new Set<string>()
+  const commentHref = getReportNotificationHref(
+    workspaceSlug,
+    reportId,
+    "comments",
+    insertedComment.id
+  )
+  const commentBody = truncateNotificationBody(input.body)
+  const notificationWrites: Array<Promise<void>> = []
+
+  if (mentionedUserIds.length > 0) {
+    mentionedUserIds.forEach((mentionedUserId) =>
+      notifiedRecipientIds.add(mentionedUserId)
+    )
+    notificationWrites.push(
+      createWorkspaceNotificationsSafely({
+        workspaceId: workspace.id,
+        recipientUserIds: mentionedUserIds,
+        actorUserId: userId,
+        reportId,
+        commentId: insertedComment.id,
+        type: "comment_mention",
+        title: "You were mentioned",
+        body: commentBody,
+        href: commentHref,
+        dedupeKey: `comment-mention:${insertedComment.id}`,
+      })
+    )
+  }
+
+  if (
+    parentComment?.authorUserId &&
+    !notifiedRecipientIds.has(parentComment.authorUserId)
+  ) {
+    notifiedRecipientIds.add(parentComment.authorUserId)
+    notificationWrites.push(
+      createWorkspaceNotificationsSafely({
+        workspaceId: workspace.id,
+        recipientUserIds: [parentComment.authorUserId],
+        actorUserId: userId,
+        reportId,
+        commentId: insertedComment.id,
+        type: "comment_reply",
+        title: "New reply on your comment",
+        body: commentBody,
+        href: commentHref,
+        dedupeKey: `comment-reply:${insertedComment.id}`,
+      })
+    )
+  }
+
+  if (
+    canAdministerReports(workspace.role) &&
+    row.assigneeUserId &&
+    !notifiedRecipientIds.has(row.assigneeUserId)
+  ) {
+    notificationWrites.push(
+      createWorkspaceNotificationsSafely({
+        workspaceId: workspace.id,
+        recipientUserIds: [row.assigneeUserId],
+        actorUserId: userId,
+        reportId,
+        commentId: insertedComment.id,
+        type: "admin_comment_added",
+        title: "Admin commented on your assigned report",
+        body: commentBody,
+        href: commentHref,
+        dedupeKey: `admin-comment:${insertedComment.id}`,
+      })
+    )
+  }
+
+  const commentsCountPromise = getReportCommentsCount(workspace.id, reportId)
+  const hydratedCommentPromise = withCommentMetadata(
+    workspace.id,
+    reportId,
+    userId,
+    [insertedComment]
+  )
+  await Promise.all(notificationWrites)
+  const [commentsCount, [hydratedComment]] = await Promise.all([
+    commentsCountPromise,
+    hydratedCommentPromise,
+  ])
+
+  if (!hydratedComment) {
+    throw new Error("Failed to create report comment.")
+  }
+
+  const peopleById = await getPeopleById(
+    compactUserIds([hydratedComment.authorUserId])
+  )
 
   return {
-    ...reportResult,
     report: {
-      ...reportResult.report,
+      id: reportId,
       commentsCount,
     },
-    comment: serializeReportComment(
-      {
-        ...insertedComment,
-        reactions: [],
-        replyCount: 0,
-      },
-      peopleById
-    ),
+    comment: serializeReportComment(hydratedComment, peopleById),
   }
 }
 
@@ -2059,23 +2527,60 @@ export async function updateWorkspaceReportComment(
     throw new NotFoundError("Comment not found.")
   }
 
+  if (input.mentionedUserIds) {
+    const mentionedUserIds = await getActiveMentionedUserIds(
+      workspace.id,
+      input.mentionedUserIds
+    )
+
+    await replaceReportCommentMentions({
+      commentId,
+      mentionedUserIds,
+      reportId,
+      userId,
+      workspaceId: workspace.id,
+    })
+
+    await createWorkspaceNotificationsSafely({
+      workspaceId: workspace.id,
+      recipientUserIds: mentionedUserIds,
+      actorUserId: userId,
+      reportId,
+      commentId,
+      type: "comment_mention",
+      title: "You were mentioned",
+      body: truncateNotificationBody(input.body),
+      href: getReportNotificationHref(
+        workspaceSlug,
+        reportId,
+        "comments",
+        commentId
+      ),
+      dedupeKey: `comment-mention:${commentId}`,
+    })
+  }
+
   const [hydratedComment] = await withCommentMetadata(
     workspace.id,
     reportId,
     userId,
     [updatedComment]
   )
-  const reportResult = await getWorkspaceReport(userId, workspaceSlug, reportId)
-  const peopleById = await getPeopleById(
-    compactUserIds([hydratedComment?.authorUserId])
-  )
 
   if (!hydratedComment) {
     throw new Error("Failed to update report comment.")
   }
 
+  const [commentsCount, peopleById] = await Promise.all([
+    getReportCommentsCount(workspace.id, reportId),
+    getPeopleById(compactUserIds([hydratedComment.authorUserId])),
+  ])
+
   return {
-    ...reportResult,
+    report: {
+      id: reportId,
+      commentsCount,
+    },
     comment: serializeReportComment(hydratedComment, peopleById),
   }
 }
@@ -2122,21 +2627,20 @@ export async function deleteWorkspaceReportComment(
     throw new NotFoundError("Comment not found.")
   }
 
-  const reportResult = await getWorkspaceReport(userId, workspaceSlug, reportId)
   const commentsCount = await getReportCommentsCount(workspace.id, reportId)
   const peopleById = await getPeopleById(
     compactUserIds([deletedComment.authorUserId])
   )
   const hydratedDeletedComment: ReportCommentRow = {
     ...deletedComment,
+    mentions: currentComment.mentions,
     reactions: [],
     replyCount: currentComment.replyCount,
   }
 
   return {
-    ...reportResult,
     report: {
-      ...reportResult.report,
+      id: reportId,
       commentsCount,
     },
     comment: serializeReportComment(hydratedDeletedComment, peopleById),
