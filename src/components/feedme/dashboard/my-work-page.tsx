@@ -188,7 +188,6 @@ export function MyWorkPage({
     currentUserRole,
     dashboardSearchQuery,
     registerReports,
-    reportRailReports,
     setReportRailSelectedReportId,
   } = useWorkspaceDashboardData()
   const defaultScope = getDefaultScope(currentUserRole)
@@ -253,16 +252,7 @@ export function MyWorkPage({
   const isLoadingMore = reportsQuery.isFetchingNextPage
   const activeScopeConfig =
     scopes.find((scope) => scope.value === activeScope) ?? scopes[0]
-  const reportUpdatesById = useMemo(
-    () =>
-      new Map(reportRailReports.map((report) => [report.id, report])),
-    [reportRailReports]
-  )
-  const visibleReports = useMemo(
-    () =>
-      reportRows.map((report) => reportUpdatesById.get(report.id) ?? report),
-    [reportRows, reportUpdatesById]
-  )
+  const visibleReports = reportRows
   const showInitialSkeleton = isPending && visibleReports.length === 0
   const showInitialError =
     Boolean(errorMessage) && visibleReports.length === 0 && !showInitialSkeleton

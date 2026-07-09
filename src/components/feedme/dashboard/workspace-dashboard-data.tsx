@@ -98,7 +98,7 @@ export function WorkspaceDashboardDataProvider({
   const [selectedMemberId, setSelectedMemberIdState] = useState<string | null>(null)
 
   const registerReports = useCallback((input: RegisterReportsInput) => {
-    setReportRailReady(true)
+    setReportRailReady((currentReady) => (currentReady ? currentReady : true))
     setReportRailReports((currentReports) =>
       areReportListsEqual(currentReports, input.reports)
         ? currentReports
@@ -116,7 +116,7 @@ export function WorkspaceDashboardDataProvider({
   }, [])
 
   const registerMembers = useCallback((input: RegisterMembersInput) => {
-    setMembersReady(true)
+    setMembersReady((currentReady) => (currentReady ? currentReady : true))
     setTeamMembers((currentMembers) =>
       currentMembers === input.members ? currentMembers : input.members
     )
@@ -152,11 +152,23 @@ export function WorkspaceDashboardDataProvider({
   }, [])
 
   const updateReport = useCallback((nextReport: WorkspaceReport) => {
-    setReportRailReports((currentReports) =>
-      currentReports.map((report) =>
-        report.id === nextReport.id ? nextReport : report
-      )
-    )
+    setReportRailReports((currentReports) => {
+      let didUpdate = false
+      const nextReports = currentReports.map((report) => {
+        if (report.id !== nextReport.id) {
+          return report
+        }
+
+        if (report === nextReport) {
+          return report
+        }
+
+        didUpdate = true
+        return nextReport
+      })
+
+      return didUpdate ? nextReports : currentReports
+    })
   }, [])
 
   const value = useMemo(

@@ -2,12 +2,17 @@
 
 import Image from "next/image"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { createPortal } from "react-dom"
 import {
+  cloneElement,
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
+  type MouseEvent,
   type ReactElement,
   type ReactNode,
 } from "react"
@@ -33,14 +38,6 @@ import {
   DashboardFreshnessNotice,
   DashboardInlineError,
 } from "@/components/feedme/dashboard/dashboard-query-status"
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuLabel,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu"
 import {
   reportPriorityCodeBaseClass,
   reportPriorityCodePillStyle,
@@ -235,6 +232,75 @@ function canUseReportWorkflowAction(
   )
 }
 
+type ReportContextMenuPosition = {
+  x: number
+  y: number
+}
+
+type ReportContextMenuChildProps = {
+  onContextMenu?: (event: MouseEvent<HTMLElement>) => void
+}
+
+function getContextMenuPosition(event: MouseEvent<HTMLElement>) {
+  const menuWidth = 224
+  const menuHeight = 332
+  const viewportPadding = 12
+  const maxX = window.innerWidth - menuWidth - viewportPadding
+  const maxY = window.innerHeight - menuHeight - viewportPadding
+
+  return {
+    x: Math.max(viewportPadding, Math.min(event.clientX, maxX)),
+    y: Math.max(viewportPadding, Math.min(event.clientY, maxY)),
+  }
+}
+
+function ReportContextMenuSection({ children }: { children: ReactNode }) {
+  return (
+    <div className="py-1" role="group">
+      {children}
+    </div>
+  )
+}
+
+function ReportContextMenuLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="px-2.5 py-1 text-caption text-text-muted">
+      {children}
+    </div>
+  )
+}
+
+function ReportContextMenuSeparator() {
+  return <div className="-mx-1 h-px bg-border-hairline" />
+}
+
+function ReportContextMenuItem({
+  children,
+  disabled,
+  onSelect,
+}: {
+  children: ReactNode
+  disabled?: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      onClick={onSelect}
+      className={cn(
+        "flex w-full items-center gap-2 text-left outline-none transition-colors duration-base ease-out-soft",
+        reportContextMenuItemClass,
+        "hover:bg-fill-subtle hover:text-foreground focus-visible:bg-fill-subtle focus-visible:text-foreground",
+        disabled && "pointer-events-none opacity-45"
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
 function ReportActionsContextMenu({
   children,
   report,
@@ -262,6 +328,10 @@ function ReportActionsContextMenu({
   const canMarkReady =
     canUseWorkflow &&
     (report.status === "assigned" || report.status === "in_progress")
+  const [menuPosition, setMenuPosition] =
+    useState<ReportContextMenuPosition | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const childProps = children.props as ReportContextMenuChildProps
 
   async function copyText(action: string, value: string) {
     await navigator.clipboard.writeText(value)
@@ -278,112 +348,185 @@ function ReportActionsContextMenu({
     updateReport(result.report)
   }
 
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-      <ContextMenuContent
-        className="w-56 rounded-lg border border-border-subtle bg-surface-card p-1 text-foreground shadow-popover before:hidden"
-      >
-        <ContextMenuLabel className="px-2.5 py-1 text-caption text-text-muted">
-          Agent
-        </ContextMenuLabel>
-        <ContextMenuItem
-          className={reportContextMenuItemClass}
-          onSelect={(event) => {
-            event.preventDefault()
-            void copyText("agent", buildReportMcpCommand(report))
-          }}
-        >
-          <Bot className="size-3.5 text-text-muted" />
-          {copiedAction === "agent" ? "Agent command copied" : "Open in agent"}
-        </ContextMenuItem>
-        <ContextMenuItem
-          className={reportContextMenuItemClass}
-          onSelect={(event) => {
-            event.preventDefault()
-            void copyText("mcp", buildReportMcpCommand(report))
-          }}
-        >
-          <Copy className="size-3.5 text-text-muted" />
-          {copiedAction === "mcp" ? "MCP command copied" : "Copy MCP command"}
-        </ContextMenuItem>
-        <ContextMenuItem
-          className={reportContextMenuItemClass}
-          onSelect={(event) => {
-            event.preventDefault()
-            void copyText("prompt", buildReportFixPrompt(report))
-          }}
-        >
-          <Code2 className="size-3.5 text-text-muted" />
-          {copiedAction === "prompt" ? "Fix prompt copied" : "Copy fix prompt"}
-        </ContextMenuItem>
+  const closeMenu = useCallback(() => {
+    setMenuPosition(null)
+  }, [])
 
-        <ContextMenuSeparator className="bg-border-hairline" />
-        <ContextMenuLabel className="px-2.5 py-1 text-caption text-text-muted">
-          Report
-        </ContextMenuLabel>
-        <ContextMenuItem
-          className={reportContextMenuItemClass}
-          onSelect={() => router.push(`/${workspaceSlug}/reports/${report.id}`)}
-        >
-          <ArrowUpRight className="size-3.5 text-text-muted" />
-          Open report
-        </ContextMenuItem>
-        {canManageBrief ? (
-          <ContextMenuItem
-            className={reportContextMenuItemClass}
+  function openMenu(event: MouseEvent<HTMLElement>) {
+    childProps.onContextMenu?.(event)
+
+    if (event.defaultPrevented) {
+      return
+    }
+
+    event.preventDefault()
+    setMenuPosition(getContextMenuPosition(event))
+  }
+
+  function selectAndClose(action: () => void) {
+    closeMenu()
+    action()
+  }
+
+  useEffect(() => {
+    if (!menuPosition) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (
+        menuRef.current &&
+        event.target instanceof Node &&
+        menuRef.current.contains(event.target)
+      ) {
+        return
+      }
+
+      closeMenu()
+    }
+
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeMenu()
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("resize", closeMenu)
+    window.addEventListener("scroll", closeMenu, true)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("resize", closeMenu)
+      window.removeEventListener("scroll", closeMenu, true)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [closeMenu, menuPosition])
+
+  const trigger = cloneElement(children, {
+    onContextMenu: openMenu,
+  } as Partial<ReportContextMenuChildProps>)
+  const menuStyle: CSSProperties | undefined = menuPosition
+    ? {
+        left: menuPosition.x,
+        top: menuPosition.y,
+      }
+    : undefined
+  const menu =
+    menuPosition && typeof document !== "undefined" ? (
+      <div
+        ref={menuRef}
+        role="menu"
+        style={menuStyle}
+        onContextMenu={(event) => event.preventDefault()}
+        className="fixed z-50 w-56 rounded-lg border border-border-subtle bg-surface-card p-1 text-foreground shadow-popover"
+      >
+        <ReportContextMenuSection>
+          <ReportContextMenuLabel>Agent</ReportContextMenuLabel>
+          <ReportContextMenuItem
+            onSelect={() => {
+              void copyText("agent", buildReportMcpCommand(report))
+            }}
+          >
+            <Bot className="size-3.5 text-text-muted" />
+            {copiedAction === "agent" ? "Agent command copied" : "Open in agent"}
+          </ReportContextMenuItem>
+          <ReportContextMenuItem
+            onSelect={() => {
+              void copyText("mcp", buildReportMcpCommand(report))
+            }}
+          >
+            <Copy className="size-3.5 text-text-muted" />
+            {copiedAction === "mcp" ? "MCP command copied" : "Copy MCP command"}
+          </ReportContextMenuItem>
+          <ReportContextMenuItem
+            onSelect={() => {
+              void copyText("prompt", buildReportFixPrompt(report))
+            }}
+          >
+            <Code2 className="size-3.5 text-text-muted" />
+            {copiedAction === "prompt" ? "Fix prompt copied" : "Copy fix prompt"}
+          </ReportContextMenuItem>
+        </ReportContextMenuSection>
+
+        <ReportContextMenuSeparator />
+        <ReportContextMenuSection>
+          <ReportContextMenuLabel>Report</ReportContextMenuLabel>
+          <ReportContextMenuItem
             onSelect={() =>
-              router.push(`/${workspaceSlug}/reports/${report.id}?tab=brief`)
+              selectAndClose(() => router.push(`/${workspaceSlug}/reports/${report.id}`))
             }
           >
-            <FileText className="size-3.5 text-text-muted" />
-            Implementation brief
-          </ContextMenuItem>
-        ) : null}
-        <ContextMenuItem
-          className={reportContextMenuItemClass}
-          onSelect={() => {
-            window.open(report.url, "_blank", "noopener,noreferrer")
-          }}
-        >
-          <Globe2 className="size-3.5 text-text-muted" />
-          Open captured page
-        </ContextMenuItem>
+            <ArrowUpRight className="size-3.5 text-text-muted" />
+            Open report
+          </ReportContextMenuItem>
+          {canManageBrief ? (
+            <ReportContextMenuItem
+              onSelect={() =>
+                selectAndClose(() =>
+                  router.push(`/${workspaceSlug}/reports/${report.id}?tab=brief`)
+                )
+              }
+            >
+              <FileText className="size-3.5 text-text-muted" />
+              Implementation brief
+            </ReportContextMenuItem>
+          ) : null}
+          <ReportContextMenuItem
+            onSelect={() =>
+              selectAndClose(() =>
+                window.open(report.url, "_blank", "noopener,noreferrer")
+              )
+            }
+          >
+            <Globe2 className="size-3.5 text-text-muted" />
+            Open captured page
+          </ReportContextMenuItem>
+        </ReportContextMenuSection>
 
-        <ContextMenuSeparator className="bg-border-hairline" />
-        <ContextMenuLabel className="px-2.5 py-1 text-caption text-text-muted">
-          Workflow
-        </ContextMenuLabel>
-        <ContextMenuItem
-          disabled={!canStartWork || updateStatusMutation.isPending}
-          className={reportContextMenuItemClass}
-          onSelect={() => {
-            void updateStatus("in_progress")
-          }}
-        >
-          {updateStatusMutation.isPending && canStartWork ? (
-            <Loader2 className="size-3.5 animate-spin text-text-muted" />
-          ) : (
-            <Play className="size-3.5 text-text-muted" />
-          )}
-          Start work
-        </ContextMenuItem>
-        <ContextMenuItem
-          disabled={!canMarkReady || updateStatusMutation.isPending}
-          className={reportContextMenuItemClass}
-          onSelect={() => {
-            void updateStatus("ready_for_review")
-          }}
-        >
-          {updateStatusMutation.isPending && canMarkReady ? (
-            <Loader2 className="size-3.5 animate-spin text-text-muted" />
-          ) : (
-            <CheckCircle2 className="size-3.5 text-text-muted" />
-          )}
-          Ready for review
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+        <ReportContextMenuSeparator />
+        <ReportContextMenuSection>
+          <ReportContextMenuLabel>Workflow</ReportContextMenuLabel>
+          <ReportContextMenuItem
+            disabled={!canStartWork || updateStatusMutation.isPending}
+            onSelect={() => {
+              selectAndClose(() => {
+                void updateStatus("in_progress")
+              })
+            }}
+          >
+            {updateStatusMutation.isPending && canStartWork ? (
+              <Loader2 className="size-3.5 animate-spin text-text-muted" />
+            ) : (
+              <Play className="size-3.5 text-text-muted" />
+            )}
+            Start work
+          </ReportContextMenuItem>
+          <ReportContextMenuItem
+            disabled={!canMarkReady || updateStatusMutation.isPending}
+            onSelect={() => {
+              selectAndClose(() => {
+                void updateStatus("ready_for_review")
+              })
+            }}
+          >
+            {updateStatusMutation.isPending && canMarkReady ? (
+              <Loader2 className="size-3.5 animate-spin text-text-muted" />
+            ) : (
+              <CheckCircle2 className="size-3.5 text-text-muted" />
+            )}
+            Ready for review
+          </ReportContextMenuItem>
+        </ReportContextMenuSection>
+      </div>
+    ) : null
+
+  return (
+    <>
+      {trigger}
+      {menu ? createPortal(menu, document.body) : null}
+    </>
   )
 }
 
@@ -864,7 +1007,6 @@ export function ReportsList({
   const {
     dashboardSearchQuery,
     registerReports,
-    reportRailReports,
     setReportRailSelectedReportId,
   } = useWorkspaceDashboardData()
   const searchQuery = dashboardSearchQuery
@@ -922,15 +1064,7 @@ export function ReportsList({
         : null
   const isPending = reportsQuery.isPending
   const isLoadingMore = reportsQuery.isFetchingNextPage
-  const reportUpdatesById = useMemo(
-    () => new Map(reportRailReports.map((report) => [report.id, report])),
-    [reportRailReports]
-  )
-  const visibleReports = useMemo(
-    () =>
-      reportRows.map((report) => reportUpdatesById.get(report.id) ?? report),
-    [reportRows, reportUpdatesById]
-  )
+  const visibleReports = reportRows
   const showInitialSkeleton = isPending && visibleReports.length === 0
   const showInitialError =
     Boolean(errorMessage) && visibleReports.length === 0 && !showInitialSkeleton

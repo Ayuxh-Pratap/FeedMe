@@ -5,6 +5,7 @@ import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowUpRight,
+  Bell,
   Bot,
   Camera,
   Check,
@@ -51,6 +52,7 @@ import {
 } from "react"
 
 import type { MockWorkspace } from "@/lib/mock/dashboard"
+import type { WorkspaceNotification } from "@/lib/notifications"
 import {
   getReportStatusLabel,
   isWorkspaceReportAssignmentLocked,
@@ -70,6 +72,7 @@ import {
 } from "@/components/feedme/dashboard/report-badge-styles"
 import { ConnectAgentDialog } from "@/components/feedme/dashboard/connect-agent-dialog"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
+import { AppQueryProvider } from "@/components/providers/app-query-provider"
 import {
   useWorkspaceDashboardData,
   WorkspaceDashboardDataProvider,
@@ -88,6 +91,11 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import {
   ApiClientError,
@@ -104,6 +112,10 @@ import {
   useReportDetailQuery,
   useUpdateReportStatusMutation,
 } from "@/lib/report-queries"
+import {
+  useMarkWorkspaceNotificationsReadMutation,
+  useWorkspaceNotificationsQuery,
+} from "@/lib/notification-queries"
 import { useDashboardUiStore } from "@/stores/dashboard-ui-store"
 
 type WorkspaceShellProps = {
@@ -220,6 +232,145 @@ function IconButton({
     >
       {children}
     </button>
+  )
+}
+
+function getNotificationAccent(notification: WorkspaceNotification) {
+  switch (notification.type) {
+    case "blocker_added":
+      return "bg-error"
+    case "ready_for_review":
+      return "bg-success"
+    case "report_assigned":
+      return "bg-primary"
+    default:
+      return "bg-text-muted"
+  }
+}
+
+function NotificationsBell({ workspaceSlug }: { workspaceSlug: string }) {
+  const notificationsQuery = useWorkspaceNotificationsQuery(workspaceSlug)
+  const markReadMutation = useMarkWorkspaceNotificationsReadMutation(workspaceSlug)
+  const notifications = notificationsQuery.data?.notifications ?? []
+  const unreadCount = notificationsQuery.data?.unreadCount ?? 0
+  const hasUnread = unreadCount > 0
+
+  function markAllRead() {
+    if (!hasUnread || markReadMutation.isPending) {
+      return
+    }
+
+    markReadMutation.mutate({})
+  }
+
+  function markNotificationRead(notification: WorkspaceNotification) {
+    if (notification.readAt) {
+      return
+    }
+
+    markReadMutation.mutate({ notificationIds: [notification.id] })
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={
+            hasUnread
+              ? `Open notifications, ${unreadCount} unread`
+              : "Open notifications"
+          }
+          onClick={() => {
+            void notificationsQuery.refetch()
+          }}
+          className={cn(
+            "relative flex size-8 cursor-pointer items-center justify-center rounded-lg border border-border-hairline",
+            "bg-fill-translucent text-text-body shadow-button-secondary transition-all duration-base ease-out-soft",
+            "hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)]"
+          )}
+        >
+          <Bell className="size-4" />
+          {hasUnread ? (
+            <span className="absolute -right-1 -top-1 flex min-w-4 items-center justify-center rounded-full border border-background bg-primary px-1 text-[10px] font-semibold leading-4 text-primary-foreground">
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          ) : null}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-[360px] gap-0 overflow-hidden rounded-xl border border-border-hairline bg-surface-card p-0 shadow-popover"
+        sideOffset={8}
+      >
+        <div className="flex items-center justify-between border-b border-border-hairline px-3 py-2.5">
+          <div>
+            <p className="text-heading-5 text-foreground">Notifications</p>
+            <p className="text-caption text-text-muted">
+              {hasUnread ? `${unreadCount} unread` : "You're caught up"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={markAllRead}
+            disabled={!hasUnread || markReadMutation.isPending}
+            className="inline-flex h-7 cursor-pointer items-center justify-center rounded-md px-2 text-caption text-text-muted transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            Mark all read
+          </button>
+        </div>
+
+        <div className="feedme-scrollbar max-h-[420px] overflow-auto">
+          {notificationsQuery.isPending ? (
+            <div className="space-y-2 p-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-14 rounded-lg bg-fill-translucent"
+                />
+              ))}
+            </div>
+          ) : notifications.length > 0 ? (
+            <div className="p-1.5">
+              {notifications.map((notification) => (
+                <Link
+                  key={notification.id}
+                  href={notification.href}
+                  onClick={() => markNotificationRead(notification)}
+                  className="group flex gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-fill-translucent"
+                >
+                  <span
+                    className={cn(
+                      "mt-1 size-2 shrink-0 rounded-full",
+                      notification.readAt
+                        ? "bg-border-hairline"
+                        : getNotificationAccent(notification)
+                    )}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-start gap-2">
+                      <span className="min-w-0 flex-1 truncate text-heading-5 text-foreground">
+                        {notification.title}
+                      </span>
+                      <span className="shrink-0 text-caption text-text-muted">
+                        {notification.createdAgo}
+                      </span>
+                    </span>
+                    <span className="mt-0.5 line-clamp-2 block text-caption text-text-body">
+                      {notification.body}
+                    </span>
+                  </span>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="p-4 text-body-3 text-text-muted">
+              No notifications yet.
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -1336,6 +1487,7 @@ function WorkspaceTopbar({
         </div>
 
         <div className="flex items-center gap-2 pl-4">
+          <NotificationsBell workspaceSlug={workspace.slug} />
           <DashboardPrimaryButton onClick={onOpenExtensionInstall}>
             <Camera className="size-4" />
             Capture report
@@ -1370,6 +1522,7 @@ function WorkspaceTopbar({
         </div>
 
         <div className="flex shrink-0 items-center gap-2 pl-3">
+          <NotificationsBell workspaceSlug={workspace.slug} />
           <MobileSearchSheet workspace={workspace} />
           <DashboardPrimaryButton
             ariaLabel="Capture report"
@@ -2505,12 +2658,6 @@ function ReportsContextRail({
     [onReportChange]
   )
 
-  useEffect(() => {
-    if (selectedDetailQuery.data?.report) {
-      handleReportChange(selectedDetailQuery.data.report)
-    }
-  }, [handleReportChange, selectedDetailQuery.data])
-
   if (isLoading) {
     return <ReportInspectorRailSkeleton className={className} />
   }
@@ -2799,20 +2946,22 @@ export function WorkspaceShell({
   const searchParams = useSearchParams()
 
   return (
-    <WorkspaceDashboardDataProvider
-      currentUserId={workspace.currentUserId ?? ""}
-      currentUserRole={workspace.currentUserRole ?? "viewer"}
-      initialDashboardSearchQuery={searchParams.get("q")?.trim() ?? ""}
-      workspaceName={workspace.name}
-      workspaceSlug={workspace.slug}
-    >
-      <WorkspaceShellContent
-        availableWorkspaces={availableWorkspaces}
-        workspace={workspace}
+    <AppQueryProvider>
+      <WorkspaceDashboardDataProvider
+        currentUserId={workspace.currentUserId ?? ""}
+        currentUserRole={workspace.currentUserRole ?? "viewer"}
+        initialDashboardSearchQuery={searchParams.get("q")?.trim() ?? ""}
+        workspaceName={workspace.name}
+        workspaceSlug={workspace.slug}
       >
-        {children}
-      </WorkspaceShellContent>
-    </WorkspaceDashboardDataProvider>
+        <WorkspaceShellContent
+          availableWorkspaces={availableWorkspaces}
+          workspace={workspace}
+        >
+          {children}
+        </WorkspaceShellContent>
+      </WorkspaceDashboardDataProvider>
+    </AppQueryProvider>
   )
 }
 
