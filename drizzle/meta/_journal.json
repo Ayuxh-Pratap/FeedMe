@@ -43,6 +43,13 @@
       "when": 1783585322603,
       "tag": "0005_lazy_gertrude_yorkes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783587397179,
+      "tag": "0006_lazy_skaar",
+      "breakpoints": true
     }
   ]
 }
