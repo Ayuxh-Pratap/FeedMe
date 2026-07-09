@@ -96,6 +96,17 @@ export const reportCommentReaction = pgEnum("report_comment_reaction", [
   "helpful",
 ])
 
+export const notificationType = pgEnum("notification_type", [
+  "report_assigned",
+  "comment_reply",
+  "comment_mention",
+  "admin_comment_added",
+  "clarification_added",
+  "blocker_added",
+  "ready_for_review",
+  "report_resolved",
+])
+
 const timestamps = () => ({
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -543,6 +554,105 @@ export const reportCommentReactions = pgTable(
   ]
 )
 
+export const reportCommentMentions = pgTable(
+  "report_comment_mentions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    reportId: uuid("report_id")
+      .notNull()
+      .references(() => reports.id, { onDelete: "cascade" }),
+    commentId: uuid("comment_id")
+      .notNull()
+      .references(() => reportComments.id, { onDelete: "cascade" }),
+    mentionedUserId: uuid("mentioned_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("report_comment_mentions_unique").on(
+      table.commentId,
+      table.mentionedUserId
+    ),
+    index("report_comment_mentions_workspace_id_idx").on(table.workspaceId),
+    index("report_comment_mentions_report_id_idx").on(table.reportId),
+    index("report_comment_mentions_comment_id_idx").on(table.commentId),
+    index("report_comment_mentions_mentioned_user_id_idx").on(
+      table.mentionedUserId
+    ),
+    foreignKey({
+      name: "report_comment_mentions_report_workspace_fk",
+      columns: [table.reportId, table.workspaceId],
+      foreignColumns: [reports.id, reports.workspaceId],
+    }).onDelete("cascade"),
+  ]
+)
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    recipientUserId: uuid("recipient_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    actorUserId: uuid("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    reportId: uuid("report_id").references(() => reports.id, {
+      onDelete: "cascade",
+    }),
+    commentId: uuid("comment_id").references(() => reportComments.id, {
+      onDelete: "set null",
+    }),
+    noteId: uuid("note_id").references(() => reportNotes.id, {
+      onDelete: "set null",
+    }),
+    type: notificationType("type").notNull(),
+    title: varchar("title", { length: 180 }).notNull(),
+    body: text("body").notNull(),
+    href: text("href").notNull(),
+    dedupeKey: text("dedupe_key"),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .default(sql`'{}'::jsonb`)
+      .notNull(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("notifications_dedupe_unique").on(
+      table.workspaceId,
+      table.recipientUserId,
+      table.dedupeKey
+    ),
+    index("notifications_workspace_recipient_idx").on(
+      table.workspaceId,
+      table.recipientUserId
+    ),
+    index("notifications_recipient_read_idx").on(
+      table.recipientUserId,
+      table.readAt
+    ),
+    index("notifications_report_id_idx").on(table.reportId),
+    index("notifications_created_at_idx").on(table.createdAt),
+    foreignKey({
+      name: "notifications_report_workspace_fk",
+      columns: [table.reportId, table.workspaceId],
+      foreignColumns: [reports.id, reports.workspaceId],
+    }).onDelete("cascade"),
+  ]
+)
+
 export const reportStatusEvents = pgTable(
   "report_status_events",
   {
@@ -761,6 +871,59 @@ export const reportCommentReactionsRelations = relations(
     }),
   })
 )
+
+export const reportCommentMentionsRelations = relations(
+  reportCommentMentions,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [reportCommentMentions.workspaceId],
+      references: [workspaces.id],
+    }),
+    report: one(reports, {
+      fields: [reportCommentMentions.reportId],
+      references: [reports.id],
+    }),
+    comment: one(reportComments, {
+      fields: [reportCommentMentions.commentId],
+      references: [reportComments.id],
+    }),
+    mentionedUser: one(users, {
+      fields: [reportCommentMentions.mentionedUserId],
+      references: [users.id],
+    }),
+    createdBy: one(users, {
+      fields: [reportCommentMentions.createdByUserId],
+      references: [users.id],
+    }),
+  })
+)
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [notifications.workspaceId],
+    references: [workspaces.id],
+  }),
+  recipient: one(users, {
+    fields: [notifications.recipientUserId],
+    references: [users.id],
+  }),
+  actor: one(users, {
+    fields: [notifications.actorUserId],
+    references: [users.id],
+  }),
+  report: one(reports, {
+    fields: [notifications.reportId],
+    references: [reports.id],
+  }),
+  comment: one(reportComments, {
+    fields: [notifications.commentId],
+    references: [reportComments.id],
+  }),
+  note: one(reportNotes, {
+    fields: [notifications.noteId],
+    references: [reportNotes.id],
+  }),
+}))
 
 export const reportNotesRelations = relations(reportNotes, ({ one }) => ({
   workspace: one(workspaces, {
