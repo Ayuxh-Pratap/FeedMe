@@ -366,10 +366,11 @@ Report detail uses three tabs so the page stays focused:
 ```txt
 Evidence
 Activity / Notes
+Comments
 Implementation brief
 ```
 
-Evidence and Activity / Notes are visible to every member who can open the report. Implementation brief is visible only to owners/admins and contains the editable handoff fields from `MCP_DEVELOPER_WORKFLOW.md`: acceptance criteria, implementation notes, constraints/non-goals, expected behavior, reference links, and review checklist. The right rail should not absorb these fields; it remains for quick inspection and workflow actions.
+Evidence, Activity / Notes, and Comments are visible to every member who can open the report. Implementation brief is visible only to owners/admins and contains the editable handoff fields from `MCP_DEVELOPER_WORKFLOW.md`: acceptance criteria, implementation notes, constraints/non-goals, expected behavior, reference links, and review checklist. The right rail should not absorb these fields; it remains for quick inspection and workflow actions.
 
 The report detail tab control should be quiet and line-based: active text with a thin bottom rule, not a framed segmented control. Switching between these tabs is local UI state plus URL search-param replacement and must not trigger a server round-trip or full route loading state.
 
@@ -384,7 +385,31 @@ right bottom: reference links -> label + URL rows
 
 `acceptanceCriteria` and `constraintsNonGoals` stay in the schema/API/MCP contract, but they are hidden in the dashboard UI for now. They are optional fields reserved for deeper workflow maturity; do not surface them until they solve a real product problem.
 
-Activity / Notes owns the future comments and work-notes stream. It should not repeat status, owner, captured time, or other metadata already visible in the report header.
+Activity / Notes owns workflow notes, blockers, clarifications, review notes, and the status-event stream. It should not repeat status, owner, captured time, or other metadata already visible in the report header. The note action should expose only note kinds the current member can actually create: work notes/blockers for the assigned developer or designer, and clarifications/review notes for owners/admins.
+
+Comments owns threaded workspace discussion. It should have a dedicated composer and reply affordance, and comments should increment `commentsCount`. Workflow notes must not increment `commentsCount`.
+
+Comments UI rules:
+
+```txt
+top-level comments open from an Add comment button into a compact modal
+do not show a large blank composer at the top of the Comments tab
+reply input is inline, single-line, transparent, and anchored by a simple bottom rule
+do not put reply inputs inside a heavy card/background
+render nested replies with a subtle connector line, not nested cards
+allow replies on replies, but load only direct children when a thread is expanded
+every comment with replies gets an expand/collapse control, including nested replies
+reply submit clears/closes the inline input immediately after optimistic insertion; restore the draft only on failure
+do not expose Reply on a still-optimistic comment because nested replies need a real database parent id
+load root comments in pages and show a quiet Load more comments action
+show "View replies" from replyCount; do not preload replies just to draw the count
+use restrained product reaction chips: Seen, Agree, Blocked, Helpful
+author can edit their own non-deleted comment
+author, owner, and admin can soft-delete a comment
+deleted comments with replies stay in place as a quiet "Comment deleted" tombstone
+deleted leaf comments disappear from the visible tree
+mentions, profile dialogs, and notification hooks are future comment maturity work
+```
 
 ## My Work Direction
 

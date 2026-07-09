@@ -1441,6 +1441,130 @@ Migration:
 drizzle/0002_small_iron_lad.sql
 ```
 
+### Slice 13: Report Activity And Work Notes
+
+Status:
+
+```txt
+implemented
+```
+
+Goal:
+
+```txt
+Make Activity / Notes a real workflow surface without mixing it with discussion
+comments. Assigned developers/designers can add work notes and blockers,
+owners/admins can add clarifications and review notes, and coding agents can
+write/read the same notes over MCP. Threaded comments live in their own
+Comments tab and table.
+```
+
+Routes:
+
+```txt
+POST /api/workspaces/:workspaceSlug/reports/:reportId/notes
+GET  /api/workspaces/:workspaceSlug/reports/:reportId/comments
+POST /api/workspaces/:workspaceSlug/reports/:reportId/comments
+PATCH  /api/workspaces/:workspaceSlug/reports/:reportId/comments/:commentId
+DELETE /api/workspaces/:workspaceSlug/reports/:reportId/comments/:commentId
+PUT    /api/workspaces/:workspaceSlug/reports/:reportId/comments/:commentId/reactions
+```
+
+Input:
+
+```txt
+notes.kind: work_note | blocker | clarification | review_note
+body: string
+
+comments.body: string
+comments.parentCommentId: uuid | null
+comments.editedAt: string | null
+comments.isDeleted: boolean
+comments.reactions: { reaction, count, reactedByCurrentUser }[]
+
+comment reactions:
+reaction: seen | agree | blocked | helpful
+enabled: boolean
+
+GET comments query:
+cursor: opaque optional
+limit: default 10, max 30
+parentCommentId: uuid optional; omitted means top-level comments, present means direct replies
+```
+
+GET comments response:
+
+```txt
+comments: WorkspaceReportComment[]
+pageInfo: { hasNextPage, nextCursor, limit }
+```
+
+`WorkspaceReportComment` includes `replyCount`, `replies`, optional
+`repliesPageInfo`, `editedAt`, `isDeleted`, and reaction summaries. The initial
+report detail response includes top-level comments only. Replies are lazy-loaded
+per parent comment so deep discussion does not make report detail slow. Report
+detail refetch must structurally merge with the existing TanStack Query cache so
+already-loaded reply branches do not vanish on browser focus.
+
+Server files:
+
+```txt
+src/db/schema.ts                                      report_notes, threaded report_comments, report_comment_reactions
+src/server/reports/validation.ts                      note/comment/reaction input schemas
+src/server/reports/service.ts                         create notes/comments, serialize activity/comments, edit/delete/reactions
+src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/notes/route.ts
+src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/comments/route.ts
+src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/comments/[commentId]/route.ts
+src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/comments/[commentId]/reactions/route.ts
+src/app/api/mcp/route.ts                              add_work_note, mark_blocked, recent notes in get_report
+```
+
+Dashboard files:
+
+```txt
+src/lib/reports.ts                                    WorkspaceReport.activity + WorkspaceReport.comments
+src/lib/report-queries.ts                             optimistic notes/comments/edit/delete/reactions + comment pagination
+src/components/feedme/dashboard/report-detail.tsx     Activity timeline + note dialog + Comments tab/thread actions
+```
+
+Rules:
+
+```txt
+work_note and blocker require the report to be assigned to the current developer/designer
+clarification and review_note require owner/admin
+notes are append-only; edits/deletes are not part of this slice
+Activity / Notes shows notes and status events from the report detail contract
+Comments shows threaded workspace discussion and is counted by commentsCount
+Comments tab uses a modal for top-level comment creation
+Replies use a minimal single-line inline input without card/background treatment
+Nested replies use connector lines, not nested cards
+Report detail includes only the first root comments page; the Comments tab loads roots and replies through GET /comments
+Comments can be replied to at any depth, but each expand action fetches only direct child replies
+comment edit/delete/reaction actions are optimistic and roll back from cached snapshots on failure
+author can edit their own non-deleted comments
+author, owner, and admin can soft-delete comments
+deleted comments with visible replies render as "Comment deleted"; deleted leaf comments disappear
+comment reactions use product chips only: seen, agree, blocked, helpful
+creating workflow notes must not increment commentsCount
+mark_ready_for_review(note) stores the note as a work_note as well as the status event
+MCP mark_blocked records a blocker note; it does not create a blocked status yet
+```
+
+Deferred comment maturity:
+
+```txt
+mentions: add report_comment_mentions table and teammate profile dialog
+notifications: mention notification, reply notification, admin/developer handoff notifications
+```
+
+Migration:
+
+```txt
+drizzle/0003_typical_pyro.sql
+drizzle/0004_split_report_notes.sql
+drizzle/0005_lazy_gertrude_yorkes.sql
+```
+
 ## API Contract For The First Flow
 
 ### Signup

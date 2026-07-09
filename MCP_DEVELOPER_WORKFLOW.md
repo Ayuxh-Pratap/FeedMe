@@ -130,6 +130,7 @@ Tabs:
 ```txt
 Evidence
 Activity / Notes
+Comments
 Implementation brief
 ```
 
@@ -142,6 +143,9 @@ Evidence
 Activity / Notes
   visible to everyone with report detail access
 
+Comments
+  visible to everyone with report detail access
+
 Implementation brief
   visible only to owners/admins
 ```
@@ -150,7 +154,8 @@ Behavior:
 
 ```txt
 Evidence shows screenshots, reporter feedback, selected element, metadata, and developer prompt
-Activity / Notes owns comments and work notes, not duplicate report metadata
+Activity / Notes owns status events and workflow notes, not discussion comments or duplicate report metadata
+Comments owns the threaded workspace discussion around the report
 Implementation brief contains the editable owner/admin handoff fields
 ```
 
@@ -189,34 +194,59 @@ type ReportWorkNote = {
     name: string
     email: string
   }
-  kind: "work_note" | "blocker" | "clarification"
+  kind: "work_note" | "blocker" | "clarification" | "review_note"
   body: string
   createdAt: string
 }
 ```
 
-Recommended storage:
+Implemented storage:
 
 ```txt
-use report_comments as the base activity table, but add a kind field:
-comment | work_note | blocker | clarification
-```
+use report_notes for workflow activity:
+work_note | blocker | clarification | review_note
 
-If we do not want to migrate comments immediately, add a small
-`report_work_notes` table first and merge it into a unified activity stream
-later. The important product behavior is append-only notes visible in the
-dashboard and MCP.
+use report_comments for threaded discussion:
+body, parentCommentId, author, createdAt, editedAt, deletedAt, replyCount
+
+use report_comment_reactions for clean product reactions:
+seen | agree | blocked | helpful
+```
 
 Rules:
 
 ```txt
 assigned developer/designer can add work_note and blocker notes
 owners/admins can add clarification and review notes
-notes appear in report detail activity
+all commenting roles can add threaded comments in the Comments tab
+comments can be replied to at any depth
+report detail loads top-level comments first; replies are lazy-loaded per parent
+reply UI uses connector lines instead of nested cards
+authors can edit their own non-deleted comments
+authors, owners, and admins can soft-delete comments
+deleted parent comments with replies remain as a quiet deleted placeholder
+reaction UI uses restrained product chips, not emoji-heavy reactions
+notes appear in report detail Activity / Notes
 right rail can show the latest note count/preview later
 MCP get_report includes recent notes
 MCP add_work_note creates a work_note
 MCP mark_ready_for_review accepts a final note
+MCP mark_blocked creates a blocker note without inventing a blocked status yet
+```
+
+Comment maturity backlog:
+
+```txt
+mentions
+  add report_comment_mentions for durable @member references
+  clicking a mention opens a teammate profile dialog
+  later powers mention notifications
+
+notifications
+  notify mentioned teammates
+  notify comment authors when someone replies
+  notify assigned developers/designers when owner/admin adds clarification
+  notify owners/admins when assigned member replies or adds blocker
 ```
 
 ## Dashboard Context Menu
@@ -352,6 +382,8 @@ list_my_reports(status?, limit?)
 get_report(reportId)
 start_work(reportId)
 mark_ready_for_review(reportId, note?)
+add_work_note(reportId, note)
+mark_blocked(reportId, reason)
 ```
 
 Next tools:
@@ -359,8 +391,6 @@ Next tools:
 ```txt
 get_next_report()
 get_report_context_pack(reportId)
-add_work_note(reportId, note)
-mark_blocked(reportId, reason)
 ask_for_clarification(reportId, question)
 ```
 
@@ -498,11 +528,14 @@ include brief in MCP get_report
 Slice C: Work notes.
 
 ```txt
-add note kind support
+add report_notes table for workflow notes
+keep report_comments as threaded discussion
 add create note API
-add dashboard note composer for assignees
+add dashboard note action/dialog for assignees and admins
+add Comments tab with comment/reply composer
 add MCP add_work_note and mark_blocked
 include recent notes in report detail and MCP context pack
+status: implemented
 ```
 
 Slice D: Context menu.

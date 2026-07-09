@@ -64,6 +64,7 @@ report counts
 my work
 team members
 workspace domains
+report activity notes
 invites
 MCP tokens
 assignment mutations
@@ -332,18 +333,58 @@ Report detail tab rule:
 The full report detail page owns three tabs:
 Evidence
 Activity / Notes
+Comments
 Implementation brief
 
-Evidence and Activity / Notes are available to everyone with report detail
-access. Implementation brief is owner/admin only and is read from the report
-detail contract. Do not put implementation brief data into lightweight report
-list summaries.
+Evidence, Activity / Notes, and Comments are available to everyone with report
+detail access. Implementation brief is owner/admin only and is read from the
+report detail contract. Do not put implementation brief data into lightweight
+report list summaries.
 
 Changing detail tabs is instant local UI state that replaces the URL search
-param (`?tab=activity` or `?tab=brief`) through the native history helper. Do
-not use `router.replace` for these tab changes because it can trigger an
-unnecessary server round-trip. The Evidence tab is the default and does not
-need a query param.
+param (`?tab=activity`, `?tab=comments`, or `?tab=brief`) through the native
+history helper. Do not use `router.replace` for these tab changes because it
+can trigger an unnecessary server round-trip. The Evidence tab is the default
+and does not need a query param.
+```
+
+Activity / Notes rule:
+
+```txt
+Activity belongs to the report detail contract. List summaries keep only
+commentsCount, while detail responses may include recent workflow-note and
+status-event items.
+
+Creating a note is optimistic:
+-> prepend the note to the detail activity stream
+-> replace with the server response when it returns
+-> roll back on failure
+
+Comments rule:
+
+Real discussion comments belong to the Comments tab, not Activity / Notes.
+Creating a comment is optimistic:
+-> append the comment or reply to the detail comments tree
+-> increment commentsCount across matching cached report copies
+-> replace the optimistic comment node with the server comment when it returns
+-> roll back on failure
+
+Comment pagination:
+-> report detail carries only the first root-comment page plus commentsPageInfo
+-> GET /comments without parentCommentId loads another root-comment page only
+-> GET /comments with parentCommentId loads that comment's direct replies only
+-> each comment carries replyCount so the UI can show "View replies" without preloading them
+-> load-more appends comments into cached report detail without refetching the whole report
+-> reply pagination appends direct replies under the selected parent comment
+-> expand/collapse state is local UI state keyed by comment id
+-> report detail owns expand/collapse state so switching tabs does not reopen hidden reply threads
+-> report detail focus refetch must structurally merge with existing cache so loaded reply branches stay visible
+-> reply inputs clear as soon as the optimistic comment enters the cache, then restore only if the mutation fails
+-> optimistic comments must not accept replies until the server returns a real comment id
+-> edit, soft delete, and reaction toggles patch the exact cached comment node optimistically
+-> deleted comments with visible replies render as "Comment deleted"; deleted leaf comments disappear
+-> reactions stay product-focused: Seen, Agree, Blocked, Helpful
+-> keep commentsCount as the total discussion count, not the currently loaded count
 ```
 
 No empty click should feel dead. If a refetch is happening, show a thin progress signal or subtle refreshing indicator without replacing already-visible content.
@@ -561,6 +602,7 @@ implemented query-backed resources:
 -> workspace domains
 -> invite creation/list cache
 -> MCP tokens
+-> report activity notes through report detail
 
 implemented reliability/freshness behavior:
 -> reports/my-work visible lists no longer self-poll and reshape while reading
