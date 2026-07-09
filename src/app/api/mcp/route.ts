@@ -11,12 +11,13 @@ import {
   NotFoundError,
 } from "@/server/http/errors"
 import {
+  createWorkspaceReportNote,
   getWorkspaceReport,
   listWorkspaceReports,
   updateWorkspaceReportStatus,
 } from "@/server/reports/service"
 import { isAllowedCloudinaryImageUrl } from "@/server/uploads/cloudinary"
-import type { WorkspaceReport } from "@/lib/reports"
+import type { WorkspaceReport, WorkspaceReportNoteKind } from "@/lib/reports"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -200,6 +201,57 @@ const baseHandler = createMcpHandler(
         )
       }
     )
+
+    server.registerTool(
+      "add_work_note",
+      {
+        title: "Add a work note",
+        description:
+          "Add a developer/designer work note to a report assigned to you. Use this to record what you found, changed, or want reviewers to know.",
+        inputSchema: {
+          reportId: z.string().uuid().describe("The report id you are working on."),
+          note: z.string().trim().min(1).max(5000).describe("The work note body."),
+        },
+      },
+      async ({ reportId, note }, extra) => {
+        const context = getContext(extra)
+        return runCreateNote(
+          context,
+          reportId,
+          "work_note",
+          note,
+          "Work note added."
+        )
+      }
+    )
+
+    server.registerTool(
+      "mark_blocked",
+      {
+        title: "Mark a report blocked",
+        description:
+          "Add a blocker note to a report assigned to you. FeedMe does not add a blocked status yet, so this records the blocker in the activity stream.",
+        inputSchema: {
+          reportId: z.string().uuid().describe("The blocked report id."),
+          reason: z
+            .string()
+            .trim()
+            .min(1)
+            .max(5000)
+            .describe("What is blocking progress."),
+        },
+      },
+      async ({ reportId, reason }, extra) => {
+        const context = getContext(extra)
+        return runCreateNote(
+          context,
+          reportId,
+          "blocker",
+          reason,
+          "Blocker note added."
+        )
+      }
+    )
   },
   { serverInfo: { name: "feedme", version: "0.1.0" } },
   { basePath: "/api", disableSse: true }
@@ -238,6 +290,45 @@ async function runStatusUpdate(
             error instanceof AppError
               ? error.message
               : `Could not update report ${reportId}.`,
+        },
+      ],
+    }
+  }
+}
+
+async function runCreateNote(
+  context: AccessTokenContext,
+  reportId: string,
+  kind: WorkspaceReportNoteKind,
+  body: string,
+  successText: string
+) {
+  try {
+    await createWorkspaceReportNote(
+      context.userId,
+      context.workspaceSlug,
+      reportId,
+      { kind, body }
+    )
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `${successText} The report activity has been updated.`,
+        },
+      ],
+    }
+  } catch (error) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text:
+            error instanceof AppError
+              ? error.message
+              : `Could not add a note to report ${reportId}.`,
         },
       ],
     }
@@ -308,6 +399,8 @@ function formatReportHandoff(report: WorkspaceReport): string {
     "",
     formatImplementationBrief(report),
     "",
+    formatReportActivity(report),
+    "",
     "## Developer prompt",
     report.developerPrompt,
   ]
@@ -349,6 +442,28 @@ function formatImplementationBrief(report: WorkspaceReport) {
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n\n")
+}
+
+function formatReportActivity(report: WorkspaceReport) {
+  const activity = report.activity ?? []
+  const notes = activity
+    .filter((item) => item.type === "note")
+    .slice(0, 8)
+
+  if (notes.length === 0) {
+    return null
+  }
+
+  return [
+    "## Recent notes",
+    notes
+      .map((note) => {
+        const author = note.author?.name ?? "Unknown teammate"
+        const kind = note.kind.replace(/_/g, " ")
+        return `- [${kind}] ${author}: ${note.body}`
+      })
+      .join("\n"),
+  ].join("\n")
 }
 
 function formatListSection(label: string, values: string[]) {
