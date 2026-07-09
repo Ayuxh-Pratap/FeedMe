@@ -11,9 +11,10 @@ import {
 } from "@tanstack/react-query"
 import { useCallback, useEffect } from "react"
 
-import { deleteJson, getJson, patchJson, postJson, putJson } from "@/lib/api-client"
+import { deleteJson, getJson, patchJson, postJson } from "@/lib/api-client"
 import {
   reportKeys,
+  workspaceKeys,
   type ReportCountFilters,
   type ReportListFilters,
 } from "@/lib/query-keys"
@@ -21,7 +22,6 @@ import type {
   WorkspaceReport,
   WorkspaceReportActivityItem,
   WorkspaceReportComment,
-  WorkspaceReportCommentReactionKind,
   WorkspaceReportCommentMutationResponse,
   WorkspaceReportCommentsPageInfo,
   WorkspaceReportCommentsResponse,
@@ -71,6 +71,7 @@ type CreateReportNoteVariables = {
 
 type CreateReportCommentVariables = {
   body: string
+  mentionedUserIds?: string[]
   onOptimisticCommit?: () => void
   optimisticComment: WorkspaceReportComment
   parentCommentId?: string | null
@@ -80,6 +81,7 @@ type CreateReportCommentVariables = {
 type UpdateReportCommentVariables = {
   body: string
   comment: WorkspaceReportComment
+  mentionedUserIds?: string[]
   optimisticComment: WorkspaceReportComment
   report: WorkspaceReport
 }
@@ -90,18 +92,12 @@ type DeleteReportCommentVariables = {
   report: WorkspaceReport
 }
 
-type UpdateReportCommentReactionVariables = {
-  comment: WorkspaceReportComment
-  enabled: boolean
-  reaction: WorkspaceReportCommentReactionKind
-  report: WorkspaceReport
-}
-
 type LoadReportCommentsVariables = {
   cursor?: string | null
   limit?: number
   parentCommentId?: string | null
   report: WorkspaceReport
+  targetCommentId?: string | null
 }
 
 type WorkspaceReportCommentDeleteResponse =
@@ -155,12 +151,14 @@ function getReportCommentsUrl({
   limit = 10,
   parentCommentId,
   reportId,
+  targetCommentId,
   workspaceSlug,
 }: {
   cursor?: string | null
   limit?: number
   parentCommentId?: string | null
   reportId: string
+  targetCommentId?: string | null
   workspaceSlug: string
 }) {
   const searchParams = new URLSearchParams({
@@ -173,6 +171,10 @@ function getReportCommentsUrl({
 
   if (parentCommentId) {
     searchParams.set("parentCommentId", parentCommentId)
+  }
+
+  if (targetCommentId) {
+    searchParams.set("targetCommentId", targetCommentId)
   }
 
   return `${getReportDetailUrl(workspaceSlug, reportId)}/comments?${searchParams}`
@@ -243,16 +245,25 @@ export async function fetchReportComments({
   limit,
   parentCommentId,
   reportId,
+  targetCommentId,
   workspaceSlug,
 }: {
   cursor?: string | null
   limit?: number
   parentCommentId?: string | null
   reportId: string
+  targetCommentId?: string | null
   workspaceSlug: string
 }) {
   return getJson<WorkspaceReportCommentsResponse>(
-    getReportCommentsUrl({ cursor, limit, parentCommentId, reportId, workspaceSlug })
+    getReportCommentsUrl({
+      cursor,
+      limit,
+      parentCommentId,
+      reportId,
+      targetCommentId,
+      workspaceSlug,
+    })
   )
 }
 
@@ -317,17 +328,126 @@ function patchReportList(
   reports: WorkspaceReport[],
   nextReport: WorkspaceReport
 ) {
-  return reports.map((report) =>
-    report.id === nextReport.id ? mergeReportCacheEntry(report, nextReport) : report
+  let didUpdate = false
+  const nextReports = reports.map((report) => {
+    if (report.id !== nextReport.id) {
+      return report
+    }
+
+    didUpdate = true
+    return mergeReportCacheEntry(report, nextReport)
+  })
+
+  return didUpdate ? nextReports : reports
+}
+
+function isOptimisticReportComment(comment: WorkspaceReportComment) {
+  return comment.id.startsWith("optimistic-")
+}
+
+function normalizeCommentIdentityBody(body: string) {
+  return body.trim()
+}
+
+function isMatchingOptimisticComment(
+  currentComment: WorkspaceReportComment,
+  nextComment: WorkspaceReportComment
+) {
+  if (
+    !isOptimisticReportComment(currentComment) ||
+    isOptimisticReportComment(nextComment)
+  ) {
+    return false
+  }
+
+  const currentAuthorId = currentComment.author?.id
+  const nextAuthorId = nextComment.author?.id
+  const currentAuthorEmail = currentComment.author?.email
+  const nextAuthorEmail = nextComment.author?.email
+  const hasSameAuthor =
+    currentAuthorId && nextAuthorId
+      ? currentAuthorId === nextAuthorId
+      : currentAuthorEmail && nextAuthorEmail
+        ? currentAuthorEmail === nextAuthorEmail
+        : false
+
+  return (
+    hasSameAuthor &&
+    (currentComment.parentCommentId ?? null) ===
+      (nextComment.parentCommentId ?? null) &&
+    normalizeCommentIdentityBody(currentComment.body) ===
+      normalizeCommentIdentityBody(nextComment.body)
   )
+}
+
+function removeFirstMatchingOptimisticComment(
+  comments: WorkspaceReportComment[],
+  nextComment: WorkspaceReportComment
+): {
+  comments: WorkspaceReportComment[]
+  removedParentCommentId: string | null
+} {
+  if (isOptimisticReportComment(nextComment)) {
+    return {
+      comments,
+      removedParentCommentId: null,
+    }
+  }
+
+  for (let index = 0; index < comments.length; index += 1) {
+    const comment = comments[index]
+
+    if (isMatchingOptimisticComment(comment, nextComment)) {
+      return {
+        comments: [
+          ...comments.slice(0, index),
+          ...comments.slice(index + 1),
+        ],
+        removedParentCommentId: comment.parentCommentId ?? null,
+      }
+    }
+
+    const nestedResult = removeFirstMatchingOptimisticComment(
+      comment.replies,
+      nextComment
+    )
+
+    if (nestedResult.removedParentCommentId !== null) {
+      const removedDirectReply = nestedResult.removedParentCommentId === comment.id
+      const nextComments = [...comments]
+
+      nextComments[index] = {
+        ...comment,
+        replies: nestedResult.comments,
+        replyCount: removedDirectReply
+          ? Math.max(nestedResult.comments.length, comment.replyCount - 1)
+          : comment.replyCount,
+      }
+
+      return {
+        comments: nextComments,
+        removedParentCommentId: nestedResult.removedParentCommentId,
+      }
+    }
+  }
+
+  return {
+    comments,
+    removedParentCommentId: null,
+  }
 }
 
 function addCommentToTree(
   comments: WorkspaceReportComment[],
   nextComment: WorkspaceReportComment
 ): WorkspaceReportComment[] {
-  if (comments.some((comment) => comment.id === nextComment.id)) {
-    return comments.map((comment) =>
+  const normalizedComments = removeFirstMatchingOptimisticComment(
+    comments,
+    nextComment
+  ).comments
+
+  if (normalizedComments.some((comment) => comment.id === nextComment.id)) {
+    return normalizedComments.map((comment) =>
       comment.id === nextComment.id
         ? mergeReportComment(comment, nextComment)
         : comment
@@ -335,10 +455,10 @@ function addCommentToTree(
   }
 
   if (!nextComment.parentCommentId) {
-    return [...comments, nextComment]
+    return [...normalizedComments, nextComment]
   }
 
-  return comments.map((comment) => {
+  return normalizedComments.map((comment) => {
     if (comment.id === nextComment.parentCommentId) {
       const hasReply = comment.replies.some((reply) => reply.id === nextComment.id)
       const replies = hasReply
@@ -371,24 +491,93 @@ function mergeCommentTrees(
   )
 }
 
+// Comments the client has deleted, mapped to the deleted placeholder to render
+// (or null when the comment should be removed entirely). A stale in-flight detail
+// fetch (e.g. the refetchOnMount fetch on a fresh landing) can carry a comment
+// captured before its deletion; because comment tree merges are additive, that
+// would resurrect it. Applying these deletions to every incoming detail tree makes
+// the delete survive any such fetch, regardless of timing or contents.
+const pendingCommentDeletions = new Map<string, WorkspaceReportComment | null>()
+
+export function markCommentDeleted(
+  commentId: string,
+  placeholder: WorkspaceReportComment | null
+) {
+  pendingCommentDeletions.set(commentId, placeholder)
+}
+
+export function unmarkCommentDeleted(commentId: string) {
+  pendingCommentDeletions.delete(commentId)
+}
+
+export function applyPendingCommentDeletions(
+  comments: WorkspaceReportComment[]
+): WorkspaceReportComment[] {
+  if (pendingCommentDeletions.size === 0) {
+    return comments
+  }
+
+  const result: WorkspaceReportComment[] = []
+
+  for (const comment of comments) {
+    const replies = applyPendingCommentDeletions(comment.replies)
+
+    if (pendingCommentDeletions.has(comment.id)) {
+      const placeholder = pendingCommentDeletions.get(comment.id) ?? null
+
+      // null -> the comment was removed (no replies); drop it.
+      // placeholder -> keep it, but force the deleted state so a stale fetch that
+      // still carries the normal version cannot un-delete it. Keep current replies.
+      if (placeholder) {
+        result.push({ ...placeholder, replies })
+      }
+
+      continue
+    }
+
+    if (replies === comment.replies) {
+      result.push(comment)
+      continue
+    }
+
+    result.push({
+      ...comment,
+      replies,
+      replyCount: Math.max(0, comment.replyCount - (comment.replies.length - replies.length)),
+    })
+  }
+
+  return result
+}
+
 function mergeCommentListById(
   currentComments: WorkspaceReportComment[] = [],
   nextComments: WorkspaceReportComment[] = []
 ) {
-  const commentsById = new Map(
-    currentComments.map((comment) => [comment.id, comment])
-  )
+  let mergedComments = currentComments
 
   for (const comment of nextComments) {
-    commentsById.set(
-      comment.id,
-      commentsById.has(comment.id)
-        ? mergeReportComment(commentsById.get(comment.id) as WorkspaceReportComment, comment)
-        : comment
+    const normalizedComments = removeFirstMatchingOptimisticComment(
+      mergedComments,
+      comment
+    ).comments
+    const commentIndex = normalizedComments.findIndex(
+      (currentComment) => currentComment.id === comment.id
+    )
+
+    if (commentIndex === -1) {
+      mergedComments = [...normalizedComments, comment]
+      continue
+    }
+
+    mergedComments = normalizedComments.map((currentComment, index) =>
+      index === commentIndex
+        ? mergeReportComment(currentComment, comment)
+        : currentComment
     )
   }
 
-  return [...commentsById.values()]
+  return mergedComments
 }
 
 function mergeReportComment(
@@ -483,89 +672,14 @@ function updateCommentInTree(
   })
 }
 
-function sortCommentReactions(
-  reactions: WorkspaceReportComment["reactions"]
-) {
-  const order: WorkspaceReportCommentReactionKind[] = [
-    "seen",
-    "agree",
-    "blocked",
-    "helpful",
-  ]
-
-  return [...reactions].sort(
-    (first, second) =>
-      order.indexOf(first.reaction) - order.indexOf(second.reaction)
-  )
-}
-
-function setCommentReaction(
-  comment: WorkspaceReportComment,
-  reaction: WorkspaceReportCommentReactionKind,
-  enabled: boolean
-): WorkspaceReportComment {
-  const existingReaction = comment.reactions.find(
-    (item) => item.reaction === reaction
-  )
-  const nextReactions = comment.reactions
-    .map((item) => {
-      if (item.reaction !== reaction) {
-        return item
-      }
-
-      if (enabled) {
-        return item.reactedByCurrentUser
-          ? item
-          : {
-              ...item,
-              count: item.count + 1,
-              reactedByCurrentUser: true,
-            }
-      }
-
-      return {
-        ...item,
-        count: item.reactedByCurrentUser ? item.count - 1 : item.count,
-        reactedByCurrentUser: false,
-      }
-    })
-    .filter((item) => item.count > 0)
-
-  if (enabled && !existingReaction) {
-    nextReactions.push({
-      reaction,
-      count: 1,
-      reactedByCurrentUser: true,
-    })
-  }
-
-  return {
-    ...comment,
-    reactions: sortCommentReactions(nextReactions),
-  }
-}
-
-function setCommentReactionInTree(
+function applyDeletedCommentToTree(
   comments: WorkspaceReportComment[],
-  commentId: string,
-  reaction: WorkspaceReportCommentReactionKind,
-  enabled: boolean
-): WorkspaceReportComment[] {
-  return comments.map((comment) => {
-    if (comment.id === commentId) {
-      return setCommentReaction(comment, reaction, enabled)
-    }
-
-    return {
-      ...comment,
-      replies: setCommentReactionInTree(
-        comment.replies,
-        commentId,
-        reaction,
-        enabled
-      ),
-    }
-  })
+  deletedComment: WorkspaceReportComment,
+  removed: boolean
+) {
+  return removed
+    ? removeCommentFromTree(comments, deletedComment.id)
+    : updateCommentInTree(comments, deletedComment)
 }
 
 function getScreenshotEvidenceScore(report: WorkspaceReport) {
@@ -642,25 +756,49 @@ function patchReportCollectionCacheData<T>(
   }
 
   if ("reports" in data && Array.isArray(data.reports)) {
+    const nextReports = patchReportList(data.reports, nextReport)
+
+    if (nextReports === data.reports) {
+      return data
+    }
+
     return {
       ...data,
-      reports: patchReportList(data.reports, nextReport),
+      reports: nextReports,
     } as T
   }
 
   if ("pages" in data && Array.isArray(data.pages)) {
+    let didUpdate = false
+    const nextPages = data.pages.map((page) => {
+      if (!page || typeof page !== "object" || !("reports" in page)) {
+        return page
+      }
+
+      if (!Array.isArray(page.reports)) {
+        return page
+      }
+
+      const nextReports = patchReportList(page.reports, nextReport)
+
+      if (nextReports === page.reports) {
+        return page
+      }
+
+      didUpdate = true
+      return {
+        ...page,
+        reports: nextReports,
+      }
+    })
+
+    if (!didUpdate) {
+      return data
+    }
+
     return {
       ...data,
-      pages: data.pages.map((page) =>
-        page && typeof page === "object" && "reports" in page
-          ? {
-              ...page,
-              reports: Array.isArray(page.reports)
-                ? patchReportList(page.reports, nextReport)
-                : page.reports,
-            }
-          : page
-      ),
+      pages: nextPages,
     } as T
   }
 
@@ -682,6 +820,17 @@ export function syncReportAcrossCaches(
   queryClient.setQueriesData(
     { queryKey: reportKeys.all(workspaceSlug) },
     (currentData) => patchReportCacheData(currentData, report)
+  )
+}
+
+export function syncReportCollectionCaches(
+  queryClient: QueryClient,
+  workspaceSlug: string,
+  report: WorkspaceReport
+) {
+  queryClient.setQueriesData(
+    { queryKey: reportKeys.all(workspaceSlug) },
+    (currentData) => patchReportCollectionCacheData(currentData, report)
   )
 }
 
@@ -740,27 +889,53 @@ function patchReportCommentsCacheData<T>(
 }
 
 function patchReportCommentsAcrossCaches({
+  baseReport,
   pageInfo,
   patcher,
   queryClient,
   reportId,
   workspaceSlug,
 }: {
+  baseReport?: WorkspaceReport
   pageInfo?: WorkspaceReportCommentsPageInfo
   patcher: (comments: WorkspaceReportComment[]) => WorkspaceReportComment[]
   queryClient: QueryClient
   reportId: string
   workspaceSlug: string
 }) {
+  // Every cache write runs through here, so this is the single choke point that
+  // enforces client-side deletions: whatever a patcher produces (including merged
+  // pagination pages that predate a delete), a registered-deleted comment can never
+  // survive into a rendered tree. The fetch path enforces the same in structuralSharing.
   queryClient.setQueriesData(
     { queryKey: reportKeys.all(workspaceSlug) },
     (currentData) =>
       patchReportCommentsCacheData(currentData, reportId, (report) => ({
         ...report,
-        comments: patcher(report.comments ?? []),
+        comments: applyPendingCommentDeletions(patcher(report.comments ?? [])),
         commentsPageInfo: pageInfo ?? report.commentsPageInfo,
       }))
   )
+
+  if (baseReport?.id === reportId) {
+    queryClient.setQueryData<WorkspaceReportDetailResponse>(
+      reportKeys.detail(workspaceSlug, reportId),
+      (currentData) => {
+        const currentReport =
+          isReportDetailResponse(currentData) && currentData.report.id === reportId
+            ? currentData.report
+            : baseReport
+
+        return {
+          report: {
+            ...currentReport,
+            comments: applyPendingCommentDeletions(patcher(currentReport.comments ?? [])),
+            commentsPageInfo: pageInfo ?? currentReport.commentsPageInfo,
+          },
+        }
+      }
+    )
+  }
 }
 
 function setReportCommentsCountAcrossCaches({
@@ -782,6 +957,15 @@ function setReportCommentsCountAcrossCaches({
         commentsCount,
       }))
   )
+}
+
+function invalidateWorkspaceNotifications(
+  queryClient: QueryClient,
+  workspaceSlug: string
+) {
+  void queryClient.invalidateQueries({
+    queryKey: workspaceKeys.notifications(workspaceSlug),
+  })
 }
 
 function restoreReportSnapshots(
@@ -888,16 +1072,24 @@ export function useReportDetailQuery({
     refetchOnMount: "always",
     staleTime: 45 * 1000,
     structuralSharing: (oldData, newData) => {
-      if (
-        !isReportDetailResponse(oldData) ||
-        !isReportDetailResponse(newData)
-      ) {
+      if (!isReportDetailResponse(newData)) {
         return newData
       }
 
+      // Merge to preserve loaded replies/pages, then apply client-side deletions so
+      // a stale in-flight fetch can never resurrect (or un-delete) a removed comment.
+      const report = isReportDetailResponse(oldData)
+        ? mergeReportCacheEntry(oldData.report, newData.report)
+        : newData.report
+
       return {
         ...newData,
-        report: mergeReportCacheEntry(oldData.report, newData.report),
+        report: {
+          ...report,
+          comments: report.comments
+            ? applyPendingCommentDeletions(report.comments)
+            : report.comments,
+        },
       }
     },
   })
@@ -907,7 +1099,7 @@ export function useReportDetailQuery({
       return
     }
 
-    syncReportAcrossCaches(queryClient, workspaceSlug, query.data.report)
+    syncReportCollectionCaches(queryClient, workspaceSlug, query.data.report)
   }, [query.data, query.isPlaceholderData, queryClient, workspaceSlug])
 
   return query
@@ -931,7 +1123,7 @@ export function usePrefetchReportDetail(workspaceSlug: string) {
             queryClient.getQueryData<WorkspaceReportDetailResponse>(queryKey)
 
           if (detail?.report) {
-            syncReportAcrossCaches(queryClient, workspaceSlug, detail.report)
+            syncReportCollectionCaches(queryClient, workspaceSlug, detail.report)
           }
         })
         .catch(() => {
@@ -982,6 +1174,7 @@ export function useAssignReportMutation(workspaceSlug: string) {
       void queryClient.invalidateQueries({
         queryKey: reportKeys.countsRoot(workspaceSlug),
       })
+      invalidateWorkspaceNotifications(queryClient, workspaceSlug)
     },
     onSuccess: (result) => {
       syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
@@ -1023,6 +1216,7 @@ export function useUpdateReportStatusMutation(workspaceSlug: string) {
       void queryClient.invalidateQueries({
         queryKey: reportKeys.countsRoot(workspaceSlug),
       })
+      invalidateWorkspaceNotifications(queryClient, workspaceSlug)
     },
     onSuccess: (result) => {
       syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
@@ -1096,6 +1290,9 @@ export function useCreateReportNoteMutation(workspaceSlug: string) {
 
       return { snapshots }
     },
+    onSettled: () => {
+      invalidateWorkspaceNotifications(queryClient, workspaceSlug)
+    },
     onSuccess: (result) => {
       syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
     },
@@ -1111,10 +1308,14 @@ export function useCreateReportCommentMutation(workspaceSlug: string) {
     CreateReportCommentVariables,
     ReportMutationContext
   >({
-    mutationFn: ({ body, parentCommentId, report }) =>
+    mutationFn: ({ body, mentionedUserIds, parentCommentId, report }) =>
       postJson<WorkspaceReportCommentMutationResponse>(
         `${getReportMutationBaseUrl(workspaceSlug, report.id)}/comments`,
-        { body, parentCommentId: parentCommentId ?? null }
+        {
+          body,
+          mentionedUserIds: mentionedUserIds ?? [],
+          parentCommentId: parentCommentId ?? null,
+        }
       ),
     onError: (_error, _variables, context) => {
       restoreReportSnapshots(queryClient, context?.snapshots)
@@ -1123,13 +1324,21 @@ export function useCreateReportCommentMutation(workspaceSlug: string) {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
 
       const snapshots = getReportSnapshots(queryClient, workspaceSlug)
-      const optimisticReport: WorkspaceReport = {
-        ...report,
-        comments: addCommentToTree(report.comments ?? [], optimisticComment),
-        commentsCount: report.commentsCount + 1,
-      }
+      const optimisticCommentsCount = report.commentsCount + 1
 
-      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
+      patchReportCommentsAcrossCaches({
+        baseReport: report,
+        queryClient,
+        reportId: report.id,
+        workspaceSlug,
+        patcher: (comments) => addCommentToTree(comments, optimisticComment),
+      })
+      setReportCommentsCountAcrossCaches({
+        commentsCount: optimisticCommentsCount,
+        queryClient,
+        reportId: report.id,
+        workspaceSlug,
+      })
       onOptimisticCommit?.()
 
       return { snapshots }
@@ -1138,14 +1347,11 @@ export function useCreateReportCommentMutation(workspaceSlug: string) {
       void queryClient.invalidateQueries({
         queryKey: reportKeys.countsRoot(workspaceSlug),
       })
+      invalidateWorkspaceNotifications(queryClient, workspaceSlug)
     },
     onSuccess: (result, variables) => {
-      const commentsCount = Math.max(
-        result.report.commentsCount,
-        variables.report.commentsCount + 1
-      )
-
       patchReportCommentsAcrossCaches({
+        baseReport: variables.report,
         queryClient,
         reportId: variables.report.id,
         workspaceSlug,
@@ -1157,7 +1363,7 @@ export function useCreateReportCommentMutation(workspaceSlug: string) {
           ),
       })
       setReportCommentsCountAcrossCaches({
-        commentsCount,
+        commentsCount: result.report.commentsCount,
         queryClient,
         reportId: variables.report.id,
         workspaceSlug,
@@ -1175,14 +1381,14 @@ export function useUpdateReportCommentMutation(workspaceSlug: string) {
     UpdateReportCommentVariables,
     ReportMutationContext
   >({
-    mutationFn: ({ body, comment, report }) =>
+    mutationFn: ({ body, comment, mentionedUserIds, report }) =>
       patchJson<WorkspaceReportCommentMutationResponse>(
         getReportCommentMutationUrl({
           commentId: comment.id,
           reportId: report.id,
           workspaceSlug,
         }),
-        { body }
+        { body, mentionedUserIds }
       ),
     onError: (_error, _variables, context) => {
       restoreReportSnapshots(queryClient, context?.snapshots)
@@ -1191,18 +1397,23 @@ export function useUpdateReportCommentMutation(workspaceSlug: string) {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
 
       const snapshots = getReportSnapshots(queryClient, workspaceSlug)
-      const optimisticReport: WorkspaceReport = {
-        ...report,
-        comments: updateCommentInTree(report.comments ?? [], optimisticComment),
-      }
 
-      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
+      patchReportCommentsAcrossCaches({
+        baseReport: report,
+        queryClient,
+        reportId: report.id,
+        workspaceSlug,
+        patcher: (comments) => updateCommentInTree(comments, optimisticComment),
+      })
 
       return { snapshots }
     },
-    onSuccess: (result) => {
-      syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
+    onSettled: () => {
+      invalidateWorkspaceNotifications(queryClient, workspaceSlug)
+    },
+    onSuccess: (result, variables) => {
       patchReportCommentsAcrossCaches({
+        baseReport: variables.report,
         queryClient,
         reportId: result.report.id,
         workspaceSlug,
@@ -1229,24 +1440,36 @@ export function useDeleteReportCommentMutation(workspaceSlug: string) {
           workspaceSlug,
         })
       ),
-    onError: (_error, _variables, context) => {
+    onError: (_error, variables, context) => {
+      // The delete failed; allow the comment to reappear.
+      unmarkCommentDeleted(variables.comment.id)
       restoreReportSnapshots(queryClient, context?.snapshots)
     },
     onMutate: async ({ comment, optimisticComment, report }) => {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
 
       const snapshots = getReportSnapshots(queryClient, workspaceSlug)
-      const nextComments =
-        comment.replyCount > 0
-          ? updateCommentInTree(report.comments ?? [], optimisticComment)
-          : removeCommentFromTree(report.comments ?? [], comment.id)
-      const optimisticReport: WorkspaceReport = {
-        ...report,
-        comments: nextComments,
-        commentsCount: Math.max(0, report.commentsCount - 1),
-      }
+      const optimisticRemoved = comment.replyCount === 0
+      const optimisticCommentsCount = Math.max(0, report.commentsCount - 1)
 
-      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
+      // Register the deletion so any stale in-flight fetch that still carries this
+      // comment is reconciled (dropped when removed, forced deleted when it has replies).
+      markCommentDeleted(comment.id, optimisticRemoved ? null : optimisticComment)
+
+      patchReportCommentsAcrossCaches({
+        baseReport: report,
+        queryClient,
+        reportId: report.id,
+        workspaceSlug,
+        patcher: (comments) =>
+          applyDeletedCommentToTree(comments, optimisticComment, optimisticRemoved),
+      })
+      setReportCommentsCountAcrossCaches({
+        commentsCount: optimisticCommentsCount,
+        queryClient,
+        reportId: report.id,
+        workspaceSlug,
+      })
 
       return { snapshots }
     },
@@ -1254,74 +1477,26 @@ export function useDeleteReportCommentMutation(workspaceSlug: string) {
       void queryClient.invalidateQueries({
         queryKey: reportKeys.countsRoot(workspaceSlug),
       })
+      invalidateWorkspaceNotifications(queryClient, workspaceSlug)
     },
-    onSuccess: (result) => {
-      syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
+    onSuccess: (result, variables) => {
+      // Reconcile the registry with the server's authoritative answer: dropped when
+      // fully removed, kept as the server's deleted placeholder when it still has replies.
+      markCommentDeleted(result.comment.id, result.removed ? null : result.comment)
+
       patchReportCommentsAcrossCaches({
+        baseReport: variables.report,
         queryClient,
         reportId: result.report.id,
         workspaceSlug,
         patcher: (comments) =>
-          result.removed
-            ? removeCommentFromTree(comments, result.comment.id)
-            : updateCommentInTree(comments, result.comment),
+          applyDeletedCommentToTree(comments, result.comment, result.removed),
       })
       setReportCommentsCountAcrossCaches({
         commentsCount: result.report.commentsCount,
         queryClient,
         reportId: result.report.id,
         workspaceSlug,
-      })
-    },
-  })
-}
-
-export function useUpdateReportCommentReactionMutation(workspaceSlug: string) {
-  const queryClient = useQueryClient()
-
-  return useMutation<
-    WorkspaceReportCommentMutationResponse,
-    Error,
-    UpdateReportCommentReactionVariables,
-    ReportMutationContext
-  >({
-    mutationFn: ({ comment, enabled, reaction, report }) =>
-      putJson<WorkspaceReportCommentMutationResponse>(
-        `${getReportCommentMutationUrl({
-          commentId: comment.id,
-          reportId: report.id,
-          workspaceSlug,
-        })}/reactions`,
-        { enabled, reaction }
-      ),
-    onError: (_error, _variables, context) => {
-      restoreReportSnapshots(queryClient, context?.snapshots)
-    },
-    onMutate: async ({ enabled, reaction, report, comment }) => {
-      await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
-
-      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
-      const optimisticReport: WorkspaceReport = {
-        ...report,
-        comments: setCommentReactionInTree(
-          report.comments ?? [],
-          comment.id,
-          reaction,
-          enabled
-        ),
-      }
-
-      syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
-
-      return { snapshots }
-    },
-    onSuccess: (result) => {
-      syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
-      patchReportCommentsAcrossCaches({
-        queryClient,
-        reportId: result.report.id,
-        workspaceSlug,
-        patcher: (comments) => updateCommentInTree(comments, result.comment),
       })
     },
   })
@@ -1335,17 +1510,31 @@ export function useLoadReportCommentsMutation(workspaceSlug: string) {
     Error,
     LoadReportCommentsVariables
   >({
-    mutationFn: ({ cursor, limit, parentCommentId, report }) =>
+    mutationFn: ({ cursor, limit, parentCommentId, report, targetCommentId }) =>
       fetchReportComments({
         cursor,
         limit,
         parentCommentId,
         reportId: report.id,
+        targetCommentId,
         workspaceSlug,
       }),
     onSuccess: (result, variables) => {
+      if (variables.targetCommentId) {
+        patchReportCommentsAcrossCaches({
+          baseReport: variables.report,
+          queryClient,
+          reportId: variables.report.id,
+          workspaceSlug,
+          patcher: (comments) => mergeCommentTrees(comments, result.comments),
+        })
+
+        return
+      }
+
       if (variables.parentCommentId) {
         patchReportCommentsAcrossCaches({
+          baseReport: variables.report,
           queryClient,
           reportId: variables.report.id,
           workspaceSlug,
@@ -1362,6 +1551,7 @@ export function useLoadReportCommentsMutation(workspaceSlug: string) {
       }
 
       patchReportCommentsAcrossCaches({
+        baseReport: variables.report,
         pageInfo: result.pageInfo,
         queryClient,
         reportId: variables.report.id,

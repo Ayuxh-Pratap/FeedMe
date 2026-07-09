@@ -93,6 +93,7 @@ export type WorkspaceReportComment = {
   editedAt?: string | null
   isDeleted?: boolean
   author?: WorkspaceReportActivityActor | null
+  mentions: WorkspaceReportActivityActor[]
   reactions: WorkspaceReportCommentReactionSummary[]
   replyCount: number
   replies: WorkspaceReportComment[]
@@ -212,7 +213,7 @@ export type WorkspaceReportCommentsResponse = {
 
 export type WorkspaceReportCommentMutationResponse = {
   comment: WorkspaceReportComment
-  report: WorkspaceReportDetail
+  report: Pick<WorkspaceReportDetail, "id" | "commentsCount">
 }
 
 export const activeReportStatuses = new Set<WorkspaceReportStatus>([

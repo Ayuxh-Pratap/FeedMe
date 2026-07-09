@@ -46,6 +46,8 @@ export const workspaceKeys = {
   domains: (slug: string) => [...workspaceKeys.bySlug(slug), "domains"] as const,
   invites: (slug: string) => [...workspaceKeys.bySlug(slug), "invites"] as const,
   members: (slug: string) => [...workspaceKeys.bySlug(slug), "members"] as const,
+  notifications: (slug: string) =>
+    [...workspaceKeys.bySlug(slug), "notifications"] as const,
   tokens: (slug: string) => [...workspaceKeys.bySlug(slug), "tokens"] as const,
 }
 
