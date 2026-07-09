@@ -211,6 +211,12 @@ body, parentCommentId, author, createdAt, editedAt, deletedAt, replyCount
 
 use report_comment_reactions for clean product reactions:
 seen | agree | blocked | helpful
+
+use report_comment_mentions for durable exact mentions:
+commentId, mentionedUserId, createdByUserId
+
+use notifications for in-app workflow awareness:
+report_assigned | comment_reply | comment_mention | admin_comment_added | clarification_added | blocker_added | ready_for_review | report_resolved
 ```
 
 Rules:
@@ -226,6 +232,11 @@ authors can edit their own non-deleted comments
 authors, owners, and admins can soft-delete comments
 deleted parent comments with replies remain as a quiet deleted placeholder
 reaction UI uses restrained product chips, not emoji-heavy reactions
+mentions are stored as user ids, not inferred from display text
+comment composer autocomplete writes mentionedUserIds into comment mutations
+comment payloads include hydrated mention actors for exact mention rendering
+clicking a rendered mention opens a lightweight teammate profile dialog
+in-app notifications are emitted by server mutation services
 notes appear in report detail Activity / Notes
 right rail can show the latest note count/preview later
 MCP get_report includes recent notes
@@ -237,16 +248,10 @@ MCP mark_blocked creates a blocker note without inventing a blocked status yet
 Comment maturity backlog:
 
 ```txt
-mentions
-  add report_comment_mentions for durable @member references
-  clicking a mention opens a teammate profile dialog
-  later powers mention notifications
-
 notifications
-  notify mentioned teammates
-  notify comment authors when someone replies
-  notify assigned developers/designers when owner/admin adds clarification
-  notify owners/admins when assigned member replies or adds blocker
+  add email/push delivery later
+  add websocket/live delivery later
+  keep in-app notification table as source of truth
 ```
 
 ## Dashboard Context Menu

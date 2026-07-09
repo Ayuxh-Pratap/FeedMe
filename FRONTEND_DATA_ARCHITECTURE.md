@@ -67,6 +67,7 @@ workspace domains
 report activity notes
 invites
 MCP tokens
+notifications
 assignment mutations
 status mutations
 domain mutations
@@ -104,6 +105,7 @@ counts
 comments
 invites
 MCP tokens
+notifications
 ```
 
 These are server state and belong in TanStack Query.
@@ -122,6 +124,8 @@ const workspaceKeys = {
   domains: (slug: string) => [...workspaceKeys.bySlug(slug), "domains"] as const,
   invites: (slug: string) => [...workspaceKeys.bySlug(slug), "invites"] as const,
   tokens: (slug: string) => [...workspaceKeys.bySlug(slug), "tokens"] as const,
+  notifications: (slug: string) =>
+    [...workspaceKeys.bySlug(slug), "notifications"] as const,
 }
 
 const reportKeys = {
@@ -382,9 +386,30 @@ Comment pagination:
 -> reply inputs clear as soon as the optimistic comment enters the cache, then restore only if the mutation fails
 -> optimistic comments must not accept replies until the server returns a real comment id
 -> edit, soft delete, and reaction toggles patch the exact cached comment node optimistically
+-> comment create/update accepts explicit mentionedUserIds from the mention autocomplete
+-> hydrated comment mentions render as exact teammate mentions, not guessed text matches
 -> deleted comments with visible replies render as "Comment deleted"; deleted leaf comments disappear
 -> reactions stay product-focused: Seen, Agree, Blocked, Helpful
 -> keep commentsCount as the total discussion count, not the currently loaded count
+```
+
+Notification rule:
+
+```txt
+Notifications are server state and belong in TanStack Query.
+The topbar bell reads `/api/workspaces/:workspaceSlug/notifications`, polls quietly,
+and marks items read optimistically. Notification creation happens in server
+mutation services, not in UI components.
+
+MVP notification events:
+-> report_assigned
+-> comment_reply
+-> comment_mention
+-> admin_comment_added
+-> clarification_added
+-> blocker_added
+-> ready_for_review
+-> report_resolved
 ```
 
 No empty click should feel dead. If a refetch is happening, show a thin progress signal or subtle refreshing indicator without replacing already-visible content.

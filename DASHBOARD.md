@@ -408,7 +408,10 @@ author can edit their own non-deleted comment
 author, owner, and admin can soft-delete a comment
 deleted comments with replies stay in place as a quiet "Comment deleted" tombstone
 deleted leaf comments disappear from the visible tree
-mentions, profile dialogs, and notification hooks are future comment maturity work
+comment create/update accepts explicit mentionedUserIds for future autocomplete
+mentions are stored in report_comment_mentions and power notifications
+topbar notification bell shows assignment, reply, mention, blocker, clarification, ready-for-review, and resolved events
+profile dialogs are future comment maturity work
 ```
 
 ## My Work Direction

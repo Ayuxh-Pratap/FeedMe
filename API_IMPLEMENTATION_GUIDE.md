@@ -1468,6 +1468,8 @@ POST /api/workspaces/:workspaceSlug/reports/:reportId/comments
 PATCH  /api/workspaces/:workspaceSlug/reports/:reportId/comments/:commentId
 DELETE /api/workspaces/:workspaceSlug/reports/:reportId/comments/:commentId
 PUT    /api/workspaces/:workspaceSlug/reports/:reportId/comments/:commentId/reactions
+GET    /api/workspaces/:workspaceSlug/notifications
+PATCH  /api/workspaces/:workspaceSlug/notifications
 ```
 
 Input:
@@ -1478,13 +1480,25 @@ body: string
 
 comments.body: string
 comments.parentCommentId: uuid | null
+comments.mentionedUserIds: uuid[] optional; exact active workspace members
 comments.editedAt: string | null
 comments.isDeleted: boolean
+comments.mentions: { id, name, email, avatarUrl }[]; hydrated exact mentions
 comments.reactions: { reaction, count, reactedByCurrentUser }[]
 
 comment reactions:
 reaction: seen | agree | blocked | helpful
 enabled: boolean
+
+notifications response:
+notifications: WorkspaceNotification[]
+unreadCount: number
+
+notification event types:
+report_assigned | comment_reply | comment_mention | admin_comment_added | clarification_added | blocker_added | ready_for_review | report_resolved
+
+mark notifications read input:
+notificationIds?: uuid[]; omitted means mark all unread in the workspace as read
 
 GET comments query:
 cursor: opaque optional
@@ -1500,7 +1514,7 @@ pageInfo: { hasNextPage, nextCursor, limit }
 ```
 
 `WorkspaceReportComment` includes `replyCount`, `replies`, optional
-`repliesPageInfo`, `editedAt`, `isDeleted`, and reaction summaries. The initial
+`repliesPageInfo`, `editedAt`, `isDeleted`, exact `mentions`, and reaction summaries. The initial
 report detail response includes top-level comments only. Replies are lazy-loaded
 per parent comment so deep discussion does not make report detail slow. Report
 detail refetch must structurally merge with the existing TanStack Query cache so
@@ -1509,13 +1523,16 @@ already-loaded reply branches do not vanish on browser focus.
 Server files:
 
 ```txt
-src/db/schema.ts                                      report_notes, threaded report_comments, report_comment_reactions
+src/db/schema.ts                                      report_notes, threaded report_comments, report_comment_reactions, report_comment_mentions, notifications
 src/server/reports/validation.ts                      note/comment/reaction input schemas
-src/server/reports/service.ts                         create notes/comments, serialize activity/comments, edit/delete/reactions
+src/server/reports/service.ts                         create notes/comments, serialize activity/comments, edit/delete/reactions, emit notifications
+src/server/notifications/service.ts                   list/mark-read notifications + internal creation helpers
+src/server/notifications/validation.ts                notification API validation
 src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/notes/route.ts
 src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/comments/route.ts
 src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/comments/[commentId]/route.ts
 src/app/api/workspaces/[workspaceSlug]/reports/[reportId]/comments/[commentId]/reactions/route.ts
+src/app/api/workspaces/[workspaceSlug]/notifications/route.ts
 src/app/api/mcp/route.ts                              add_work_note, mark_blocked, recent notes in get_report
 ```
 
@@ -1523,8 +1540,11 @@ Dashboard files:
 
 ```txt
 src/lib/reports.ts                                    WorkspaceReport.activity + WorkspaceReport.comments
+src/lib/notifications.ts                              WorkspaceNotification contracts
 src/lib/report-queries.ts                             optimistic notes/comments/edit/delete/reactions + comment pagination
+src/lib/notification-queries.ts                       notification list + optimistic mark-read
 src/components/feedme/dashboard/report-detail.tsx     Activity timeline + note dialog + Comments tab/thread actions
+src/components/feedme/dashboard/workspace-shell.tsx   topbar notification bell
 ```
 
 Rules:
@@ -1545,6 +1565,13 @@ author can edit their own non-deleted comments
 author, owner, and admin can soft-delete comments
 deleted comments with visible replies render as "Comment deleted"; deleted leaf comments disappear
 comment reactions use product chips only: seen, agree, blocked, helpful
+mentions are stored as explicit user ids in report_comment_mentions
+comment create/update sends explicit mentionedUserIds from the comment composer
+comment mention chips render from hydrated mention metadata, not text parsing alone
+clicking a rendered mention opens a lightweight teammate profile dialog
+notifications are created by server mutation services, not UI code
+notification dedupe keys include the source event/comment/note id and recipient id
+topbar notification mark-read is optimistic
 creating workflow notes must not increment commentsCount
 mark_ready_for_review(note) stores the note as a work_note as well as the status event
 MCP mark_blocked records a blocker note; it does not create a blocked status yet
@@ -1553,8 +1580,8 @@ MCP mark_blocked records a blocker note; it does not create a blocked status yet
 Deferred comment maturity:
 
 ```txt
-mentions: add report_comment_mentions table and teammate profile dialog
-notifications: mention notification, reply notification, admin/developer handoff notifications
+comment rate limiting: add workspace/user scoped write limits after the shared rate-limit layer exists
+notification channels: email/push/websocket delivery after in-app notifications settle
 ```
 
 Migration:
@@ -1563,6 +1590,7 @@ Migration:
 drizzle/0003_typical_pyro.sql
 drizzle/0004_split_report_notes.sql
 drizzle/0005_lazy_gertrude_yorkes.sql
+drizzle/0006_lazy_skaar.sql
 ```
 
 ## API Contract For The First Flow
