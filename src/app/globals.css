@@ -386,24 +386,13 @@
   }
 
   .feedme-comment-text-shimmer {
-    color: transparent;
-    background: linear-gradient(
-      90deg,
-      var(--text-body) 0%,
-      var(--text-body) 36%,
-      color-mix(in srgb, var(--text-primary) 86%, var(--primary-soft) 14%) 50%,
-      var(--text-body) 64%,
-      var(--text-body) 100%
-    );
-    background-size: 220% 100%;
-    background-position: 120% 0;
-    background-clip: text;
-    -webkit-background-clip: text;
+    opacity: 0.62;
+    will-change: opacity;
   }
 
   @media (prefers-reduced-motion: no-preference) {
     .feedme-comment-text-shimmer {
-      animation: feedme-comment-text-shimmer 1.35s var(--motion-out) infinite;
+      animation: feedme-comment-text-shimmer 1.45s ease-in-out infinite;
     }
   }
 }
@@ -446,12 +435,13 @@
 }
 
 @keyframes feedme-comment-text-shimmer {
-  0% {
-    background-position: 120% 0;
+  0%,
+  100% {
+    opacity: 0.58;
   }
 
-  100% {
-    background-position: -120% 0;
+  50% {
+    opacity: 0.95;
   }
 }
 
