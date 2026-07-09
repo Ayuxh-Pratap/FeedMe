@@ -32,6 +32,7 @@ export async function GET(
       cursor: url.searchParams.get("cursor") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
       parentCommentId: url.searchParams.get("parentCommentId") ?? undefined,
+      targetCommentId: url.searchParams.get("targetCommentId") ?? undefined,
     })
     const result = await listWorkspaceReportComments(
       currentSession.user.id,
