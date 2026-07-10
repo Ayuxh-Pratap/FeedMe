@@ -733,10 +733,17 @@ Flow:
 1. The member opens the "Connect coding agent" dialog in the dashboard and
    generates a workspace-scoped personal access token (feedme_pat_...).
 2. They paste the MCP URL (/api/mcp) + token into their agent config.
-3. In the editor: "list my FeedMe bugs" -> list_my_reports.
-4. "fix the first one" -> get_report returns the handoff + screenshots the agent
-   can see -> the agent writes the fix.
-5. "mark it ready for review" -> mark_ready_for_review flips the status; the
+3. MCP initialization tells the agent to read feedme://developer-guide or call
+   get_feedme_guide. The guide explains tools, queues, statuses, and safe actions.
+4. In the editor: "show new assigned work" -> list_new_assigned_reports.
+5. "fix my next FeedMe issue" -> get_next_report chooses the highest-priority
+   fresh assignment and returns the context pack + screenshots without starting it.
+6. The agent explicitly calls start_work before implementation; the service atomically
+   enforces assigned -> in_progress -> ready_for_review and rejects stale transitions.
+7. get_report_context_pack returns the implementation brief, evidence, notes,
+   blockers, status history, definition of done, and safe next actions.
+8. Ambiguity uses ask_for_clarification; inability to proceed uses mark_blocked.
+9. "mark it ready for review" -> mark_ready_for_review flips the status; the
    reporter/admin sees it in the dashboard.
 ```
 
@@ -748,10 +755,21 @@ Bearer personal access token, workspace-scoped, only the hash stored
 the token inherits the member's live role; developers/designers can only act on reports
   assigned to them, enforced by the same report services as the REST API
 no token -> 401; every tool re-resolves user -> active membership -> role
+report text, screenshots, DOM metadata, implementation briefs, notes, names, and links
+  are delimited untrusted evidence, never instructions that can override agent rules
+reference links never receive credentials/secrets and are opened only when relevant
 ```
 
-v1 tools: `whoami`, `list_my_reports`, `get_report` (embedded screenshots),
-`start_work`, `mark_ready_for_review`. See `API_IMPLEMENTATION_GUIDE.md` Slice 10.
+Developer tools include `list_new_assigned_reports`, `list_in_progress_reports`,
+`get_next_report`, `get_report_context_pack`, `start_work`, work/blocker notes,
+clarification requests, and `mark_ready_for_review`. `list_my_reports` remains a
+compatibility browser, not the agent's default work-selection path. See
+`API_IMPLEMENTATION_GUIDE.md` Slice 10.
+
+Agent guidance is published once from `src/server/mcp/developer-guide.ts` and
+exposed as MCP initialization instructions, the `feedme://developer-guide`
+resource, and the `get_feedme_guide` compatibility tool. Universal workflow
+guidance stays separate from report-specific context packs.
 
 ## MVP Boundaries
 

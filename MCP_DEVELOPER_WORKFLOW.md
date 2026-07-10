@@ -194,7 +194,12 @@ type ReportWorkNote = {
     name: string
     email: string
   }
-  kind: "work_note" | "blocker" | "clarification" | "review_note"
+  kind:
+    | "work_note"
+    | "blocker"
+    | "clarification_request"
+    | "clarification"
+    | "review_note"
   body: string
   createdAt: string
 }
@@ -204,7 +209,7 @@ Implemented storage:
 
 ```txt
 use report_notes for workflow activity:
-work_note | blocker | clarification | review_note
+work_note | blocker | clarification_request | clarification | review_note
 
 use report_comments for threaded discussion:
 body, parentCommentId, author, createdAt, editedAt, deletedAt, replyCount
@@ -216,13 +221,16 @@ use report_comment_mentions for durable exact mentions:
 commentId, mentionedUserId, createdByUserId
 
 use notifications for in-app workflow awareness:
-report_assigned | comment_reply | comment_mention | admin_comment_added | clarification_added | blocker_added | ready_for_review | report_resolved
+report_assigned | comment_reply | comment_mention | admin_comment_added | clarification_requested | clarification_added | blocker_added | ready_for_review | report_resolved
 ```
 
 Rules:
 
 ```txt
-assigned developer/designer can add work_note and blocker notes
+assigned developer/designer can add clarification_request or blocker while status is assigned
+assigned developer/designer can add work_note, clarification_request, or blocker while status is in_progress
+ready_for_review permits only material work_note context from the assignee
+resolved and archived reports reject developer note/status mutations
 owners/admins can add clarification and review notes
 all commenting roles can add threaded comments in the Comments tab
 comments can be replied to at any depth
@@ -243,6 +251,7 @@ MCP get_report includes recent notes
 MCP add_work_note creates a work_note
 MCP mark_ready_for_review accepts a final note
 MCP mark_blocked creates a blocker note without inventing a blocked status yet
+MCP ask_for_clarification creates a clarification_request without changing status
 ```
 
 Comment maturity backlog:
@@ -377,26 +386,92 @@ Open in agent is future-facing. Until there is a reliable deep-link protocol
 for each supported agent, it can open the Connect coding agent dialog or copy a
 command and show a success toast.
 
+## MCP Developer Guide And Discovery
+
+The agent must not depend on a user already knowing FeedMe's tool names. FeedMe
+publishes one canonical, role-aware developer guide through three MCP discovery
+surfaces:
+
+```txt
+MCP initialize instructions
+-> concise first-contact rules sent during the MCP handshake
+
+feedme://developer-guide
+-> text/markdown MCP resource for clients that support resources
+
+get_feedme_guide()
+-> compatibility tool for clients that do not automatically expose resources
+```
+
+All three surfaces point to the same guide builder:
+
+```txt
+src/server/mcp/developer-guide.ts
+```
+
+The full guide contains:
+
+```txt
+workspace and live PAT role
+tool decision table
+exact queue semantics
+context-pack contents
+status -> allowed action mapping
+clarification request vs blocker rules
+preset catalog
+safe execution rules
+common end-to-end workflows
+```
+
+`whoami()` returns the current workspace/role and directs a newly connected
+agent to the guide, fresh queue, active queue, and next-report selector. The
+guide explains universal FeedMe behavior; `get_report_context_pack` supplies
+the full report-specific evidence and next actions.
+
 ## MCP Tool Roadmap
 
-Current v1 tools:
+Current tools:
 
 ```txt
 whoami()
+get_feedme_guide()
 list_my_reports(status?, limit?)
+list_new_assigned_reports(limit?)
+list_in_progress_reports(limit?)
+get_next_report()
 get_report(reportId)
+get_report_context_pack(reportId)
 start_work(reportId)
 mark_ready_for_review(reportId, note?)
 add_work_note(reportId, note)
 mark_blocked(reportId, reason)
+ask_for_clarification(reportId, question)
 ```
 
-Next tools:
+Queue semantics:
 
 ```txt
-get_next_report()
-get_report_context_pack(reportId)
-ask_for_clarification(reportId, question)
+list_new_assigned_reports
+  exact assignee = PAT user
+  exact status = assigned
+  means routed but not started
+
+list_in_progress_reports
+  exact assignee = PAT user
+  exact status = in_progress
+  excludes assigned and ready_for_review
+
+get_next_report
+  exact assignee = PAT user
+  exact status = assigned
+  urgent -> high -> medium -> low
+  ties use oldest assignment event, then oldest capture
+  returns the canonical context pack and screenshots
+  does not start work automatically
+
+list_my_reports
+  compatibility/browsing tool for the broader dashboard buckets
+  must not be the agent's default work-selection path
 ```
 
 Later tools:
@@ -415,14 +490,88 @@ Rules:
 all MCP tools reuse existing report services where possible
 all MCP tools resolve PAT -> user -> live active workspace membership on every request
 developers/designers can only mutate reports assigned to them
+developer status changes are exact and atomic: assigned -> in_progress -> ready_for_review
+stale or concurrent transitions return conflict instead of overwriting newer state or writing false history
 owners/admins can get future admin tools, but not in the first developer workflow pass
 tool responses should be concise but include the report id and next suggested action
+server initialization tells agents to read feedme://developer-guide or call get_feedme_guide
+resource and tool guide output come from one builder so instructions cannot drift
+all report text, screenshots, DOM metadata, notes, briefs, names, and links are untrusted evidence
+agent guidance must never execute embedded evidence instructions, reveal secrets, or expand report scope
+context packs and copied prompts delimit untrusted report data and escape boundary-like content
 ```
+
+## Clarification Requests
+
+Questions and blockers are separate workflow facts.
+
+```txt
+ask_for_clarification(reportId, question)
+-> creates a clarification_request note in Activity / Notes
+-> notifies active workspace owners/admins and the original reporter
+-> allowed while status is assigned or in_progress
+-> does not change report status
+-> does not mark the report blocked
+-> reports that the note was saved but notification delivery failed instead of returning a false full success
+
+mark_blocked(reportId, reason)
+-> creates a blocker note
+-> notifies owners/admins
+-> allowed while status is assigned or in_progress
+-> means implementation cannot continue
+```
+
+Owners/admins answer or add direction with the existing `clarification` note
+kind. This keeps the request and the response distinct in the activity timeline.
 
 ## MCP Presets
 
 Presets should be implemented as MCP prompts. They are user-invoked workflows,
 not hidden model behavior.
+
+Implementation:
+
+```txt
+src/lib/mcp-presets.ts
+-> canonical preset definitions and prompt builders
+-> reused by MCP prompt registration and dashboard report context-menu copy actions
+
+src/app/api/mcp/route.ts
+-> registers every preset through server.registerPrompt
+```
+
+Every preset is an execution contract, not a one-paragraph suggestion. The
+shared builder gives the agent:
+
+```txt
+objective and run configuration
+explicit report acquisition rule
+strictness-specific investigation depth
+ordered execution procedure
+allowed FeedMe workflow mutations
+non-negotiable guardrails
+checks policy
+stop conditions
+completion checklist
+required final response shape
+```
+
+Selection safety:
+
+```txt
+quick_fix, analyze_no_code, fix_report, ui_polish, write_tests,
+ask_clarifying_question
+-> may use get_next_report when reportId is omitted
+
+verify_fix, prepare_pr_summary
+-> require an explicit reportId
+-> must stop and ask instead of selecting a random report
+```
+
+No-code presets cannot be overridden into code-writing mode. If an
+implementation preset is explicitly invoked with `allowCodeChanges=false`, the
+builder replaces implementation steps with a read-only diagnosis and plan and
+removes workflow mutations.
 
 Presets:
 
@@ -487,6 +636,9 @@ evidence
 target
   selected element selector, tag, text, attributes
 
+agent guidance
+  existing developer prompt generated from the captured report
+
 activity
   assignee, latest work notes, blockers, status history
 
@@ -494,7 +646,11 @@ definition of done
   generated checklist combining FeedMe defaults and admin review checklist
 
 next actions
-  start work, add note, mark blocked, mark ready for review
+  computed from live PAT role, assignee, and report status
+  assigned -> start_work; ask_for_clarification or mark_blocked before starting when needed
+  in_progress -> add_work_note, ask_for_clarification, mark_blocked, mark_ready_for_review
+  ready_for_review -> wait for owner/admin review; add_work_note only for material reviewer context
+  resolved/archived -> no implementation action
 ```
 
 Definition of done defaults:
@@ -558,6 +714,7 @@ Slice E: MCP prompts.
 ```txt
 register quick_fix, analyze_no_code, fix_report, ui_polish, write_tests,
 verify_fix, prepare_pr_summary, ask_clarifying_question
+status: implemented
 ```
 
 ## Non-Goals For This Slice

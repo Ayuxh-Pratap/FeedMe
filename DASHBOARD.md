@@ -385,7 +385,7 @@ right bottom: reference links -> label + URL rows
 
 `acceptanceCriteria` and `constraintsNonGoals` stay in the schema/API/MCP contract, but they are hidden in the dashboard UI for now. They are optional fields reserved for deeper workflow maturity; do not surface them until they solve a real product problem.
 
-Activity / Notes owns workflow notes, blockers, clarifications, review notes, and the status-event stream. It should not repeat status, owner, captured time, or other metadata already visible in the report header. The note action should expose only note kinds the current member can actually create: work notes/blockers for the assigned developer or designer, and clarifications/review notes for owners/admins.
+Activity / Notes owns workflow notes, clarification requests, blockers, admin clarifications, review notes, and the status-event stream. It should not repeat status, owner, captured time, or other metadata already visible in the report header. The note action should expose only note kinds the current member can actually create: work notes/clarification requests/blockers for the assigned developer or designer, and clarifications/review notes for owners/admins. A clarification request does not change status; a blocker is a separate explicit action when work cannot continue.
 
 Comments owns threaded workspace discussion. It should have a dedicated composer and reply affordance, and comments should increment `commentsCount`. Workflow notes must not increment `commentsCount`.
 

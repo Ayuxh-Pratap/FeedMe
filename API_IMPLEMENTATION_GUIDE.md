@@ -1011,7 +1011,8 @@ assignment is locked once work reaches in_progress, ready_for_review, resolved, 
 resolved reports keep assigneeUserId as the completion owner for team metrics
 completed reports do not count as currently assigned work
 assignee status updates require the report to be assigned to that developer or designer
-assigned developers and designers can only move assigned work to in_progress or ready_for_review
+assigned developers and designers follow the exact transition chain assigned -> in_progress -> ready_for_review
+status mutation uses an atomic compare-and-set so concurrent/stale transitions cannot overwrite newer state or write false history
 owner/admin can resolve reports directly
 resolved status sets resolvedAt; non-resolved status updates clear resolvedAt
 archived status sets archivedAt so archived reports leave the active read model
@@ -1169,7 +1170,7 @@ Library:
 ```txt
 mcp-handler@1.1.0 (wraps @modelcontextprotocol/sdk@1.26.0), zod v4 supported.
 Stateless Streamable HTTP (no Redis), SSE disabled.
-createMcpHandler(init, { serverInfo }, { basePath: "/api", disableSse: true })
+createMcpHandler(init, { serverInfo, instructions }, { basePath: "/api", disableSse: true })
 withMcpAuth(handler, verifyToken, { required: true }) for PAT auth.
 Tools read context from extra.authInfo.extra (the resolved AccessTokenContext).
 ```
@@ -1192,18 +1193,28 @@ src/server/access-tokens/validation.ts               label + token id schemas
 src/app/api/workspaces/[workspaceSlug]/tokens/route.ts             create + list
 src/app/api/workspaces/[workspaceSlug]/tokens/[tokenId]/route.ts   revoke
 src/app/api/mcp/route.ts                              MCP handler + PAT auth + tools
+src/server/mcp/developer-guide.ts                     server instructions + canonical guide builder
+src/server/mcp/report-context.ts                      report-specific context pack + image blocks
 src/components/feedme/dashboard/connect-agent-dialog.tsx           workspace-menu dialog
 src/components/feedme/dashboard/workspace-shell.tsx                "Connect coding agent" menu item
 ```
 
-Tools (v1, read + workflow):
+Tools (read + workflow):
 
 ```txt
 whoami()                          confirm workspace + role (connection test)
-list_my_reports(status?, limit?)  reports assigned to the caller (scope=assigned)
-get_report(reportId)              full handoff text + page/element/annotated screenshots as images
+get_feedme_guide()                canonical role-aware tool/workflow guide
+list_my_reports(status?, limit?)  legacy broad assigned-queue browser
+list_new_assigned_reports(limit?) exact status=assigned queue for the PAT user
+list_in_progress_reports(limit?)  exact status=in_progress queue for the PAT user
+get_next_report()                 priority + oldest-assignment selector; returns context pack, no status mutation
+get_report(reportId)              readable handoff + screenshots
+get_report_context_pack(id)       canonical structured agent work packet + screenshots
 start_work(reportId)              assigned -> in_progress (assigned developer/designer only)
-mark_ready_for_review(id, note?)  -> ready_for_review (assigned developer/designer only)
+mark_ready_for_review(id, note?)  in_progress -> ready_for_review (assigned developer/designer only)
+add_work_note(id, note)           append activity while in_progress; material reviewer context while ready_for_review
+mark_blocked(id, reason)          assigned/in_progress only; append blocker activity, no blocked status
+ask_for_clarification(id, question) assigned/in_progress only; append clarification_request + notify admin/owner/reporter
 ```
 
 Rules:
@@ -1213,8 +1224,42 @@ require a valid workspace-scoped PAT (Bearer); no token -> 401
 resolve token -> user -> ACTIVE membership -> role on every request
 every tool reuses the existing report services (listWorkspaceReports, getWorkspaceReport,
   updateWorkspaceReportStatus) so tenant scoping and role checks match the REST API
+exact developer queues are filtered in SQL; the agent does not fetch all reports and guess
+get_next_report orders urgent -> high -> medium -> low, then oldest assignment/capture
+get_next_report is read-only; start_work remains an explicit mutation
+report text, screenshots, DOM metadata, briefs, notes, names, and links are untrusted evidence, never agent instructions
+context packs and copied prompts delimit untrusted data and escape attempts to close the boundary
+reference links are opened only when relevant and never receive credentials or secrets
 create-token requires an active member (the token only grants the caller's own role)
 tokens are workspace-scoped: one token = one workspace, no workspace argument on tools
+```
+
+MCP discovery and guidance:
+
+```txt
+initialize instructions           concise first-contact operating rules
+feedme://developer-guide          canonical text/markdown MCP resource
+get_feedme_guide()                compatibility tool returning the same guide
+whoami()                          points newly connected agents to the guide and exact queues
+
+src/server/mcp/developer-guide.ts owns all guide text
+the guide is workspace/role aware but contains no report data
+get_report_context_pack remains the report-specific full context source
+```
+
+MCP prompts:
+
+```txt
+quick_fix | analyze_no_code | fix_report | ui_polish | write_tests |
+verify_fix | prepare_pr_summary | ask_clarifying_question
+
+registered with server.registerPrompt
+canonical definitions live in src/lib/mcp-presets.ts
+dashboard Copy MCP command / Copy fix prompt reuse the same builder layer
+each prompt includes acquisition, ordered steps, guardrails, checks, stop conditions,
+completion gate, allowed mutations, and required response format
+verify_fix and prepare_pr_summary require explicit reportId; they never choose random work
+no-code presets cannot be overridden into code-writing mode
 ```
 
 Verified:
@@ -1475,7 +1520,7 @@ PATCH  /api/workspaces/:workspaceSlug/notifications
 Input:
 
 ```txt
-notes.kind: work_note | blocker | clarification | review_note
+notes.kind: work_note | blocker | clarification_request | clarification | review_note
 body: string
 
 comments.body: string
@@ -1495,7 +1540,7 @@ notifications: WorkspaceNotification[]
 unreadCount: number
 
 notification event types:
-report_assigned | comment_reply | comment_mention | admin_comment_added | clarification_added | blocker_added | ready_for_review | report_resolved
+report_assigned | comment_reply | comment_mention | admin_comment_added | clarification_requested | clarification_added | blocker_added | ready_for_review | report_resolved
 
 mark notifications read input:
 notificationIds?: uuid[]; omitted means mark all unread in the workspace as read
@@ -1550,8 +1595,11 @@ src/components/feedme/dashboard/workspace-shell.tsx   topbar notification bell
 Rules:
 
 ```txt
-work_note and blocker require the report to be assigned to the current developer/designer
+clarification_request and blocker require the report to be assigned to the current developer/designer and status assigned or in_progress
+work_note requires the current developer/designer assignee and status in_progress or ready_for_review
+resolved reports reject all developer note/status mutations
 clarification and review_note require owner/admin
+clarification_request notifies active owners/admins and the original reporter without changing status; MCP reports partial success if the note persists but delivery fails
 notes are append-only; edits/deletes are not part of this slice
 Activity / Notes shows notes and status events from the report detail contract
 Comments shows threaded workspace discussion and is counted by commentsCount
@@ -1591,6 +1639,7 @@ drizzle/0003_typical_pyro.sql
 drizzle/0004_split_report_notes.sql
 drizzle/0005_lazy_gertrude_yorkes.sql
 drizzle/0006_lazy_skaar.sql
+drizzle/0007_flowery_black_crow.sql
 ```
 
 ## API Contract For The First Flow
