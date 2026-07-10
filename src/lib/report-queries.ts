@@ -33,6 +33,7 @@ import type {
 } from "@/lib/reports"
 
 export type ReportMutationResponse = {
+  notificationDelivery?: "delivered" | "failed" | "not_required"
   report: WorkspaceReport
 }
 

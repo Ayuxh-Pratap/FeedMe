@@ -53,6 +53,7 @@ export type WorkspaceReportImplementationBrief = {
 export type WorkspaceReportNoteKind =
   | "work_note"
   | "blocker"
+  | "clarification_request"
   | "clarification"
   | "review_note"
 
