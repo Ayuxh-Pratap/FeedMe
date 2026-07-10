@@ -1,0 +1,2 @@
+ALTER TYPE "public"."notification_type" ADD VALUE 'clarification_requested' BEFORE 'clarification_added';--> statement-breakpoint
+ALTER TYPE "public"."report_note_kind" ADD VALUE 'clarification_request' BEFORE 'clarification';
