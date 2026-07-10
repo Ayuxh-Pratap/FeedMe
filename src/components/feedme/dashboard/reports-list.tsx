@@ -45,6 +45,10 @@ import {
 } from "@/components/feedme/dashboard/report-badge-styles"
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import {
+  buildReportFixPrompt,
+  buildReportMcpCommand,
+} from "@/lib/mcp-presets"
+import {
   isInProgressWorkspaceReport,
   isOpenWorkspaceReport,
   type WorkspaceReport,
@@ -194,33 +198,6 @@ function ReportAssigneeAvatar({ report }: { report: WorkspaceReport }) {
 const reportContextMenuItemClass =
   "h-8 cursor-pointer rounded-md px-2.5 text-body-3 text-text-body focus:bg-fill-subtle focus:text-foreground data-highlighted:bg-fill-subtle data-highlighted:text-foreground"
 
-function buildReportMcpCommand(report: WorkspaceReport) {
-  return [
-    "Use FeedMe MCP.",
-    `Get report ${report.id}.`,
-    "Inspect the screenshots, selected element, reporter feedback, and implementation brief.",
-    "Implement the smallest production-safe fix, run relevant checks, and mark the report ready for review with a concise summary.",
-  ].join(" ")
-}
-
-function buildReportFixPrompt(report: WorkspaceReport) {
-  return [
-    "Fix this FeedMe report:",
-    "",
-    `Report ID: ${report.id}`,
-    `Title: ${report.title}`,
-    `URL: ${report.url}`,
-    `Severity: ${report.severity}`,
-    `Status: ${report.status}`,
-    `Selected element: ${report.selectedElement.selector}`,
-    "",
-    "Feedback:",
-    report.feedback.message || report.summary,
-    "",
-    "Use the screenshots and FeedMe report context. Keep the fix scoped and production-ready. Summarize changed files and verification.",
-  ].join("\n")
-}
-
 function canUseReportWorkflowAction(
   report: WorkspaceReport,
   currentUserId: string,
@@ -325,9 +302,7 @@ function ReportActionsContextMenu({
     currentUserRole
   )
   const canStartWork = canUseWorkflow && report.status === "assigned"
-  const canMarkReady =
-    canUseWorkflow &&
-    (report.status === "assigned" || report.status === "in_progress")
+  const canMarkReady = canUseWorkflow && report.status === "in_progress"
   const [menuPosition, setMenuPosition] =
     useState<ReportContextMenuPosition | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)

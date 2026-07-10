@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   ChevronDown,
   ChevronRight,
+  CircleHelp,
   Code2,
   ExternalLink,
   CheckCircle2,
@@ -64,6 +65,7 @@ import {
   type WorkspaceReportNoteKind,
   type WorkspaceReportStatus,
 } from "@/lib/reports"
+import { getAssignedMemberNoteKinds } from "@/lib/report-workflow"
 import {
   isAssignableReportRole,
   type WorkspaceMemberRole,
@@ -427,8 +429,7 @@ function ReportWorkflowPanel({
     selectedAssigneeUserId !== (report.assigneeUserId ?? unassignedSelectValue)
   const canStartWork = isAssignedImplementationMember && report.status === "assigned"
   const canMarkReady =
-    isAssignedImplementationMember &&
-    (report.status === "assigned" || report.status === "in_progress")
+    isAssignedImplementationMember && report.status === "in_progress"
   const canResolve =
     canManageReport &&
     report.status !== "resolved" &&
@@ -1100,6 +1101,7 @@ function ImplementationBriefEditor({
 const noteKindLabels: Record<WorkspaceReportNoteKind, string> = {
   blocker: "Blocker",
   clarification: "Clarification",
+  clarification_request: "Clarification request",
   review_note: "Review note",
   work_note: "Work note",
 }
@@ -1107,6 +1109,7 @@ const noteKindLabels: Record<WorkspaceReportNoteKind, string> = {
 const noteKindDescriptions: Record<WorkspaceReportNoteKind, string> = {
   blocker: "Call out what is stopping progress.",
   clarification: "Add direction the assignee should know.",
+  clarification_request: "Ask an admin or reporter for missing context.",
   review_note: "Add reviewer feedback or QA context.",
   work_note: "Share what changed or what you found.",
 }
@@ -1114,6 +1117,7 @@ const noteKindDescriptions: Record<WorkspaceReportNoteKind, string> = {
 const noteKindIcon: Record<WorkspaceReportNoteKind, typeof MessageSquare> = {
   blocker: AlertTriangle,
   clarification: Info,
+  clarification_request: CircleHelp,
   review_note: CheckCircle2,
   work_note: PencilLine,
 }
@@ -1134,7 +1138,7 @@ function getAvailableNoteKinds({
     isAssignableReportRole(currentUserRole) && report.assigneeUserId === currentUserId
 
   if (isAssignedImplementationMember) {
-    kinds.push("work_note", "blocker")
+    kinds.push(...getAssignedMemberNoteKinds(report.status))
   }
 
   if (canManageReport) {
@@ -1215,6 +1219,7 @@ function ActivityNotesPanel({
   )
   const [body, setBody] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const [deliveryWarning, setDeliveryWarning] = useState<string | null>(null)
   const createNoteMutation = useCreateReportNoteMutation(workspaceSlug)
   const activity = report.activity ?? []
   const effectiveKind =
@@ -1231,9 +1236,10 @@ function ActivityNotesPanel({
     }
 
     setError(null)
+    setDeliveryWarning(null)
 
     try {
-      await createNoteMutation.mutateAsync({
+      const result = await createNoteMutation.mutateAsync({
         body: trimmedBody,
         kind: effectiveKind,
         optimisticActivityItem: {
@@ -1255,6 +1261,14 @@ function ActivityNotesPanel({
         report,
       })
       setBody("")
+
+      if (result.notificationDelivery === "failed") {
+        setDeliveryWarning(
+          "The note was saved, but notifications could not be delivered. Do not submit it again."
+        )
+        return
+      }
+
       setNoteDialogOpen(false)
     } catch (updateError) {
       setError(getMutationErrorMessage(updateError))
@@ -1287,6 +1301,7 @@ function ActivityNotesPanel({
                 type="button"
                 onClick={() => {
                   setError(null)
+                  setDeliveryWarning(null)
                   setNoteDialogOpen(true)
                 }}
                 className="inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-heading-5 text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
@@ -1354,6 +1369,9 @@ function ActivityNotesPanel({
 
                 {error ? (
                   <p className="mt-2 text-caption text-error">{error}</p>
+                ) : null}
+                {deliveryWarning ? (
+                  <p className="mt-2 text-caption text-warning">{deliveryWarning}</p>
                 ) : null}
               </div>
 

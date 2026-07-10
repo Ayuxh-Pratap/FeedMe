@@ -239,6 +239,8 @@ function getNotificationAccent(notification: WorkspaceNotification) {
   switch (notification.type) {
     case "blocker_added":
       return "bg-error"
+    case "clarification_requested":
+      return "bg-warning"
     case "ready_for_review":
       return "bg-success"
     case "report_assigned":
@@ -2352,8 +2354,7 @@ function ReportRailDeveloperStatusPanel({
   const [error, setError] = useState<string | null>(null)
   const updateStatusMutation = useUpdateReportStatusMutation(workspace.slug)
   const canStartWork = report.status === "assigned"
-  const canMarkReady =
-    report.status === "assigned" || report.status === "in_progress"
+  const canMarkReady = report.status === "in_progress"
 
   if (!isAssignedImplementationReport(workspace, report)) {
     return null
