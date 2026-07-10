@@ -3,47 +3,184 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler"
 import { z } from "zod"
 
 import {
+  buildMcpPresetPrompt,
+  mcpPresetDefinitions,
+} from "@/lib/mcp-presets"
+import type { WorkspaceReport, WorkspaceReportNoteKind } from "@/lib/reports"
+import {
   resolveAccessToken,
   type AccessTokenContext,
 } from "@/server/access-tokens/service"
+import { AppError, NotFoundError } from "@/server/http/errors"
 import {
-  AppError,
-  NotFoundError,
-} from "@/server/http/errors"
+  buildFeedMeDeveloperGuide,
+  FEEDME_DEVELOPER_GUIDE_URI,
+  FEEDME_MCP_SERVER_INSTRUCTIONS,
+} from "@/server/mcp/developer-guide"
+import {
+  formatReportContextPack,
+  formatReportHandoff,
+  getReportImageBlocks,
+} from "@/server/mcp/report-context"
 import {
   createWorkspaceReportNote,
+  getNextWorkspaceImplementationReport,
   getWorkspaceReport,
+  listWorkspaceImplementationQueue,
   listWorkspaceReports,
   updateWorkspaceReportStatus,
 } from "@/server/reports/service"
-import { isAllowedCloudinaryImageUrl } from "@/server/uploads/cloudinary"
-import type { WorkspaceReport, WorkspaceReportNoteKind } from "@/lib/reports"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
 
-// The MCP handler exposes FeedMe's assigned report workflow to a coding agent.
-// Auth is a workspace-scoped personal access token (Bearer). Every tool resolves
-// its context from the token and reuses the existing report services, so tenant
-// scoping and role checks are enforced exactly like the REST API.
+const reportIdSchema = z.string().uuid().describe("The FeedMe report id.")
+const queueLimitSchema = z.number().int().min(1).max(50).optional()
+
+// FeedMe's MCP endpoint is a thin transport layer. Every tool resolves its
+// workspace-scoped PAT and calls the same report services as the dashboard API.
 const baseHandler = createMcpHandler(
   (server) => {
+    server.registerResource(
+      "feedme-developer-guide",
+      FEEDME_DEVELOPER_GUIDE_URI,
+      {
+        title: "FeedMe developer workflow guide",
+        description:
+          "Canonical instructions for choosing report queues, loading context, using workflow tools, handling clarification, and completing assigned work.",
+        mimeType: "text/markdown",
+      },
+      async (_uri, extra) => {
+        const context = getContext(extra)
+
+        return {
+          contents: [
+            {
+              uri: FEEDME_DEVELOPER_GUIDE_URI,
+              mimeType: "text/markdown",
+              text: buildFeedMeDeveloperGuide(context),
+            },
+          ],
+        }
+      }
+    )
+
     server.registerTool(
       "whoami",
       {
         title: "Who am I",
         description:
-          "Confirm the connected FeedMe workspace, your display identity, and your role.",
+          "Confirm the connected FeedMe workspace, your identity scope, and your live workspace role.",
         inputSchema: {},
       },
       async (_args, extra) => {
         const context = getContext(extra)
+        return textResult(
+          [
+            `Connected to FeedMe workspace "${context.workspaceSlug}" as role "${context.role}".`,
+            `Before the first task, read ${FEEDME_DEVELOPER_GUIDE_URI} or call get_feedme_guide.`,
+            "Use list_new_assigned_reports for fresh work, list_in_progress_reports to resume work, or get_next_report to select the next issue.",
+          ].join("\n")
+        )
+      }
+    )
+
+    server.registerTool(
+      "get_feedme_guide",
+      {
+        title: "Get FeedMe developer guide",
+        description:
+          "Read the canonical FeedMe tool guide before the first task or whenever the correct report workflow is unclear.",
+        inputSchema: {},
+      },
+      async (_args, extra) =>
+        textResult(buildFeedMeDeveloperGuide(getContext(extra)))
+    )
+
+    server.registerTool(
+      "list_new_assigned_reports",
+      {
+        title: "List new assigned reports",
+        description:
+          "List only fresh work assigned to you with exact status 'assigned'. Results are ordered by severity, then oldest assignment first.",
+        inputSchema: { limit: queueLimitSchema },
+      },
+      async ({ limit }, extra) => {
+        const context = getContext(extra)
+        const { reports } = await listWorkspaceImplementationQueue(
+          context.userId,
+          context.workspaceSlug,
+          { limit, status: "assigned" }
+        )
+
+        return textResult(
+          formatQueueResult(
+            reports,
+            "No fresh assigned reports are waiting to be started.",
+            "Call get_next_report to load the best report context, or get_report_context_pack with a report id."
+          )
+        )
+      }
+    )
+
+    server.registerTool(
+      "list_in_progress_reports",
+      {
+        title: "List in-progress reports",
+        description:
+          "List only work assigned to you with exact status 'in_progress'. This excludes fresh assigned and ready-for-review reports.",
+        inputSchema: { limit: queueLimitSchema },
+      },
+      async ({ limit }, extra) => {
+        const context = getContext(extra)
+        const { reports } = await listWorkspaceImplementationQueue(
+          context.userId,
+          context.workspaceSlug,
+          { limit, status: "in_progress" }
+        )
+
+        return textResult(
+          formatQueueResult(
+            reports,
+            "No reports are currently in progress for you.",
+            "Call get_report_context_pack with a report id to continue work."
+          )
+        )
+      }
+    )
+
+    server.registerTool(
+      "get_next_report",
+      {
+        title: "Get next assigned report",
+        description:
+          "Select the highest-priority fresh assigned report, breaking ties by oldest assignment, and return its complete context pack and screenshots. This read does not start work automatically.",
+        inputSchema: {},
+      },
+      async (_args, extra) => {
+        const context = getContext(extra)
+        const { report: summary } = await getNextWorkspaceImplementationReport(
+          context.userId,
+          context.workspaceSlug
+        )
+
+        if (!summary) {
+          return textResult("No fresh assigned report is waiting to be started.")
+        }
+
+        const report = await readReport(context, summary.id)
+        const imageBlocks = await getReportImageBlocks(report)
+
         return {
           content: [
             {
-              type: "text",
-              text: `Connected to FeedMe workspace "${context.workspaceSlug}" as role "${context.role}".`,
+              type: "text" as const,
+              text: `Selected the next report without changing its status.\n\n${formatReportContextPack(
+                report,
+                context
+              )}`,
             },
+            ...imageBlocks,
           ],
         }
       }
@@ -52,15 +189,15 @@ const baseHandler = createMcpHandler(
     server.registerTool(
       "list_my_reports",
       {
-        title: "List my assigned reports",
+        title: "List my assigned reports (legacy)",
         description:
-          "List the FeedMe reports assigned to you in this workspace so you can pick one to fix. Returns report ids, titles, severity, and status.",
+          "Compatibility tool for browsing the broader assigned queue. Prefer list_new_assigned_reports or list_in_progress_reports when choosing developer work.",
         inputSchema: {
           status: z
             .enum(["all", "open", "in_progress", "resolved"])
             .optional()
-            .describe("Filter by status. Defaults to all."),
-          limit: z.number().int().min(1).max(50).optional(),
+            .describe("Legacy dashboard status bucket. Defaults to all."),
+          limit: queueLimitSchema,
         },
       },
       async ({ status, limit }, extra) => {
@@ -76,78 +213,69 @@ const baseHandler = createMcpHandler(
           }
         )
 
-        if (reports.length === 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "No reports are assigned to you in this workspace.",
-              },
-            ],
-          }
-        }
-
-        const lines = reports.map(
-          (report) =>
-            `- ${report.id}  [${report.severity} / ${report.status}]  ${report.title}  — ${report.domain} (${report.capturedAgo})`
+        return textResult(
+          formatQueueResult(
+            reports,
+            "No reports are assigned to you in this workspace.",
+            "Use the exact queue tools for new or in-progress work."
+          )
         )
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `You have ${reports.length} assigned report(s):\n${lines.join(
-                "\n"
-              )}\n\nCall get_report(reportId) for full detail and screenshots.`,
-            },
-          ],
-        }
       }
     )
 
     server.registerTool(
       "get_report",
       {
-        title: "Get report detail",
+        title: "Get readable report detail",
         description:
-          "Get full implementation handoff detail for a FeedMe report: the feedback, the exact selected element and CSS selector, page/browser context, the developer prompt, and the captured screenshots as images.",
-        inputSchema: {
-          reportId: z.string().uuid().describe("The report id from list_my_reports."),
-        },
+          "Get the existing human-readable report handoff and screenshots. For canonical agent work, prefer get_report_context_pack.",
+        inputSchema: { reportId: reportIdSchema },
       },
       async ({ reportId }, extra) => {
         const context = getContext(extra)
 
-        let report: WorkspaceReport
         try {
-          const result = await getWorkspaceReport(
-            context.userId,
-            context.workspaceSlug,
-            reportId
-          )
-          report = result.report
-        } catch (error) {
-          if (error instanceof NotFoundError) {
-            return {
-              isError: true,
-              content: [
-                {
-                  type: "text",
-                  text: `Report ${reportId} was not found in this workspace.`,
-                },
-              ],
-            }
+          const report = await readReport(context, reportId)
+          const imageBlocks = await getReportImageBlocks(report)
+
+          return {
+            content: [
+              { type: "text" as const, text: formatReportHandoff(report) },
+              ...imageBlocks,
+            ],
           }
-          throw error
+        } catch (error) {
+          return reportReadError(reportId, error)
         }
+      }
+    )
 
-        const imageBlocks = await getReportImageBlocks(report)
+    server.registerTool(
+      "get_report_context_pack",
+      {
+        title: "Get report context pack",
+        description:
+          "Get the canonical agent handoff: identity, problem, evidence, target element, implementation brief, recent notes, blockers, status history, definition of done, safe next actions, and screenshots.",
+        inputSchema: { reportId: reportIdSchema },
+      },
+      async ({ reportId }, extra) => {
+        const context = getContext(extra)
 
-        return {
-          content: [
-            { type: "text", text: formatReportHandoff(report) },
-            ...imageBlocks,
-          ],
+        try {
+          const report = await readReport(context, reportId)
+          const imageBlocks = await getReportImageBlocks(report)
+
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: formatReportContextPack(report, context),
+              },
+              ...imageBlocks,
+            ],
+          }
+        } catch (error) {
+          return reportReadError(reportId, error)
         }
       }
     )
@@ -157,21 +285,17 @@ const baseHandler = createMcpHandler(
       {
         title: "Start work on a report",
         description:
-          "Move a report that is assigned to you from 'assigned' to 'in_progress'. Only the assigned developer or designer can do this.",
-        inputSchema: {
-          reportId: z.string().uuid().describe("The report id to start working on."),
-        },
+          "Move a report assigned to you from 'assigned' to 'in_progress'. Only the assigned developer or designer can do this.",
+        inputSchema: { reportId: reportIdSchema },
       },
-      async ({ reportId }, extra) => {
-        const context = getContext(extra)
-        return runStatusUpdate(
-          context,
+      async ({ reportId }, extra) =>
+        runStatusUpdate(
+          getContext(extra),
           reportId,
           "in_progress",
           undefined,
           "You are now working on this report."
         )
-      }
     )
 
     server.registerTool(
@@ -179,27 +303,25 @@ const baseHandler = createMcpHandler(
       {
         title: "Mark a report ready for review",
         description:
-          "Mark a report that is assigned to you as 'ready_for_review' once you have made the fix. Only the assigned developer or designer can do this.",
+          "Mark an in-progress report assigned to you as ready for owner/admin review.",
         inputSchema: {
-          reportId: z.string().uuid().describe("The report id you have finished."),
+          reportId: reportIdSchema,
           note: z
             .string()
             .trim()
             .max(1000)
             .optional()
-            .describe("Optional note for reviewers, e.g. what you changed."),
+            .describe("What changed and how it was verified."),
         },
       },
-      async ({ reportId, note }, extra) => {
-        const context = getContext(extra)
-        return runStatusUpdate(
-          context,
+      async ({ reportId, note }, extra) =>
+        runStatusUpdate(
+          getContext(extra),
           reportId,
           "ready_for_review",
           note,
           "Report marked ready for review."
         )
-      }
     )
 
     server.registerTool(
@@ -207,55 +329,119 @@ const baseHandler = createMcpHandler(
       {
         title: "Add a work note",
         description:
-          "Add a developer/designer work note to a report assigned to you. Use this to record what you found, changed, or want reviewers to know.",
+          "Record implementation findings while work is in progress, or material reviewer context while the report is ready for review.",
         inputSchema: {
-          reportId: z.string().uuid().describe("The report id you are working on."),
-          note: z.string().trim().min(1).max(5000).describe("The work note body."),
+          reportId: reportIdSchema,
+          note: z.string().trim().min(1).max(5000),
         },
       },
-      async ({ reportId, note }, extra) => {
-        const context = getContext(extra)
-        return runCreateNote(
-          context,
+      async ({ reportId, note }, extra) =>
+        runCreateNote(
+          getContext(extra),
           reportId,
           "work_note",
           note,
           "Work note added."
         )
-      }
     )
 
     server.registerTool(
       "mark_blocked",
       {
-        title: "Mark a report blocked",
+        title: "Record a blocker",
         description:
-          "Add a blocker note to a report assigned to you. FeedMe does not add a blocked status yet, so this records the blocker in the activity stream.",
+          "Record what prevents an assigned or in-progress report from progressing. This adds a blocker note; it does not invent a blocked report status.",
         inputSchema: {
-          reportId: z.string().uuid().describe("The blocked report id."),
-          reason: z
-            .string()
-            .trim()
-            .min(1)
-            .max(5000)
-            .describe("What is blocking progress."),
+          reportId: reportIdSchema,
+          reason: z.string().trim().min(1).max(5000),
         },
       },
-      async ({ reportId, reason }, extra) => {
-        const context = getContext(extra)
-        return runCreateNote(
-          context,
+      async ({ reportId, reason }, extra) =>
+        runCreateNote(
+          getContext(extra),
           reportId,
           "blocker",
           reason,
-          "Blocker note added."
+          "Blocker recorded."
         )
-      }
     )
+
+    server.registerTool(
+      "ask_for_clarification",
+      {
+        title: "Ask for clarification",
+        description:
+          "Create a clarification request while a report is assigned or in progress, then notify workspace owners/admins plus the original reporter. This does not change status or mark the report blocked.",
+        inputSchema: {
+          reportId: reportIdSchema,
+          question: z
+            .string()
+            .trim()
+            .min(3)
+            .max(5000)
+            .describe("One clear implementation question."),
+        },
+      },
+      async ({ reportId, question }, extra) =>
+        runCreateNote(
+          getContext(extra),
+          reportId,
+          "clarification_request",
+          question,
+          "Clarification requested."
+        )
+    )
+
+    const promptArgsSchema = {
+      reportId: z.string().uuid().optional(),
+      strictness: z.enum(["quick", "normal", "deep"]).optional(),
+      allowCodeChanges: z.enum(["true", "false"]).optional(),
+      runChecks: z.enum(["true", "false"]).optional(),
+    }
+
+    for (const preset of mcpPresetDefinitions) {
+      server.registerPrompt(
+        preset.name,
+        {
+          title: preset.title,
+          description: preset.description,
+          argsSchema: promptArgsSchema,
+        },
+        async ({ reportId, strictness, allowCodeChanges, runChecks }) => ({
+          messages: [
+            {
+              role: "user" as const,
+              content: {
+                type: "text" as const,
+                text: buildMcpPresetPrompt(preset.name, {
+                  reportId,
+                  strictness,
+                  allowCodeChanges: parsePromptBoolean(allowCodeChanges),
+                  runChecks: parsePromptBoolean(runChecks),
+                }),
+              },
+            },
+          ],
+        })
+      )
+    }
   },
-  { serverInfo: { name: "feedme", version: "0.1.0" } },
+  {
+    instructions: FEEDME_MCP_SERVER_INSTRUCTIONS,
+    serverInfo: { name: "feedme", version: "0.3.0" },
+  },
   { basePath: "/api", disableSse: true }
 )
+
+async function readReport(context: AccessTokenContext, reportId: string) {
+  const { report } = await getWorkspaceReport(
+    context.userId,
+    context.workspaceSlug,
+    reportId
+  )
+
+  return report
+}
 
 async function runStatusUpdate(
   context: AccessTokenContext,
@@ -272,27 +458,9 @@ async function runStatusUpdate(
       { status, ...(note ? { note } : {}) }
     )
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `${successText} Status is now "${report.status}".`,
-        },
-      ],
-    }
+    return textResult(`${successText} Status is now "${report.status}".`)
   } catch (error) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text" as const,
-          text:
-            error instanceof AppError
-              ? error.message
-              : `Could not update report ${reportId}.`,
-        },
-      ],
-    }
+    return mutationError(error, `Could not update report ${reportId}.`)
   }
 }
 
@@ -304,35 +472,68 @@ async function runCreateNote(
   successText: string
 ) {
   try {
-    await createWorkspaceReportNote(
+    const result = await createWorkspaceReportNote(
       context.userId,
       context.workspaceSlug,
       reportId,
       { kind, body }
     )
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `${successText} The report activity has been updated.`,
-        },
-      ],
+    if (result.notificationDelivery === "failed") {
+      return textResult(
+        `${successText} The note was saved, but FeedMe could not deliver its notifications. Do not retry automatically because that would duplicate the note; tell the user notification delivery needs attention.`
+      )
     }
+
+    return textResult(`${successText} The report activity has been updated.`)
   } catch (error) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text" as const,
-          text:
-            error instanceof AppError
-              ? error.message
-              : `Could not add a note to report ${reportId}.`,
-        },
-      ],
-    }
+    return mutationError(error, `Could not add a note to report ${reportId}.`)
   }
+}
+
+function formatQueueResult(
+  reports: WorkspaceReport[],
+  emptyText: string,
+  nextInstruction: string
+) {
+  if (reports.length === 0) {
+    return emptyText
+  }
+
+  const lines = reports.map(
+    (report) =>
+      `- ${report.id} [${report.severity} / ${report.status}] ${report.title} - ${report.domain} (${report.capturedAgo})`
+  )
+
+  return `${reports.length} report(s):\n${lines.join("\n")}\n\n${nextInstruction}`
+}
+
+function reportReadError(reportId: string, error: unknown) {
+  if (error instanceof NotFoundError) {
+    return mutationError(error, `Report ${reportId} was not found in this workspace.`)
+  }
+
+  throw error
+}
+
+function mutationError(error: unknown, fallback: string) {
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text" as const,
+        text: error instanceof AppError ? error.message : fallback,
+      },
+    ],
+  }
+}
+
+function textResult(text: string) {
+  return { content: [{ type: "text" as const, text }] }
+}
+
+function parsePromptBoolean(value?: "true" | "false") {
+  return value === undefined ? undefined : value === "true"
 }
 
 async function verifyToken(
@@ -356,10 +557,6 @@ async function verifyToken(
   }
 }
 
-const handler = withMcpAuth(baseHandler, verifyToken, { required: true })
-
-export { handler as GET, handler as POST, handler as DELETE }
-
 function getContext(extra: unknown): AccessTokenContext {
   const authInfo = (extra as { authInfo?: { extra?: unknown } }).authInfo
   const context = authInfo?.extra as AccessTokenContext | undefined
@@ -371,170 +568,6 @@ function getContext(extra: unknown): AccessTokenContext {
   return context
 }
 
-function formatReportHandoff(report: WorkspaceReport): string {
-  const element = report.selectedElement
-  const attributeEntries = Object.entries(element.attributes ?? {})
-  const attributes =
-    attributeEntries.length > 0
-      ? attributeEntries.map(([key, value]) => `${key}="${value}"`).join(" ")
-      : "none"
+const handler = withMcpAuth(baseHandler, verifyToken, { required: true })
 
-  return [
-    `# ${report.title}`,
-    `Severity: ${report.severity} | Status: ${report.status} | Type: ${report.type}`,
-    `Domain: ${report.domain} | URL: ${report.url}`,
-    `Captured: ${report.capturedAt} | Browser: ${report.browser} | Device: ${report.device} | Viewport: ${report.viewport}`,
-    "",
-    "## Summary",
-    report.summary,
-    "",
-    "## Reporter feedback",
-    `${report.feedback.message} — ${report.feedback.reporterName}`,
-    "",
-    "## Selected element",
-    `Tag: ${element.tag}`,
-    `Selector: ${element.selector}`,
-    element.text ? `Text: ${element.text}` : "Text: none",
-    `Attributes: ${attributes}`,
-    "",
-    formatImplementationBrief(report),
-    "",
-    formatReportActivity(report),
-    "",
-    "## Developer prompt",
-    report.developerPrompt,
-  ]
-    .filter((line) => line !== null)
-    .join("\n")
-}
-
-function formatImplementationBrief(report: WorkspaceReport) {
-  const brief = report.implementationBrief
-
-  if (!brief) {
-    return null
-  }
-
-  const hasBriefContent =
-    brief.acceptanceCriteria.length > 0 ||
-    Boolean(brief.implementationNotes) ||
-    brief.constraintsNonGoals.length > 0 ||
-    Boolean(brief.expectedBehavior) ||
-    brief.referenceLinks.length > 0 ||
-    brief.reviewChecklist.length > 0
-
-  if (!hasBriefContent) {
-    return null
-  }
-
-  return [
-    "## Implementation brief",
-    formatListSection("Acceptance criteria", brief.acceptanceCriteria),
-    brief.implementationNotes
-      ? `Implementation notes:\n${brief.implementationNotes}`
-      : null,
-    formatListSection("Constraints / non-goals", brief.constraintsNonGoals),
-    brief.expectedBehavior
-      ? `Expected behavior:\n${brief.expectedBehavior}`
-      : null,
-    formatReferenceLinks(brief.referenceLinks),
-    formatListSection("Review checklist", brief.reviewChecklist),
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n\n")
-}
-
-function formatReportActivity(report: WorkspaceReport) {
-  const activity = report.activity ?? []
-  const notes = activity
-    .filter((item) => item.type === "note")
-    .slice(0, 8)
-
-  if (notes.length === 0) {
-    return null
-  }
-
-  return [
-    "## Recent notes",
-    notes
-      .map((note) => {
-        const author = note.author?.name ?? "Unknown teammate"
-        const kind = note.kind.replace(/_/g, " ")
-        return `- [${kind}] ${author}: ${note.body}`
-      })
-      .join("\n"),
-  ].join("\n")
-}
-
-function formatListSection(label: string, values: string[]) {
-  if (values.length === 0) {
-    return null
-  }
-
-  return `${label}:\n${values.map((value) => `- ${value}`).join("\n")}`
-}
-
-function formatReferenceLinks(
-  links: NonNullable<WorkspaceReport["implementationBrief"]>["referenceLinks"]
-) {
-  if (links.length === 0) {
-    return null
-  }
-
-  return `Reference links:\n${links
-    .map((link) => `- ${link.label ? `${link.label}: ` : ""}${link.url}`)
-    .join("\n")}`
-}
-
-// Embed up to three screenshots as images the agent can actually see. Uses the
-// optimized thumbnail so the payload stays light; failures are skipped so a
-// missing image never breaks the handoff.
-async function getReportImageBlocks(report: WorkspaceReport) {
-  const sources = report.screenshots
-    .map((screenshot) => screenshot.thumbnailUrl ?? screenshot.url)
-    .filter((url): url is string => Boolean(url))
-    .slice(0, 3)
-
-  const blocks = await Promise.all(sources.map(fetchImageBlock))
-
-  return blocks.filter(
-    (block): block is { type: "image"; data: string; mimeType: string } =>
-      block !== null
-  )
-}
-
-async function fetchImageBlock(url: string) {
-  if (!isAllowedCloudinaryImageUrl(url)) {
-    return null
-  }
-
-  try {
-    const response = await fetch(url, { redirect: "manual" })
-    if (!response.ok) {
-      return null
-    }
-
-    const mimeType = response.headers.get("content-type") ?? "image/png"
-    if (!mimeType.toLowerCase().startsWith("image/")) {
-      return null
-    }
-
-    const contentLength = Number(response.headers.get("content-length") ?? 0)
-    if (contentLength > MCP_IMAGE_BYTE_LIMIT) {
-      return null
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer())
-    if (buffer.byteLength > MCP_IMAGE_BYTE_LIMIT) {
-      return null
-    }
-
-    const data = buffer.toString("base64")
-
-    return { type: "image" as const, data, mimeType }
-  } catch {
-    return null
-  }
-}
-
-const MCP_IMAGE_BYTE_LIMIT = 4 * 1024 * 1024
+export { handler as GET, handler as POST, handler as DELETE }
