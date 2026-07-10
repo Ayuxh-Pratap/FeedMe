@@ -5,6 +5,7 @@ export type WorkspaceNotificationType =
   | "comment_reply"
   | "comment_mention"
   | "admin_comment_added"
+  | "clarification_requested"
   | "clarification_added"
   | "blocker_added"
   | "ready_for_review"
