@@ -182,6 +182,7 @@ export const updateReportImplementationBriefInputSchema = z.object({
 export const reportNoteKindInputSchema = z.enum([
   "work_note",
   "blocker",
+  "clarification_request",
   "clarification",
   "review_note",
 ])

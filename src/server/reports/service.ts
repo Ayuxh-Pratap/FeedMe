@@ -32,6 +32,10 @@ import {
 } from "@/db/schema"
 import { buildCloudinaryThumbnailUrl } from "@/lib/cloudinary"
 import {
+  canAssignedMemberCreateNote,
+  canAssignedMemberTransition,
+} from "@/lib/report-workflow"
+import {
   activeReportStatuses,
   formatReportCapturedAgo,
   formatReportCapturedAt,
@@ -57,7 +61,12 @@ import {
   isAssignableReportRole,
   type WorkspaceMemberRole,
 } from "@/lib/team-members"
-import { ForbiddenError, NotFoundError, ValidationError } from "@/server/http/errors"
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from "@/server/http/errors"
 import {
   createWorkspaceNotifications,
   getActiveWorkspaceUserIdsByRoles,
@@ -159,15 +168,22 @@ type ReportStatusEventRow = {
   createdAt: Date
 }
 
-const assigneeMutableStatuses = new Set<WorkspaceReportStatus>([
-  "in_progress",
-  "ready_for_review",
-])
+type ListWorkspaceReportsServiceInput = Omit<ListReportsInput, "sort"> & {
+  exactStatus?: WorkspaceReportStatus
+  sort: WorkspaceReportSort | "priority_oldest"
+}
+
+export type WorkspaceImplementationQueueStatus = "assigned" | "in_progress"
 
 const statusRequiresAssignee = new Set<WorkspaceReportStatus>([
   "assigned",
   "in_progress",
   "ready_for_review",
+])
+const assignedMemberNoteKinds = new Set<WorkspaceReportNoteKind>([
+  "work_note",
+  "blocker",
+  "clarification_request",
 ])
 
 const statusResetsWhenUnassigned = new Set<WorkspaceReportStatus>(["assigned"])
@@ -215,9 +231,10 @@ async function createWorkspaceNotificationsSafely(
   input: CreateWorkspaceNotificationInput
 ) {
   try {
-    await createWorkspaceNotifications(input)
+    return await createWorkspaceNotifications(input)
   } catch (error) {
     console.error("Failed to create workspace notification.", error)
+    return null
   }
 }
 
@@ -324,7 +341,14 @@ function getCommentsPageInfo({
   }
 }
 
-function getReportStatusCondition(status: ListReportsInput["status"]) {
+function getReportStatusCondition(
+  status: ListReportsInput["status"],
+  exactStatus?: WorkspaceReportStatus
+) {
+  if (exactStatus) {
+    return eq(reports.status, exactStatus)
+  }
+
   if (status === "open") {
     return inArray(reports.status, [...activeReportStatuses])
   }
@@ -374,8 +398,16 @@ function getReportSearchCondition(query?: string) {
   )
 }
 
-function getReportOrderBy(sort: WorkspaceReportSort) {
+function getReportOrderBy(
+  sort: WorkspaceReportSort | "priority_oldest"
+) {
   const newestFirst = [desc(reports.capturedAt), desc(reports.id)]
+  const severityRank = sql`case ${reports.severity}
+    when 'urgent' then 0
+    when 'high' then 1
+    when 'medium' then 2
+    else 3
+  end`
 
   if (sort === "oldest") {
     return [asc(reports.capturedAt), asc(reports.id)]
@@ -383,13 +415,25 @@ function getReportOrderBy(sort: WorkspaceReportSort) {
 
   if (sort === "priority") {
     return [
-      sql`case ${reports.severity}
-        when 'urgent' then 0
-        when 'high' then 1
-        when 'medium' then 2
-        else 3
-      end asc`,
+      asc(severityRank),
       ...newestFirst,
+    ]
+  }
+
+  if (sort === "priority_oldest") {
+    const assignedAt = sql`coalesce((
+      select max(assignment_event.created_at)
+      from report_status_events assignment_event
+      where assignment_event.workspace_id = ${reports.workspaceId}
+        and assignment_event.report_id = ${reports.id}
+        and assignment_event.to_status = 'assigned'
+    ), ${reports.capturedAt})`
+
+    return [
+      asc(severityRank),
+      asc(assignedAt),
+      asc(reports.capturedAt),
+      asc(reports.id),
     ]
   }
 
@@ -1608,6 +1652,67 @@ function getResolvedAtForStatus(status: WorkspaceReportStatus) {
   return status === "resolved" ? new Date() : null
 }
 
+async function applyReportStatusTransitionAtomic({
+  actorUserId,
+  fromStatus,
+  note,
+  reportId,
+  statusEventId,
+  toStatus,
+  workspaceId,
+}: {
+  actorUserId: string
+  fromStatus: WorkspaceReportStatus
+  note?: string
+  reportId: string
+  statusEventId: string
+  toStatus: WorkspaceReportStatus
+  workspaceId: string
+}) {
+  const now = new Date()
+  const eventNote = note ?? `Status changed to ${toStatus.replace(/_/g, " ")}.`
+  const readyForReviewNote =
+    toStatus === "ready_for_review" ? note?.trim() || null : null
+  const noteCte = readyForReviewNote
+    ? sql`, inserted_ready_note AS (
+        INSERT INTO ${reportNotes}
+          ("workspace_id", "report_id", "author_user_id", "kind", "body")
+        SELECT ${workspaceId}, ${reportId}, ${actorUserId}, 'work_note', ${readyForReviewNote}
+        FROM updated_report
+      )`
+    : sql.empty()
+  const result = await db.execute<{ updated: boolean }>(sql`
+    WITH updated_report AS (
+      UPDATE ${reports}
+      SET
+        "archived_at" = ${toStatus === "archived" ? now : null},
+        "resolved_at" = ${getResolvedAtForStatus(toStatus)},
+        "status" = ${toStatus},
+        "updated_at" = ${now}
+      WHERE "workspace_id" = ${workspaceId}
+        AND "id" = ${reportId}
+        AND "status" = ${fromStatus}
+      RETURNING "id"
+    ), inserted_status_event AS (
+      INSERT INTO ${reportStatusEvents}
+        ("id", "workspace_id", "report_id", "actor_user_id", "from_status", "to_status", "note")
+      SELECT
+        ${statusEventId},
+        ${workspaceId},
+        ${reportId},
+        ${actorUserId},
+        ${fromStatus},
+        ${toStatus},
+        ${eventNote}
+      FROM updated_report
+    )
+    ${noteCte}
+    SELECT EXISTS (SELECT 1 FROM updated_report) AS "updated"
+  `)
+
+  return result.rows[0]?.updated === true
+}
+
 function assertCanCreateReportNoteKind({
   input,
   report,
@@ -1620,10 +1725,24 @@ function assertCanCreateReportNoteKind({
   userId: string
 }) {
   if (
-    (input.kind === "work_note" || input.kind === "blocker") &&
-    isAssignedImplementationMember(role, userId, report)
+    (input.kind === "work_note" ||
+      input.kind === "blocker" ||
+      input.kind === "clarification_request") &&
+    isAssignedImplementationMember(role, userId, report) &&
+    canAssignedMemberCreateNote(report.status, input.kind)
   ) {
     return
+  }
+
+  if (
+    isAssignedImplementationMember(role, userId, report) &&
+    (input.kind === "work_note" ||
+      input.kind === "blocker" ||
+      input.kind === "clarification_request")
+  ) {
+    throw new ConflictError(
+      `A ${input.kind.replace(/_/g, " ")} cannot be added while this report is ${report.status.replace(/_/g, " ")}.`
+    )
   }
 
   if (
@@ -1705,7 +1824,7 @@ export async function getWorkspaceReportCounts(
 export async function listWorkspaceReports(
   userId: string,
   workspaceSlug: string,
-  input: ListReportsInput = {
+  input: ListWorkspaceReportsServiceInput = {
     limit: 30,
     sort: "newest",
     status: "all",
@@ -1714,7 +1833,10 @@ export async function listWorkspaceReports(
   const workspace = await requireWorkspaceForReportsRead(userId, workspaceSlug)
   const offset = decodeReportsCursor(input.cursor)
   const conditions = getReportBaseConditions(workspace.id, input, userId)
-  const statusCondition = getReportStatusCondition(input.status)
+  const statusCondition = getReportStatusCondition(
+    input.status,
+    input.exactStatus
+  )
 
   if (statusCondition) {
     conditions.push(statusCondition)
@@ -1765,6 +1887,39 @@ export async function listWorkspaceReports(
       offset,
       pageSize: pageRows.length,
     }),
+  }
+}
+
+export async function listWorkspaceImplementationQueue(
+  userId: string,
+  workspaceSlug: string,
+  input: {
+    limit?: number
+    status: WorkspaceImplementationQueueStatus
+  }
+) {
+  return listWorkspaceReports(userId, workspaceSlug, {
+    exactStatus: input.status,
+    limit: Math.min(Math.max(input.limit ?? 20, 1), 50),
+    scope: "assigned",
+    sort: "priority_oldest",
+    status: "all",
+  })
+}
+
+export async function getNextWorkspaceImplementationReport(
+  userId: string,
+  workspaceSlug: string
+) {
+  const result = await listWorkspaceImplementationQueue(
+    userId,
+    workspaceSlug,
+    { limit: 1, status: "assigned" }
+  )
+
+  return {
+    report: result.reports[0] ?? null,
+    workspace: result.workspace,
   }
 }
 
@@ -1971,11 +2126,16 @@ export async function updateWorkspaceReportStatus(
       throw new ForbiddenError("Only the assigned teammate can update this report.")
     }
 
-    if (!assigneeMutableStatuses.has(input.status)) {
-      throw new ForbiddenError(
-        "Assigned teammates can only start work or mark it ready."
-      )
-    }
+  }
+
+  if (row.status === input.status) {
+    return getWorkspaceReport(userId, workspaceSlug, reportId)
+  }
+
+  if (!isReportAdmin && !canAssignedMemberTransition(row.status, input.status)) {
+    throw new ConflictError(
+      `This report cannot move from ${row.status.replace(/_/g, " ")} to ${input.status.replace(/_/g, " ")}. Refresh its context before continuing.`
+    )
   }
 
   if (statusRequiresAssignee.has(input.status) && !row.assigneeUserId) {
@@ -1987,44 +2147,21 @@ export async function updateWorkspaceReportStatus(
     )
   }
 
-  if (row.status === input.status && !input.note) {
-    return getWorkspaceReport(userId, workspaceSlug, reportId)
-  }
-
-  const reportUpdate = db
-    .update(reports)
-    .set({
-      archivedAt: input.status === "archived" ? new Date() : null,
-      status: input.status,
-      resolvedAt: getResolvedAtForStatus(input.status),
-    })
-    .where(and(eq(reports.workspaceId, workspace.id), eq(reports.id, reportId)))
   const statusEventId = randomUUID()
-  const statusEventInsert = db.insert(reportStatusEvents).values({
-    id: statusEventId,
-    workspaceId: workspace.id,
-    reportId,
+  const didUpdate = await applyReportStatusTransitionAtomic({
     actorUserId: userId,
     fromStatus: row.status,
+    note: input.note,
+    reportId,
+    statusEventId,
     toStatus: input.status,
-    note: input.note ?? `Status changed to ${input.status.replace(/_/g, " ")}.`,
+    workspaceId: workspace.id,
   })
-  const readyForReviewNote = input.note?.trim()
 
-  if (input.status === "ready_for_review" && readyForReviewNote) {
-    await db.batch([
-      reportUpdate,
-      statusEventInsert,
-      db.insert(reportNotes).values({
-        workspaceId: workspace.id,
-        reportId,
-        authorUserId: userId,
-        kind: "work_note",
-        body: readyForReviewNote,
-      }),
-    ])
-  } else {
-    await db.batch([reportUpdate, statusEventInsert])
+  if (!didUpdate) {
+    throw new ConflictError(
+      "This report changed before the update was applied. Refresh its context and try again."
+    )
   }
 
   if (input.status === "ready_for_review") {
@@ -2082,23 +2219,53 @@ export async function createWorkspaceReportNote(
     userId,
   })
 
-  const [insertedNote] = await db
-    .insert(reportNotes)
-    .values({
-      workspaceId: workspace.id,
-      reportId,
-      authorUserId: userId,
-      kind: input.kind,
-      body: input.body,
-    })
-    .returning({ id: reportNotes.id })
+  const noteId = randomUUID()
+  const insertedNote = assignedMemberNoteKinds.has(input.kind)
+    ? (
+        await db.execute<{ id: string }>(sql`
+          INSERT INTO ${reportNotes}
+            ("id", "workspace_id", "report_id", "author_user_id", "kind", "body")
+          SELECT
+            ${noteId},
+            ${workspace.id},
+            ${reportId},
+            ${userId},
+            CAST(${input.kind} AS report_note_kind),
+            ${input.body}
+          FROM ${reports}
+          WHERE "workspace_id" = ${workspace.id}
+            AND "id" = ${reportId}
+            AND "assignee_user_id" = ${userId}
+            AND "status" = ${row.status}
+            AND "archived_at" IS NULL
+          RETURNING "id"
+        `)
+      ).rows[0]
+    : (
+        await db
+          .insert(reportNotes)
+          .values({
+            id: noteId,
+            workspaceId: workspace.id,
+            reportId,
+            authorUserId: userId,
+            kind: input.kind,
+            body: input.body,
+          })
+          .returning({ id: reportNotes.id })
+      )[0]
 
   if (!insertedNote) {
-    throw new Error("Failed to create report note.")
+    throw new ConflictError(
+      "This report changed before the note was saved. Refresh its context and try again."
+    )
   }
 
+  let notificationDelivery: "delivered" | "failed" | "not_required" =
+    "not_required"
+
   if (input.kind === "clarification" && row.assigneeUserId) {
-    await createWorkspaceNotificationsSafely({
+    const recipientCount = await createWorkspaceNotificationsSafely({
       workspaceId: workspace.id,
       recipientUserIds: [row.assigneeUserId],
       actorUserId: userId,
@@ -2110,6 +2277,33 @@ export async function createWorkspaceReportNote(
       href: getReportNotificationHref(workspaceSlug, reportId, "activity"),
       dedupeKey: `clarification:${insertedNote.id}`,
     })
+    notificationDelivery = getNotificationDelivery(recipientCount)
+  }
+
+  if (input.kind === "clarification_request") {
+    const adminUserIds = await getActiveWorkspaceUserIdsByRoles(
+      workspace.id,
+      ["owner", "admin"],
+      [userId]
+    )
+    const recipientUserIds = [
+      ...adminUserIds,
+      ...(row.reporterUserId ? [row.reporterUserId] : []),
+    ]
+
+    const recipientCount = await createWorkspaceNotificationsSafely({
+      workspaceId: workspace.id,
+      recipientUserIds,
+      actorUserId: userId,
+      reportId,
+      noteId: insertedNote.id,
+      type: "clarification_requested",
+      title: "Clarification requested",
+      body: truncateNotificationBody(input.body),
+      href: getReportNotificationHref(workspaceSlug, reportId, "activity"),
+      dedupeKey: `clarification-request:${insertedNote.id}`,
+    })
+    notificationDelivery = getNotificationDelivery(recipientCount)
   }
 
   if (input.kind === "blocker") {
@@ -2119,7 +2313,7 @@ export async function createWorkspaceReportNote(
       [userId]
     )
 
-    await createWorkspaceNotificationsSafely({
+    const recipientCount = await createWorkspaceNotificationsSafely({
       workspaceId: workspace.id,
       recipientUserIds: adminUserIds,
       actorUserId: userId,
@@ -2131,9 +2325,21 @@ export async function createWorkspaceReportNote(
       href: getReportNotificationHref(workspaceSlug, reportId, "activity"),
       dedupeKey: `blocker:${insertedNote.id}`,
     })
+    notificationDelivery = getNotificationDelivery(recipientCount)
   }
 
-  return getWorkspaceReport(userId, workspaceSlug, reportId)
+  return {
+    ...(await getWorkspaceReport(userId, workspaceSlug, reportId)),
+    notificationDelivery,
+  }
+}
+
+function getNotificationDelivery(recipientCount: number | null) {
+  if (recipientCount === null) {
+    return "failed" as const
+  }
+
+  return recipientCount > 0 ? ("delivered" as const) : ("not_required" as const)
 }
 
 async function assertReportCommentParent(
@@ -2327,7 +2533,7 @@ export async function createWorkspaceReportComment(
     insertedComment.id
   )
   const commentBody = truncateNotificationBody(input.body)
-  const notificationWrites: Array<Promise<void>> = []
+  const notificationWrites: Array<Promise<unknown>> = []
 
   if (mentionedUserIds.length > 0) {
     mentionedUserIds.forEach((mentionedUserId) =>
