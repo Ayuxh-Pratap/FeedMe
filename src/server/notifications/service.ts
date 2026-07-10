@@ -265,7 +265,7 @@ export async function createWorkspaceNotifications({
   ]
 
   if (uniqueRecipientIds.length === 0) {
-    return
+    return 0
   }
 
   await db
@@ -293,4 +293,6 @@ export async function createWorkspaceNotifications({
         notifications.dedupeKey,
       ],
     })
+
+  return uniqueRecipientIds.length
 }
