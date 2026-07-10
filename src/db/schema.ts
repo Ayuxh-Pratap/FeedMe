@@ -85,6 +85,7 @@ export const reportAssetType = pgEnum("report_asset_type", [
 export const reportNoteKind = pgEnum("report_note_kind", [
   "work_note",
   "blocker",
+  "clarification_request",
   "clarification",
   "review_note",
 ])
@@ -101,6 +102,7 @@ export const notificationType = pgEnum("notification_type", [
   "comment_reply",
   "comment_mention",
   "admin_comment_added",
+  "clarification_requested",
   "clarification_added",
   "blocker_added",
   "ready_for_review",
