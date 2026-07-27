@@ -1,6 +1,14 @@
 "use client"
 
-import { Plus } from "lucide-react"
+import {
+  Check,
+  KeyRound,
+  MoreHorizontal,
+  Plus,
+  ShieldOff,
+  Trash2,
+  UserCheck,
+} from "lucide-react"
 import { usePathname, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
@@ -22,8 +30,34 @@ import {
   getWorkspaceMemberRoleLabel,
   type WorkspaceTeamMember,
 } from "@/lib/team-members"
-import { useWorkspaceMembersQuery } from "@/lib/team-queries"
+import {
+  useRemoveWorkspaceMemberMutation,
+  useRevokeWorkspaceMemberTokensMutation,
+  useUpdateWorkspaceMemberMutation,
+  useWorkspaceMembersQuery,
+} from "@/lib/team-queries"
 import { cn } from "@/lib/utils"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { ApiClientError } from "@/lib/api-client"
 
 type TeamPageProps = {
   members?: WorkspaceTeamMember[]
@@ -100,6 +134,109 @@ function TeamMemberAvatar({ member }: { member: WorkspaceTeamMember }) {
   )
 }
 
+const managedRoles = ["admin", "developer", "designer", "reporter", "viewer"] as const
+type ConfirmAction = "disable" | "remove" | "revoke_tokens"
+
+function MemberAccessMenu({
+  actorRole,
+  actorUserId,
+  member,
+  onError,
+  workspaceSlug,
+}: {
+  actorRole: WorkspaceTeamMember["role"]
+  actorUserId: string
+  member: WorkspaceTeamMember
+  onError: (message: string) => void
+  workspaceSlug: string
+}) {
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
+  const updateMember = useUpdateWorkspaceMemberMutation(workspaceSlug)
+  const removeMember = useRemoveWorkspaceMemberMutation(workspaceSlug)
+  const revokeTokens = useRevokeWorkspaceMemberTokensMutation(workspaceSlug)
+  const canManage =
+    (actorRole === "owner" || actorRole === "admin") &&
+    actorUserId !== member.userId &&
+    member.role !== "owner" &&
+    !(actorRole === "admin" && member.role === "admin")
+
+  if (!canManage) return null
+
+  async function run(action: () => Promise<unknown>) {
+    try {
+      await action()
+    } catch (error) {
+      onError(error instanceof ApiClientError ? error.message : "Unable to update this member.")
+    }
+  }
+
+  async function confirm() {
+    const action = confirmAction
+    setConfirmAction(null)
+    if (action === "disable") {
+      await run(() => updateMember.mutateAsync({ memberUserId: member.userId, status: "disabled" }))
+    } else if (action === "remove") {
+      await run(() => removeMember.mutateAsync({ memberUserId: member.userId }))
+    } else if (action === "revoke_tokens") {
+      await run(() => revokeTokens.mutateAsync({ memberUserId: member.userId }))
+    }
+  }
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" aria-label={`Manage ${member.name}`} onClick={(event) => event.stopPropagation()} className="flex size-8 items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body hover:bg-fill-subtle hover:text-foreground">
+            <MoreHorizontal className="size-4" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52 rounded-lg border border-border-hairline bg-surface-card">
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="rounded-md text-body-3">Change role</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="rounded-lg border border-border-hairline bg-surface-card">
+              {managedRoles
+                .filter((role) => actorRole === "owner" || role !== "admin")
+                .map((role) => (
+                  <DropdownMenuItem key={role} onSelect={() => void run(() => updateMember.mutateAsync({ memberUserId: member.userId, role }))} className="rounded-md text-body-3">
+                    <span className="flex-1">{getWorkspaceMemberRoleLabel(role)}</span>
+                    {member.role === role ? <Check className="size-3.5" /> : null}
+                  </DropdownMenuItem>
+                ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          {member.status === "disabled" ? (
+            <DropdownMenuItem onSelect={() => void run(() => updateMember.mutateAsync({ memberUserId: member.userId, status: "active" }))} className="rounded-md text-body-3"><UserCheck className="size-4" />Restore access</DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem onSelect={() => setConfirmAction("disable")} className="rounded-md text-body-3"><ShieldOff className="size-4" />Disable access</DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={() => setConfirmAction("revoke_tokens")} className="rounded-md text-body-3"><KeyRound className="size-4" />Revoke MCP tokens</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onSelect={() => setConfirmAction("remove")} className="rounded-md text-body-3"><Trash2 className="size-4" />Remove member</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <AlertDialog open={confirmAction !== null} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <AlertDialogContent className="rounded-xl border border-border-hairline bg-surface-card">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmAction === "remove" ? "Remove member?" : confirmAction === "disable" ? "Disable access?" : "Revoke MCP tokens?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmAction === "remove"
+                ? `${member.name} will lose workspace access and active assignments will be released.`
+                : confirmAction === "disable"
+                  ? `${member.name} will be signed out of workspace integrations and active assignments will be released.`
+                  : `Every active MCP token owned by ${member.name} in this workspace will stop working.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void confirm()}>Confirm</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
 function TeamFilterTabs({
   activeFilter,
   members,
@@ -170,11 +307,14 @@ export function TeamPage({
   const searchParams = useSearchParams()
   const activeFilter = getFilter(searchParams)
   const {
+    currentUserId,
+    currentUserRole,
     dashboardSearchQuery,
     registerMembers,
     setSelectedMemberId,
     workspaceName: contextWorkspaceName,
   } = useWorkspaceDashboardData()
+  const [memberActionError, setMemberActionError] = useState<string | null>(null)
   const membersQuery = useWorkspaceMembersQuery({
     initialMembers,
     workspaceSlug,
@@ -300,18 +440,20 @@ export function TeamPage({
               members={searchScopedMembers}
               onFilterChange={changeFilter}
             />
-            <InviteMemberDialog
-              workspaceName={workspaceName}
-              workspaceSlug={workspaceSlug}
-            >
-              <button
-                type="button"
-                aria-label="Invite member"
-                className="flex size-9 cursor-pointer items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)]"
+            {currentUserRole === "owner" || currentUserRole === "admin" ? (
+              <InviteMemberDialog
+                workspaceName={workspaceName}
+                workspaceSlug={workspaceSlug}
               >
-                <Plus className="size-4" />
-              </button>
-            </InviteMemberDialog>
+                <button
+                  type="button"
+                  aria-label="Invite member"
+                  className="flex size-9 cursor-pointer items-center justify-center rounded-lg border border-border-hairline bg-fill-translucent text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground hover:shadow-button-hover active:scale-[var(--press-scale)]"
+                >
+                  <Plus className="size-4" />
+                </button>
+              </InviteMemberDialog>
+            ) : null}
           </div>
         </div>
       </header>
@@ -323,6 +465,14 @@ export function TeamPage({
           onRetry={() => {
             void membersQuery.refetch()
           }}
+        />
+      ) : null}
+
+      {memberActionError ? (
+        <DashboardInlineError
+          isRetrying={false}
+          message={memberActionError}
+          onRetry={() => setMemberActionError(null)}
         />
       ) : null}
 
@@ -351,12 +501,13 @@ export function TeamPage({
         <table className="w-full min-w-[900px] table-fixed border-collapse text-left">
           <caption className="sr-only">Workspace team members</caption>
           <colgroup>
-            <col className="w-[42%]" />
+            <col className="w-[39%]" />
             <col className="w-[13%]" />
             <col className="w-[10%]" />
             <col className="w-[11%]" />
             <col className="w-[10%]" />
-            <col className="w-[14%]" />
+            <col className="w-[11%]" />
+            <col className="w-[6%]" />
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border-hairline bg-background">
             <tr>
@@ -378,6 +529,7 @@ export function TeamPage({
               <th scope="col" className="px-4 py-3 text-caption font-medium text-text-muted">
                 Joined
               </th>
+              <th scope="col" className="px-2 py-3"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -428,6 +580,15 @@ export function TeamPage({
                 </td>
                 <td className="max-w-0 px-4 py-4 align-top text-body-3 text-text-muted">
                   <span className="block truncate">{member.joinedAtLabel}</span>
+                </td>
+                <td className="px-2 py-3 align-top" onClick={(event) => event.stopPropagation()}>
+                  <MemberAccessMenu
+                    actorRole={currentUserRole}
+                    actorUserId={currentUserId}
+                    member={member}
+                    onError={setMemberActionError}
+                    workspaceSlug={workspaceSlug}
+                  />
                 </td>
               </tr>
               )

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
-import { getJson, postJson } from "@/lib/api-client"
+import { deleteJson, getJson, postJson } from "@/lib/api-client"
 import { workspaceKeys } from "@/lib/query-keys"
 
 export const inviteRoles = [
@@ -31,7 +31,7 @@ export type WorkspaceInvite = {
 
 export type CreatedInvite = Pick<
   WorkspaceInvite,
-  "code" | "role" | "joinPath" | "inviteUrl"
+  "id" | "code" | "role" | "joinPath" | "inviteUrl"
 >
 
 export type WorkspaceInvitesResponse = {
@@ -93,6 +93,52 @@ export function useCreateWorkspaceInviteMutation(workspaceSlug: string) {
           invites: [result.invite, ...currentData.invites],
         }
       })
+    },
+  })
+}
+
+export function useRevokeWorkspaceInviteMutation(workspaceSlug: string) {
+  const queryClient = useQueryClient()
+  const queryKey = workspaceKeys.invites(workspaceSlug)
+
+  return useMutation<
+    { invite: WorkspaceInvite },
+    Error,
+    { inviteId: string },
+    void
+  >({
+    mutationFn: ({ inviteId }) =>
+      deleteJson<{ invite: WorkspaceInvite }>(
+        `${getWorkspaceInvitesUrl(workspaceSlug)}/${encodeURIComponent(inviteId)}`
+      ),
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey })
+    },
+    onMutate: async ({ inviteId }) => {
+      await queryClient.cancelQueries({ queryKey })
+      queryClient.setQueryData<WorkspaceInvitesResponse>(queryKey, (current) =>
+        current
+          ? {
+              invites: current.invites.map((invite) =>
+                invite.id === inviteId
+                  ? { ...invite, status: "revoked" as const }
+                  : invite
+              ),
+            }
+          : current
+      )
+
+    },
+    onSuccess: ({ invite }) => {
+      queryClient.setQueryData<WorkspaceInvitesResponse>(queryKey, (current) =>
+        current
+          ? {
+              invites: current.invites.map((item) =>
+                item.id === invite.id ? invite : item
+              ),
+            }
+          : current
+      )
     },
   })
 }

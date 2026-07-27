@@ -6,6 +6,7 @@ import { db } from "@/db"
 import {
   workspaceDomains,
   workspaceInvites,
+  workspaceInviteAcceptances,
   workspaceMemberships,
   workspaces,
 } from "@/db/schema"
@@ -17,7 +18,6 @@ import {
 } from "@/server/http/errors"
 import { getOnboardingStateForUser } from "@/server/onboarding/service"
 import { assertCanWorkspaceRole } from "@/server/policies/can"
-import type { WorkspaceRole } from "@/server/policies/actions"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
 import type { CreateInviteInput } from "@/server/invites/validation"
 
@@ -201,13 +201,14 @@ export async function getInvitePreview(inviteCode: string) {
   const now = new Date()
   const isExpired = Boolean(invite.expiresAt && invite.expiresAt <= now)
   const isExhausted = Boolean(invite.maxUses && invite.usedCount >= invite.maxUses)
+  const effectiveStatus = isExpired ? "expired" : isExhausted ? "exhausted" : invite.status
 
   return {
     invite: {
       id: invite.id,
       code: invite.code,
       role: invite.role,
-      status: invite.status,
+      status: effectiveStatus,
       expiresAt: invite.expiresAt,
       maxUses: invite.maxUses,
       usedCount: invite.usedCount,
@@ -220,7 +221,7 @@ export async function getInvitePreview(inviteCode: string) {
       slug: invite.workspaceSlug,
       logoUrl: invite.workspaceLogoUrl,
     },
-    canAccept: invite.status === "active" && !isExpired && !isExhausted,
+    canAccept: effectiveStatus === "active",
   }
 }
 
@@ -294,36 +295,93 @@ export async function acceptInvite(userId: string, inviteCode: string) {
     }
   }
 
-  await db.batch([
-    db
-      .insert(workspaceMemberships)
-      .values({
-        workspaceId: invite.workspaceId,
-        userId,
-        role: invite.role as Exclude<WorkspaceRole, "owner">,
-        status: "active",
-        invitedByUserId: invite.createdByUserId,
-        joinedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [workspaceMemberships.workspaceId, workspaceMemberships.userId],
-        set: {
-          role: invite.role as Exclude<WorkspaceRole, "owner">,
-          status: "active",
-          invitedByUserId: invite.createdByUserId,
-          joinedAt: new Date(),
-          updatedAt: new Date(),
-        },
-      }),
-    db
-      .update(workspaceInvites)
-      .set({
-        usedCount: sql`${workspaceInvites.usedCount} + 1`,
-        status: sql`case when ${workspaceInvites.maxUses} is not null and ${workspaceInvites.usedCount} + 1 >= ${workspaceInvites.maxUses} then 'exhausted'::invite_status else ${workspaceInvites.status} end`,
-        updatedAt: new Date(),
-      })
-      .where(eq(workspaceInvites.id, invite.id)),
-  ])
+  const now = new Date()
+  const result = await db.execute<{ invite_id: string }>(sql`
+    WITH acceptance_attempt AS (
+      INSERT INTO ${workspaceInviteAcceptances} (
+        "invite_id",
+        "workspace_id",
+        "user_id",
+        "accepted_at"
+      )
+      SELECT ${invite.id}, ${invite.workspaceId}, ${userId}, ${now}
+      ON CONFLICT ("invite_id", "user_id") DO NOTHING
+      RETURNING "id"
+    ),
+    claimed_invite AS (
+      UPDATE ${workspaceInvites}
+      SET
+        "used_count" = "used_count" + 1,
+        "status" = CASE
+          WHEN "max_uses" IS NOT NULL AND "used_count" + 1 >= "max_uses"
+            THEN 'exhausted'::invite_status
+          ELSE "status"
+        END,
+        "updated_at" = ${now}
+      WHERE "id" = ${invite.id}
+        AND "status" = 'active'::invite_status
+        AND "revoked_at" IS NULL
+        AND ("expires_at" IS NULL OR "expires_at" > ${now})
+        AND ("max_uses" IS NULL OR "used_count" < "max_uses")
+        AND EXISTS (SELECT 1 FROM acceptance_attempt)
+      RETURNING "id"
+    ),
+    cleanup_unclaimed_acceptance AS (
+      DELETE FROM ${workspaceInviteAcceptances}
+      WHERE "invite_id" = ${invite.id}
+        AND "user_id" = ${userId}
+        AND EXISTS (SELECT 1 FROM acceptance_attempt)
+        AND NOT EXISTS (SELECT 1 FROM claimed_invite)
+    ),
+    joined_membership AS (
+      INSERT INTO ${workspaceMemberships} (
+        "workspace_id",
+        "user_id",
+        "role",
+        "status",
+        "invited_by_user_id",
+        "joined_at",
+        "created_at",
+        "updated_at"
+      )
+      SELECT
+        ${invite.workspaceId},
+        ${userId},
+        CAST(${invite.role} AS workspace_role),
+        'active'::membership_status,
+        ${invite.createdByUserId},
+        ${now},
+        ${now},
+        ${now}
+      FROM claimed_invite
+      ON CONFLICT ("workspace_id", "user_id") DO UPDATE
+      SET
+        "role" = EXCLUDED."role",
+        "status" = 'active'::membership_status,
+        "invited_by_user_id" = EXCLUDED."invited_by_user_id",
+        "joined_at" = EXCLUDED."joined_at",
+        "updated_at" = EXCLUDED."updated_at"
+    )
+    SELECT "id" AS "invite_id" FROM claimed_invite
+  `)
+
+  if (!result.rows[0]) {
+    const [membershipAfterRace] = await db
+      .select({ id: workspaceMemberships.id })
+      .from(workspaceMemberships)
+      .where(
+        and(
+          eq(workspaceMemberships.workspaceId, invite.workspaceId),
+          eq(workspaceMemberships.userId, userId),
+          eq(workspaceMemberships.status, "active")
+        )
+      )
+      .limit(1)
+
+    if (!membershipAfterRace) {
+      throw new ForbiddenError("This invite link is no longer valid.")
+    }
+  }
 
   const onboarding = await getOnboardingStateForUser(userId)
 
@@ -333,7 +391,34 @@ export async function acceptInvite(userId: string, inviteCode: string) {
       name: invite.workspaceName,
       slug: invite.workspaceSlug,
     },
-    membershipAlreadyExisted: false,
+    membershipAlreadyExisted: !result.rows[0],
     nextPath: onboarding.nextStep === "complete" ? `/${invite.workspaceSlug}/reports` : "/welcome",
   }
+}
+
+export async function revokeWorkspaceInvite(
+  userId: string,
+  workspaceSlug: string,
+  inviteId: string
+) {
+  const workspace = await requireWorkspaceForInviteAction(userId, workspaceSlug)
+  const now = new Date()
+  const [invite] = await db
+    .update(workspaceInvites)
+    .set({ status: "revoked", revokedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(workspaceInvites.id, inviteId),
+        eq(workspaceInvites.workspaceId, workspace.id),
+        eq(workspaceInvites.status, "active"),
+        isNull(workspaceInvites.revokedAt)
+      )
+    )
+    .returning(inviteSelectFields())
+
+  if (!invite) {
+    throw new NotFoundError("Active invite not found.")
+  }
+
+  return { invite, workspace }
 }

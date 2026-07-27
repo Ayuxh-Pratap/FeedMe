@@ -1,6 +1,6 @@
 "use client"
 
-import { Check, ChevronDown, Copy, Link2, Ticket, X } from "lucide-react"
+import { Check, ChevronDown, Copy, Link2, Ticket, Trash2, X } from "lucide-react"
 import { useState, type ReactNode } from "react"
 
 import {
@@ -16,6 +16,8 @@ import {
   inviteRoles,
   labelFromInviteRole,
   useCreateWorkspaceInviteMutation,
+  useRevokeWorkspaceInviteMutation,
+  useWorkspaceInvitesQuery,
   type CreatedInvite,
   type InviteRole,
 } from "@/lib/invite-queries"
@@ -113,15 +115,24 @@ export function InviteMemberDialog({
   const [invite, setInvite] = useState<CreatedInvite | null>(null)
   const [copiedValue, setCopiedValue] = useState<"code" | "link" | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
   const createInviteMutation = useCreateWorkspaceInviteMutation(workspaceSlug)
-  const isCreating = createInviteMutation.isPending
+  const invitesQuery = useWorkspaceInvitesQuery({ enabled: open, workspaceSlug })
+  const revokeInviteMutation = useRevokeWorkspaceInviteMutation(workspaceSlug)
+  const isCreating = createInviteMutation.isPending || revokeInviteMutation.isPending
   const selectedRoleLabel = labelFromRole(role)
+  const activeInvites = (invitesQuery.data?.invites ?? []).filter(
+    (item) => item.status === "active"
+  )
 
   async function createInvite() {
     setErrorMessage(null)
     setCopiedValue(null)
 
     try {
+      if (invite?.id) {
+        await revokeInviteMutation.mutateAsync({ inviteId: invite.id })
+      }
       const result = await createInviteMutation.mutateAsync({ role })
 
       setInvite(result.invite)
@@ -149,7 +160,7 @@ export function InviteMemberDialog({
   }
 
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent
         showCloseButton={false}
@@ -253,6 +264,49 @@ export function InviteMemberDialog({
             New members will join as {selectedRoleLabel.toLowerCase()}s unless their
             role is changed later from Team.
           </p>
+
+          <section className="border-t border-border-hairline pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-heading-5 text-foreground">Active invite links</p>
+              <span className="text-caption text-text-muted">{activeInvites.length}</span>
+            </div>
+            {invitesQuery.isPending ? (
+              <p className="mt-2 text-body-3 text-text-muted">Loading invites...</p>
+            ) : null}
+            {!invitesQuery.isPending && activeInvites.length === 0 ? (
+              <p className="mt-2 text-body-3 text-text-muted">No active invite links.</p>
+            ) : null}
+            <div className="mt-2 space-y-2">
+              {activeInvites.map((activeInvite) => (
+                <div key={activeInvite.id} className="flex items-center gap-3 rounded-lg border border-border-hairline bg-fill-translucent px-3 py-2">
+                  <Ticket className="size-4 shrink-0 text-text-muted" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-heading-5 text-foreground">{labelFromRole(activeInvite.role)} invite</p>
+                    <p className="mt-0.5 truncate text-caption text-text-muted">{activeInvite.usedCount}/{activeInvite.maxUses ?? "unlimited"} uses</p>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Revoke ${labelFromRole(activeInvite.role)} invite`}
+                    disabled={revokeInviteMutation.isPending && revokeInviteMutation.variables?.inviteId === activeInvite.id}
+                    onClick={() => {
+                      setErrorMessage(null)
+                      void revokeInviteMutation
+                        .mutateAsync({ inviteId: activeInvite.id })
+                        .then(() => {
+                          if (invite?.id === activeInvite.id) setInvite(null)
+                        })
+                        .catch((error) => {
+                          setErrorMessage(error instanceof ApiClientError ? error.message : "Unable to revoke invite.")
+                        })
+                    }}
+                    className="flex size-7 items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-body hover:bg-fill-subtle hover:text-destructive disabled:opacity-45"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       </DialogContent>
     </Dialog>

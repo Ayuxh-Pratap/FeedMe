@@ -8,6 +8,7 @@ import {
   listWorkspaceInvites,
 } from "@/server/invites/service"
 import { createInviteInputSchema } from "@/server/invites/validation"
+import { assertRateLimit } from "@/server/security/rate-limit"
 
 export const runtime = "nodejs"
 
@@ -46,6 +47,12 @@ export async function GET(request: Request, { params }: WorkspaceInvitesRouteCon
 export async function POST(request: Request, { params }: WorkspaceInvitesRouteContext) {
   try {
     const currentSession = await requireCurrentSession()
+    await assertRateLimit({
+      key: currentSession.user.id,
+      limit: 20,
+      scope: "invites.create.user_daily",
+      windowMs: 24 * 60 * 60 * 1000,
+    })
     const { workspaceSlug } = await params
     const input = createInviteInputSchema.parse(await readJson(request))
     const result = await createWorkspaceInvite(

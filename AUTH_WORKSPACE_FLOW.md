@@ -168,10 +168,15 @@ Already have an account? Log in
 After successful account creation:
 
 ```txt
-/welcome
+/check-email
+-> verification link
+-> /verify-email
+-> /welcome (or the validated invite/deep-link destination)
 ```
 
-MVP signup creates the authenticated user account only. Profile and workspace data are collected in the welcome flow.
+Signup does not create a session. A single-use verification link creates the
+first authenticated session only after the address is verified. Profile and
+workspace data are collected in the welcome flow.
 
 ## Welcome
 
@@ -595,6 +600,14 @@ POST /api/auth/signup
 POST /api/auth/login
 POST /api/auth/logout
 GET  /api/auth/session
+POST /api/auth/resend-verification
+POST /api/auth/verify-email
+POST /api/auth/forgot-password
+POST /api/auth/reset-password
+POST /api/auth/change-password
+GET  /api/auth/sessions
+DELETE /api/auth/sessions
+DELETE /api/auth/sessions/:sessionId
 
 POST /api/onboarding/profile
 POST /api/onboarding/workspace

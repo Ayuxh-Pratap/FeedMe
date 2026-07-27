@@ -20,5 +20,7 @@ export const inviteCodeParamSchema = z
   .min(8, "Invalid invite code.")
   .max(128, "Invalid invite code.")
 
+export const inviteIdParamSchema = z.string().uuid("Invalid invite id.")
+
 export type InviteAssignableRole = z.infer<typeof inviteAssignableRoleSchema>
 export type CreateInviteInput = z.infer<typeof createInviteInputSchema>

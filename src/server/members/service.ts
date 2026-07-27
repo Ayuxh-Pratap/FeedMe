@@ -1,8 +1,9 @@
-import { and, asc, eq, ne, sql } from "drizzle-orm"
+import { and, asc, eq, isNull, ne, sql } from "drizzle-orm"
 
 import { db } from "@/db"
 import {
   reports,
+  personalAccessTokens,
   userProfiles,
   users,
   workspaceMemberships,
@@ -13,9 +14,14 @@ import {
   getNameFromEmail,
   type WorkspaceTeamMember,
 } from "@/lib/team-members"
-import { NotFoundError } from "@/server/http/errors"
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+} from "@/server/http/errors"
 import { assertCanWorkspaceRole } from "@/server/policies/can"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
+import type { UpdateWorkspaceMemberInput } from "@/server/members/validation"
 
 function countAssignedReportsSql() {
   return sql<number>`(
@@ -154,4 +160,212 @@ export async function listWorkspaceMembers(userId: string, workspaceSlug: string
     workspace,
     members: members.map(serializeMember),
   }
+}
+
+async function requireWorkspaceForMemberManagement(
+  userId: string,
+  workspaceSlug: string
+) {
+  const workspace = await getWorkspaceForUserBySlug(userId, workspaceSlug)
+
+  if (!workspace) {
+    throw new NotFoundError("Workspace not found.")
+  }
+
+  assertCanWorkspaceRole(workspace.role, "workspace:manage_members")
+
+  return workspace
+}
+
+async function getManagedMembership(workspaceId: string, memberUserId: string) {
+  const [membership] = await db
+    .select({
+      id: workspaceMemberships.id,
+      role: workspaceMemberships.role,
+      status: workspaceMemberships.status,
+      userId: workspaceMemberships.userId,
+    })
+    .from(workspaceMemberships)
+    .where(
+      and(
+        eq(workspaceMemberships.workspaceId, workspaceId),
+        eq(workspaceMemberships.userId, memberUserId),
+        ne(workspaceMemberships.status, "removed")
+      )
+    )
+    .limit(1)
+
+  if (!membership) {
+    throw new NotFoundError("Workspace member not found.")
+  }
+
+  return membership
+}
+
+function assertCanManageMembership({
+  actorRole,
+  actorUserId,
+  targetRole,
+  targetUserId,
+}: {
+  actorRole: "owner" | "admin"
+  actorUserId: string
+  targetRole: WorkspaceTeamMember["role"]
+  targetUserId: string
+}) {
+  if (targetRole === "owner") {
+    throw new ForbiddenError("The workspace owner cannot be modified.")
+  }
+
+  if (actorUserId === targetUserId) {
+    throw new ForbiddenError("Use account settings to change your own access.")
+  }
+
+  if (actorRole === "admin" && targetRole === "admin") {
+    throw new ForbiddenError("Only the workspace owner can manage administrators.")
+  }
+}
+
+export async function updateWorkspaceMember(
+  actorUserId: string,
+  workspaceSlug: string,
+  memberUserId: string,
+  input: UpdateWorkspaceMemberInput
+) {
+  const workspace = await requireWorkspaceForMemberManagement(
+    actorUserId,
+    workspaceSlug
+  )
+  const membership = await getManagedMembership(workspace.id, memberUserId)
+
+  assertCanManageMembership({
+    actorRole: workspace.role as "owner" | "admin",
+    actorUserId,
+    targetRole: membership.role,
+    targetUserId: memberUserId,
+  })
+
+  const nextRole = input.role ?? membership.role
+  const nextStatus = input.status ?? membership.status
+
+  if (workspace.role === "admin" && nextRole === "admin") {
+    throw new ForbiddenError("Only the workspace owner can grant administrator access.")
+  }
+
+  const releaseAssignments =
+    nextStatus !== "active" ||
+    (nextRole !== "developer" && nextRole !== "designer")
+  const now = new Date()
+  const result = await db.execute<{ membership_id: string }>(sql`
+    WITH updated_membership AS (
+      UPDATE ${workspaceMemberships}
+      SET
+        "role" = CAST(${nextRole} AS workspace_role),
+        "status" = CAST(${nextStatus} AS membership_status),
+        "updated_at" = ${now}
+      WHERE "workspace_id" = ${workspace.id}
+        AND "user_id" = ${memberUserId}
+        AND "role" = CAST(${membership.role} AS workspace_role)
+        AND "status" = CAST(${membership.status} AS membership_status)
+        AND "role" <> 'owner'::workspace_role
+      RETURNING "id"
+    ),
+    assignment_candidates AS (
+      SELECT "id", "status" AS "from_status"
+      FROM ${reports}
+      WHERE ${releaseAssignments}
+        AND "workspace_id" = ${workspace.id}
+        AND "assignee_user_id" = ${memberUserId}
+        AND "status" IN (
+          'assigned'::report_status,
+          'in_progress'::report_status,
+          'ready_for_review'::report_status
+        )
+        AND "archived_at" IS NULL
+        AND EXISTS (SELECT 1 FROM updated_membership)
+      FOR UPDATE
+    ),
+    released_reports AS (
+      UPDATE ${reports} AS target
+      SET
+        "assignee_user_id" = NULL,
+        "status" = 'reviewing'::report_status,
+        "resolved_at" = NULL,
+        "updated_at" = ${now}
+      FROM assignment_candidates AS candidate
+      WHERE target."id" = candidate."id"
+      RETURNING target."id", candidate."from_status"
+    ),
+    inserted_events AS (
+      INSERT INTO report_status_events (
+        "id",
+        "workspace_id",
+        "report_id",
+        "actor_user_id",
+        "from_status",
+        "to_status",
+        "note"
+      )
+      SELECT
+        gen_random_uuid(),
+        ${workspace.id},
+        "id",
+        ${actorUserId},
+        "from_status",
+        'reviewing'::report_status,
+        'Assignment released because workspace access changed.'
+      FROM released_reports
+    ),
+    revoked_tokens AS (
+      UPDATE ${personalAccessTokens}
+      SET "revoked_at" = ${now}
+      WHERE "workspace_id" = ${workspace.id}
+        AND "user_id" = ${memberUserId}
+        AND "revoked_at" IS NULL
+        AND ${nextStatus !== "active"}
+        AND EXISTS (SELECT 1 FROM updated_membership)
+    )
+    SELECT "id" AS "membership_id" FROM updated_membership
+  `)
+
+  if (!result.rows[0]) {
+    throw new ConflictError(
+      "This member changed before the update was applied. Refresh and try again."
+    )
+  }
+
+  return listWorkspaceMembers(actorUserId, workspaceSlug)
+}
+
+export async function revokeWorkspaceMemberTokens(
+  actorUserId: string,
+  workspaceSlug: string,
+  memberUserId: string
+) {
+  const workspace = await requireWorkspaceForMemberManagement(
+    actorUserId,
+    workspaceSlug
+  )
+  const membership = await getManagedMembership(workspace.id, memberUserId)
+
+  assertCanManageMembership({
+    actorRole: workspace.role as "owner" | "admin",
+    actorUserId,
+    targetRole: membership.role,
+    targetUserId: memberUserId,
+  })
+
+  const revoked = await db
+    .update(personalAccessTokens)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(personalAccessTokens.workspaceId, workspace.id),
+        eq(personalAccessTokens.userId, memberUserId),
+        isNull(personalAccessTokens.revokedAt)
+      )
+    )
+    .returning({ id: personalAccessTokens.id })
+
+  return { revokedCount: revoked.length }
 }
