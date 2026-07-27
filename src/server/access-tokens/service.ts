@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
 
-import { and, desc, eq, isNull } from "drizzle-orm"
+import { and, desc, eq, gt, isNull, lt, or } from "drizzle-orm"
 
 import { db } from "@/db"
 import {
@@ -12,6 +12,8 @@ import {
 // Personal access tokens authenticate a coding agent over MCP. Only the hash is
 // stored (mirror sessions); the plaintext token is shown to the user once.
 const TOKEN_PREFIX = "feedme_pat_"
+const DEFAULT_TOKEN_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000
+const LAST_USED_WRITE_INTERVAL_MS = 15 * 60 * 1000
 
 type WorkspaceRole = (typeof workspaceMemberships.$inferSelect)["role"]
 
@@ -24,8 +26,10 @@ export type AccessTokenContext = {
 }
 
 export type AccessTokenSummary = {
+  active: boolean
   id: string
   label: string
+  expiresAt: Date
   lastUsedAt: Date | null
   revokedAt: Date | null
   createdAt: Date
@@ -41,6 +45,7 @@ export async function generateAccessToken(
   label: string
 ) {
   const token = `${TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`
+  const expiresAt = new Date(Date.now() + DEFAULT_TOKEN_LIFETIME_MS)
   const [record] = await db
     .insert(personalAccessTokens)
     .values({
@@ -48,11 +53,13 @@ export async function generateAccessToken(
       userId,
       tokenHash: hashAccessToken(token),
       label,
+      expiresAt,
     })
     .returning({
       id: personalAccessTokens.id,
       label: personalAccessTokens.label,
       createdAt: personalAccessTokens.createdAt,
+      expiresAt: personalAccessTokens.expiresAt,
     })
 
   return { token, record }
@@ -90,6 +97,7 @@ export async function resolveAccessToken(
       and(
         eq(personalAccessTokens.tokenHash, hashAccessToken(rawToken)),
         isNull(personalAccessTokens.revokedAt),
+        gt(personalAccessTokens.expiresAt, new Date()),
         isNull(workspaces.archivedAt)
       )
     )
@@ -102,7 +110,18 @@ export async function resolveAccessToken(
   await db
     .update(personalAccessTokens)
     .set({ lastUsedAt: new Date() })
-    .where(eq(personalAccessTokens.id, row.tokenId))
+    .where(
+      and(
+        eq(personalAccessTokens.id, row.tokenId),
+        or(
+          isNull(personalAccessTokens.lastUsedAt),
+          lt(
+            personalAccessTokens.lastUsedAt,
+            new Date(Date.now() - LAST_USED_WRITE_INTERVAL_MS)
+          )
+        )
+      )
+    )
 
   return row
 }
@@ -111,13 +130,15 @@ export async function listAccessTokens(
   workspaceId: string,
   userId: string
 ): Promise<AccessTokenSummary[]> {
-  return db
+  const now = new Date()
+  const rows = await db
     .select({
       id: personalAccessTokens.id,
       label: personalAccessTokens.label,
       lastUsedAt: personalAccessTokens.lastUsedAt,
       revokedAt: personalAccessTokens.revokedAt,
       createdAt: personalAccessTokens.createdAt,
+      expiresAt: personalAccessTokens.expiresAt,
     })
     .from(personalAccessTokens)
     .where(
@@ -127,6 +148,11 @@ export async function listAccessTokens(
       )
     )
     .orderBy(desc(personalAccessTokens.createdAt))
+
+  return rows.map((row) => ({
+    ...row,
+    active: row.revokedAt === null && row.expiresAt > now,
+  }))
 }
 
 export async function revokeAccessToken(

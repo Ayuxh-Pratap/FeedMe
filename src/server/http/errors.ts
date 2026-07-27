@@ -4,23 +4,46 @@ export class AppError extends Error {
   readonly code: string
   readonly status: number
   readonly fieldErrors?: FieldErrors
+  readonly headers?: HeadersInit
 
   constructor({
     code,
     message,
     status,
     fieldErrors,
+    headers,
   }: {
     code: string
     message: string
     status: number
     fieldErrors?: FieldErrors
+    headers?: HeadersInit
   }) {
     super(message)
     this.name = "AppError"
     this.code = code
     this.status = status
     this.fieldErrors = fieldErrors
+    this.headers = headers
+  }
+}
+
+export class RateLimitError extends AppError {
+  readonly retryAfterSeconds: number
+
+  constructor(retryAfterSeconds: number) {
+    const safeRetryAfter = Math.max(1, Math.ceil(retryAfterSeconds))
+
+    super({
+      code: "RATE_LIMITED",
+      message: "Too many requests. Please wait and try again.",
+      status: 429,
+      headers: {
+        "Retry-After": String(safeRetryAfter),
+      },
+    })
+    this.name = "RateLimitError"
+    this.retryAfterSeconds = safeRetryAfter
   }
 }
 

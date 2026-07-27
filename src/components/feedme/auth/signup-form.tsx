@@ -9,10 +9,6 @@ import { getPasswordPolicyMessage } from "@/lib/password-policy"
 import { getSafeNextPath } from "@/lib/safe-next-path"
 
 type SignupResponse = {
-  user: {
-    id: string
-    email: string
-  }
   nextPath: string
 }
 
@@ -71,10 +67,11 @@ export function SignupForm() {
         email: formValue(formData, "email"),
         password: nextPassword,
         confirmPassword: nextConfirmPassword,
+        nextPath: getSafeNextPath(searchParams.get("next")) ?? undefined,
       })
 
       setIsRedirecting(true)
-      router.push(getSafeNextPath(searchParams.get("next")) ?? result.nextPath)
+      router.push(result.nextPath)
       router.refresh()
     } catch (error) {
       setErrorMessage(

@@ -30,6 +30,10 @@ import {
   listWorkspaceReports,
   updateWorkspaceReportStatus,
 } from "@/server/reports/service"
+import {
+  assertRateLimits,
+  getRequestIp,
+} from "@/server/security/rate-limit"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -472,18 +476,12 @@ async function runCreateNote(
   successText: string
 ) {
   try {
-    const result = await createWorkspaceReportNote(
+    await createWorkspaceReportNote(
       context.userId,
       context.workspaceSlug,
       reportId,
       { kind, body }
     )
-
-    if (result.notificationDelivery === "failed") {
-      return textResult(
-        `${successText} The note was saved, but FeedMe could not deliver its notifications. Do not retry automatically because that would duplicate the note; tell the user notification delivery needs attention.`
-      )
-    }
 
     return textResult(`${successText} The report activity has been updated.`)
   } catch (error) {
@@ -537,12 +535,33 @@ function parsePromptBoolean(value?: "true" | "false") {
 }
 
 async function verifyToken(
-  _request: Request,
+  request: Request,
   bearerToken?: string
 ): Promise<AuthInfo | undefined> {
   if (!bearerToken) {
     return undefined
   }
+
+  await assertRateLimits([
+    {
+      key: bearerToken,
+      limit: 120,
+      scope: "mcp.token",
+      windowMs: 60 * 1000,
+    },
+    {
+      key: getRequestIp(request),
+      limit: 240,
+      scope: "mcp.ip",
+      windowMs: 60 * 1000,
+    },
+    {
+      key: bearerToken,
+      limit: 10_000,
+      scope: "mcp.token_daily",
+      windowMs: 24 * 60 * 60 * 1000,
+    },
+  ])
 
   const context = await resolveAccessToken(bearerToken)
   if (!context) {

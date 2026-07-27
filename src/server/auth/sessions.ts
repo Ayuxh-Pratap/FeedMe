@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto"
 
 import { cookies } from "next/headers"
-import { eq } from "drizzle-orm"
+import { and, desc, eq, gt, isNull, ne } from "drizzle-orm"
 
 import { db } from "@/db"
 import { sessions } from "@/db/schema"
@@ -89,4 +89,71 @@ export async function revokeCurrentSession() {
   }
 
   await clearSessionCookie()
+}
+
+export async function listUserSessions(userId: string, currentSessionId: string) {
+  const now = new Date()
+  const rows = await db
+    .select({
+      id: sessions.id,
+      createdAt: sessions.createdAt,
+      expiresAt: sessions.expiresAt,
+      lastUsedAt: sessions.lastUsedAt,
+    })
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.userId, userId),
+        isNull(sessions.revokedAt),
+        gt(sessions.expiresAt, now)
+      )
+    )
+    .orderBy(desc(sessions.lastUsedAt), desc(sessions.createdAt))
+
+  return rows.map((session) => ({
+    ...session,
+    current: session.id === currentSessionId,
+  }))
+}
+
+export async function revokeUserSession(
+  userId: string,
+  currentSessionId: string,
+  sessionId: string
+) {
+  const revoked = await db
+    .update(sessions)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        eq(sessions.userId, userId),
+        isNull(sessions.revokedAt)
+      )
+    )
+    .returning({ id: sessions.id })
+
+  return {
+    revoked: revoked.length > 0,
+    signedOut: sessionId === currentSessionId && revoked.length > 0,
+  }
+}
+
+export async function revokeOtherUserSessions(
+  userId: string,
+  currentSessionId: string
+) {
+  const revoked = await db
+    .update(sessions)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(sessions.userId, userId),
+        ne(sessions.id, currentSessionId),
+        isNull(sessions.revokedAt)
+      )
+    )
+    .returning({ id: sessions.id })
+
+  return { revokedCount: revoked.length }
 }

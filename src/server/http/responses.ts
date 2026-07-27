@@ -64,7 +64,7 @@ export function errorResponse(error: unknown) {
         message: error.message,
         fieldErrors: error.fieldErrors,
       },
-      { status: error.status }
+      { status: error.status, headers: error.headers }
     )
   }
 

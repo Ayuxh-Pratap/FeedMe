@@ -55,11 +55,15 @@ function formatTokenMeta(token: AgentToken) {
     return "Revoked"
   }
 
-  if (token.lastUsedAt) {
-    return `Last used ${new Date(token.lastUsedAt).toLocaleDateString()}`
+  if (!token.active) {
+    return "Expired"
   }
 
-  return "Never used"
+  if (token.lastUsedAt) {
+    return `Last used ${new Date(token.lastUsedAt).toLocaleDateString()} - expires ${new Date(token.expiresAt).toLocaleDateString()}`
+  }
+
+  return `Never used - expires ${new Date(token.expiresAt).toLocaleDateString()}`
 }
 
 export function ConnectAgentDialog({
@@ -168,7 +172,7 @@ export function ConnectAgentDialog({
     }
   }
 
-  const activeTokens = tokens.filter((token) => !token.revokedAt)
+  const activeTokens = tokens.filter((token) => token.active)
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>

@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "drizzle-orm"
+import { and, eq, gt, isNotNull, isNull, lt, or } from "drizzle-orm"
 
 import { db } from "@/db"
 import { sessions, userProfiles, users } from "@/db/schema"
@@ -30,6 +30,8 @@ export type CurrentSession = {
   profile: CurrentProfile | null
 }
 
+const LAST_USED_WRITE_INTERVAL_MS = 15 * 60 * 1000
+
 export async function getCurrentSession(): Promise<CurrentSession | null> {
   const token = await readSessionTokenCookie()
 
@@ -41,6 +43,7 @@ export async function getCurrentSession(): Promise<CurrentSession | null> {
     .select({
       sessionId: sessions.id,
       sessionExpiresAt: sessions.expiresAt,
+      sessionLastUsedAt: sessions.lastUsedAt,
       userId: users.id,
       email: users.email,
       emailVerifiedAt: users.emailVerifiedAt,
@@ -59,7 +62,8 @@ export async function getCurrentSession(): Promise<CurrentSession | null> {
       and(
         eq(sessions.tokenHash, hashSessionToken(token)),
         isNull(sessions.revokedAt),
-        gt(sessions.expiresAt, new Date())
+        gt(sessions.expiresAt, new Date()),
+        isNotNull(users.emailVerifiedAt)
       )
     )
     .limit(1)
@@ -73,7 +77,18 @@ export async function getCurrentSession(): Promise<CurrentSession | null> {
     .set({
       lastUsedAt: new Date(),
     })
-    .where(eq(sessions.id, row.sessionId))
+    .where(
+      and(
+        eq(sessions.id, row.sessionId),
+        or(
+          isNull(sessions.lastUsedAt),
+          lt(
+            sessions.lastUsedAt,
+            new Date(Date.now() - LAST_USED_WRITE_INTERVAL_MS)
+          )
+        )
+      )
+    )
 
   return {
     session: {

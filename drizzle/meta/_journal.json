@@ -57,6 +57,13 @@
       "when": 1783657100441,
       "tag": "0007_flowery_black_crow",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783666838980,
+      "tag": "0008_previous_roughhouse",
+      "breakpoints": true
     }
   ]
 }

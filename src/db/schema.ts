@@ -109,6 +109,24 @@ export const notificationType = pgEnum("notification_type", [
   "report_resolved",
 ])
 
+export const authActionTokenPurpose = pgEnum("auth_action_token_purpose", [
+  "email_verification",
+  "password_reset",
+])
+
+export type NotificationOutboxPayload = {
+  actorUserId?: string | null
+  body: string
+  commentId?: string | null
+  href: string
+  metadata?: Record<string, unknown>
+  noteId?: string | null
+  recipientUserIds: string[]
+  reportId?: string | null
+  title: string
+  type: (typeof notificationType.enumValues)[number]
+}
+
 const timestamps = () => ({
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -195,6 +213,51 @@ export const sessions = pgTable(
   ]
 )
 
+export const authActionTokens = pgTable(
+  "auth_action_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    purpose: authActionTokenPurpose("purpose").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    redirectPath: text("redirect_path"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("auth_action_tokens_token_hash_unique").on(table.tokenHash),
+    index("auth_action_tokens_user_purpose_idx").on(table.userId, table.purpose),
+    index("auth_action_tokens_expires_at_idx").on(table.expiresAt),
+  ]
+)
+
+export const rateLimitBuckets = pgTable(
+  "rate_limit_buckets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    scope: varchar("scope", { length: 80 }).notNull(),
+    keyHash: varchar("key_hash", { length: 64 }).notNull(),
+    hitCount: integer("hit_count").default(1).notNull(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    windowExpiresAt: timestamp("window_expires_at", { withTimezone: true })
+      .notNull(),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("rate_limit_buckets_scope_key_unique").on(
+      table.scope,
+      table.keyHash
+    ),
+    index("rate_limit_buckets_expires_at_idx").on(table.windowExpiresAt),
+    check("rate_limit_buckets_hit_count_positive", sql`${table.hitCount} > 0`),
+  ]
+)
+
 // Personal access tokens let a developer connect one workspace to a coding agent
 // over MCP. Workspace-scoped, only the hash is stored (mirror sessions), and the
 // token inherits the member's role at use time.
@@ -210,6 +273,7 @@ export const personalAccessTokens = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull(),
     label: varchar("label", { length: 120 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -218,6 +282,7 @@ export const personalAccessTokens = pgTable(
     uniqueIndex("personal_access_tokens_token_hash_unique").on(table.tokenHash),
     index("personal_access_tokens_workspace_id_idx").on(table.workspaceId),
     index("personal_access_tokens_user_id_idx").on(table.userId),
+    index("personal_access_tokens_expires_at_idx").on(table.expiresAt),
   ]
 )
 
@@ -331,6 +396,33 @@ export const workspaceInvites = pgTable(
   ]
 )
 
+export const workspaceInviteAcceptances = pgTable(
+  "workspace_invite_acceptances",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    inviteId: uuid("invite_id")
+      .notNull()
+      .references(() => workspaceInvites.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("workspace_invite_acceptances_invite_user_unique").on(
+      table.inviteId,
+      table.userId
+    ),
+    index("workspace_invite_acceptances_workspace_id_idx").on(table.workspaceId),
+    index("workspace_invite_acceptances_user_id_idx").on(table.userId),
+  ]
+)
+
 export const reports = pgTable(
   "reports",
   {
@@ -373,6 +465,10 @@ export const reports = pgTable(
     index("reports_workspace_assignee_idx").on(table.workspaceId, table.assigneeUserId),
     index("reports_workspace_reporter_idx").on(table.workspaceId, table.reporterUserId),
     index("reports_workspace_domain_idx").on(table.workspaceId, table.domain),
+    check(
+      "reports_workflow_status_requires_assignee",
+      sql`${table.status} NOT IN ('assigned', 'in_progress', 'ready_for_review') OR ${table.assigneeUserId} IS NOT NULL`
+    ),
   ]
 )
 
@@ -501,6 +597,7 @@ export const reportComments = pgTable(
       (): AnyPgColumn => reportComments.id,
       { onDelete: "set null" }
     ),
+    clientMutationId: varchar("client_mutation_id", { length: 160 }),
     body: text("body").notNull(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -511,6 +608,10 @@ export const reportComments = pgTable(
     index("report_comments_report_id_idx").on(table.reportId),
     index("report_comments_author_user_id_idx").on(table.authorUserId),
     index("report_comments_parent_comment_id_idx").on(table.parentCommentId),
+    uniqueIndex("report_comments_workspace_client_mutation_unique").on(
+      table.workspaceId,
+      table.clientMutationId
+    ),
     foreignKey({
       name: "report_comments_report_workspace_fk",
       columns: [table.reportId, table.workspaceId],
@@ -652,6 +753,42 @@ export const notifications = pgTable(
       columns: [table.reportId, table.workspaceId],
       foreignColumns: [reports.id, reports.workspaceId],
     }).onDelete("cascade"),
+  ]
+)
+
+export const notificationOutbox = pgTable(
+  "notification_outbox",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    dedupeKey: varchar("dedupe_key", { length: 240 }).notNull(),
+    payload: jsonb("payload").$type<NotificationOutboxPayload>().notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    availableAt: timestamp("available_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("notification_outbox_dedupe_unique").on(
+      table.workspaceId,
+      table.dedupeKey
+    ),
+    index("notification_outbox_delivery_idx").on(
+      table.workspaceId,
+      table.processedAt,
+      table.availableAt
+    ),
+    check("notification_outbox_attempts_nonnegative", sql`${table.attempts} >= 0`),
   ]
 )
 

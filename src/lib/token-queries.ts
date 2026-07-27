@@ -6,9 +6,11 @@ import { deleteJson, getJson, postJson } from "@/lib/api-client"
 import { workspaceKeys } from "@/lib/query-keys"
 
 export type AgentToken = {
+  active: boolean
   id: string
   label: string
   lastUsedAt: string | null
+  expiresAt: string
   revokedAt: string | null
   createdAt: string
 }
@@ -23,6 +25,7 @@ export type CreateTokenResponse = {
     id: string
     label: string
     createdAt: string
+    expiresAt: string
   }
 }
 
@@ -32,10 +35,6 @@ type CreateTokenVariables = {
 
 type RevokeTokenVariables = {
   tokenId: string
-}
-
-type TokenMutationContext = {
-  previousTokens?: TokensResponse
 }
 
 function getWorkspaceTokensUrl(workspaceSlug: string) {
@@ -77,11 +76,13 @@ export function useCreateWorkspaceTokenMutation(workspaceSlug: string) {
     onSuccess: (result) => {
       queryClient.setQueryData<TokensResponse>(queryKey, (currentData) => {
         const nextToken: AgentToken = {
+          active: true,
           id: result.tokenRecord.id,
           label: result.tokenRecord.label,
           lastUsedAt: null,
           revokedAt: null,
           createdAt: result.tokenRecord.createdAt,
+          expiresAt: result.tokenRecord.expiresAt,
         }
 
         if (!currentData) {
@@ -109,19 +110,16 @@ export function useRevokeWorkspaceTokenMutation(workspaceSlug: string) {
     { revoked: true },
     Error,
     RevokeTokenVariables,
-    TokenMutationContext
+    void
   >({
     mutationFn: ({ tokenId }) =>
       deleteJson<{ revoked: true }>(getWorkspaceTokenUrl(workspaceSlug, tokenId)),
-    onError: (_error, _variables, context) => {
-      if (context?.previousTokens) {
-        queryClient.setQueryData(queryKey, context.previousTokens)
-      }
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey })
     },
     onMutate: async ({ tokenId }) => {
       await queryClient.cancelQueries({ queryKey })
 
-      const previousTokens = queryClient.getQueryData<TokensResponse>(queryKey)
       const revokedAt = new Date().toISOString()
 
       queryClient.setQueryData<TokensResponse>(queryKey, (currentData) => {
@@ -132,12 +130,11 @@ export function useRevokeWorkspaceTokenMutation(workspaceSlug: string) {
         return {
           ...currentData,
           tokens: currentData.tokens.map((token) =>
-            token.id === tokenId ? { ...token, revokedAt } : token
+            token.id === tokenId ? { ...token, active: false, revokedAt } : token
           ),
         }
       })
 
-      return { previousTokens }
     },
   })
 }

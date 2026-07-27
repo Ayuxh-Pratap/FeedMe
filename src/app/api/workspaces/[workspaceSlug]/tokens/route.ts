@@ -8,6 +8,7 @@ import { NotFoundError } from "@/server/http/errors"
 import { readJson } from "@/server/http/request"
 import { errorResponse, ok } from "@/server/http/responses"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
+import { assertRateLimit } from "@/server/security/rate-limit"
 
 export const runtime = "nodejs"
 
@@ -43,6 +44,12 @@ export async function GET(_request: Request, { params }: TokensRouteContext) {
 export async function POST(request: Request, { params }: TokensRouteContext) {
   try {
     const currentSession = await requireCurrentSession()
+    await assertRateLimit({
+      key: currentSession.user.id,
+      limit: 10,
+      scope: "tokens.create.user_daily",
+      windowMs: 24 * 60 * 60 * 1000,
+    })
     const { workspaceSlug } = await params
     const workspace = await requireWorkspace(currentSession.user.id, workspaceSlug)
     const input = createAccessTokenSchema.parse(await readJson(request))
