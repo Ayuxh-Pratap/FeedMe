@@ -22,6 +22,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ClipboardList,
   Code2,
   Copy,
   FileText,
@@ -448,16 +449,18 @@ function ReportActionsContextMenu({
               Implementation brief
             </ReportContextMenuItem>
           ) : null}
-          <ReportContextMenuItem
-            onSelect={() =>
-              selectAndClose(() =>
-                window.open(report.url, "_blank", "noopener,noreferrer")
-              )
-            }
-          >
-            <Globe2 className="size-3.5 text-text-muted" />
-            Open captured page
-          </ReportContextMenuItem>
+          {report.url ? (
+            <ReportContextMenuItem
+              onSelect={() =>
+                selectAndClose(() =>
+                  window.open(report.url!, "_blank", "noopener,noreferrer")
+                )
+              }
+            >
+              <Globe2 className="size-3.5 text-text-muted" />
+              Open source URL
+            </ReportContextMenuItem>
+          ) : null}
         </ReportContextMenuSection>
 
         <ReportContextMenuSeparator />
@@ -511,6 +514,14 @@ function ReportEvidenceImage({ report }: { report: WorkspaceReport }) {
   // Grid cards are small; prefer the optimized Cloudinary thumbnail over the
   // full-resolution screenshot to keep the gallery light.
   const source = screenshot?.thumbnailUrl ?? screenshot?.url
+
+  if (report.source === "task") {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center bg-surface-card">
+        <ClipboardList className="size-12 text-text-muted/30" strokeWidth={1.25} />
+      </div>
+    )
+  }
 
   if (screenshot && source) {
     return (
@@ -614,7 +625,7 @@ function ReportsHeader({
         <div>
           <h1 className="text-heading-3 text-foreground">Reports</h1>
           <p className="mt-1 text-body-3 text-text-body">
-            Captured feedback queued for triage and developer handoff.
+            Feedback and project tasks queued for triage and developer handoff.
           </p>
         </div>
 
@@ -671,7 +682,7 @@ function ReportsNoMatches({
         <p className="mt-2 text-body-2 text-text-body">
           {hasSearch
             ? `Nothing matched "${searchQuery}" inside ${activeFilterLabel.toLowerCase()} reports.`
-            : "Try a different status filter to see more captured feedback."}
+            : "Try a different status filter to see more workspace items."}
         </p>
       </div>
     </div>
@@ -842,26 +853,30 @@ export function ReportCard({
             )}
           >
             <span>{report.assignee?.name ?? "Unassigned"}</span>
-            <span className="text-text-muted">{report.domain}</span>
+            <span className="text-text-muted">
+              {report.domain ?? (report.source === "task" ? "Task" : "Unknown domain")}
+            </span>
             <span className="text-text-muted">{report.capturedAgo}</span>
           </div>
         </div>
 
-        <a
-          href={report.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(event) => {
-            event.stopPropagation()
-          }}
-          className={cn(
-            "absolute bottom-3 right-3 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-border-subtle bg-surface-raised text-foreground shadow-button-hover transition-all duration-base ease-out-soft",
-            "hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
-          )}
-          aria-label={`Open captured page for ${report.title}`}
-        >
-          <ArrowUpRight className="size-3.5" />
-        </a>
+        {report.url ? (
+          <a
+            href={report.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
+            className={cn(
+              "absolute bottom-3 right-3 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-border-subtle bg-surface-raised text-foreground shadow-button-hover transition-all duration-base ease-out-soft",
+              "hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
+            )}
+            aria-label={`Open source URL for ${report.title}`}
+          >
+            <ArrowUpRight className="size-3.5" />
+          </a>
+        ) : null}
       </article>
     </ReportActionsContextMenu>
   )
@@ -927,7 +942,9 @@ export function ReportTableRow({
         <td className="max-w-0 px-4 py-4 align-top">
           <div className="flex min-w-0 items-center gap-2 text-body-3 text-text-secondary">
             <Globe2 className="size-3.5 shrink-0 text-text-muted" />
-            <span className="truncate">{report.domain}</span>
+            <span className="truncate">
+              {report.domain ?? (report.source === "task" ? "Task" : "Unknown domain")}
+            </span>
           </div>
         </td>
         <td className="max-w-0 px-4 py-4 align-top">
@@ -939,18 +956,22 @@ export function ReportTableRow({
               </span>
             </span>
             <span className="shrink-0 text-text-muted">{report.capturedAgo}</span>
-            <a
-              href={report.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(event) => {
-                event.stopPropagation()
-              }}
-              className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
-              aria-label={`Open captured page for ${report.title}`}
-            >
-              <ArrowUpRight className="size-3.5" />
-            </a>
+            {report.url ? (
+              <a
+                href={report.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(event) => {
+                  event.stopPropagation()
+                }}
+                className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-hairline bg-fill-translucent text-text-body transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
+                aria-label={`Open source URL for ${report.title}`}
+              >
+                <ArrowUpRight className="size-3.5" />
+              </a>
+            ) : (
+              <span className="size-7 shrink-0" aria-hidden="true" />
+            )}
           </div>
         </td>
       </tr>

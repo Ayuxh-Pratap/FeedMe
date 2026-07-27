@@ -67,6 +67,7 @@ import { useWorkspaceMembersQuery } from "@/lib/team-queries"
 import { FeedMeAvatar } from "@/components/feedme/dashboard/feedme-avatar"
 import {
   reportBadgeBaseClass,
+  reportNeutralPillStyle,
   reportSeverityPillStyles,
   reportStatusPillStyles,
 } from "@/components/feedme/dashboard/report-badge-styles"
@@ -1693,7 +1694,7 @@ function getScreenshotDimensions(
     }
   }
 
-  const match = report.viewport.match(/(\d+)\s*x\s*(\d+)/i)
+  const match = report.viewport?.match(/(\d+)\s*x\s*(\d+)/i)
   const width = match ? Number(match[1]) : 1440
   const height = match ? Number(match[2]) : 900
 
@@ -1955,17 +1956,19 @@ function ReportEvidenceTabs({
             </p>
           </div>
         ) : null}
-        <button
-          type="button"
-          aria-label="Open screenshot viewer"
-          onClick={() => {
-            setViewerIndex(activeScreenshotIndex)
-            setIsViewerOpen(true)
-          }}
-          className="absolute bottom-2 right-2 z-10 flex size-7 cursor-pointer items-center justify-center rounded-md border border-border-subtle bg-surface-raised text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
-        >
-          <Maximize2 className="size-3.5" />
-        </button>
+        {activeScreenshot ? (
+          <button
+            type="button"
+            aria-label="Open screenshot viewer"
+            onClick={() => {
+              setViewerIndex(activeScreenshotIndex)
+              setIsViewerOpen(true)
+            }}
+            className="absolute bottom-2 right-2 z-10 flex size-7 cursor-pointer items-center justify-center rounded-md border border-border-subtle bg-surface-raised text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
+          >
+            <Maximize2 className="size-3.5" />
+          </button>
+        ) : null}
       </div>
 
       <Link
@@ -2518,6 +2521,11 @@ function ReportInspectorRail({
           <ReportRailBadge className={reportStatusPillStyles[report.status]}>
             {getReportStatusLabel(report.status)}
           </ReportRailBadge>
+          {report.source === "task" ? (
+            <ReportRailBadge className={reportNeutralPillStyle}>
+              Task
+            </ReportRailBadge>
+          ) : null}
         </div>
         <h2 className="mt-3 line-clamp-2 text-heading-5 text-foreground">
           {report.title}
@@ -2527,11 +2535,13 @@ function ReportInspectorRail({
         </p>
       </section>
 
-      <ReportEvidenceTabs
-        isEvidenceHydrating={isEvidenceHydrating}
-        report={report}
-        workspaceSlug={workspace.slug}
-      />
+      {report.source === "feedback" ? (
+        <ReportEvidenceTabs
+          isEvidenceHydrating={isEvidenceHydrating}
+          report={report}
+          workspaceSlug={workspace.slug}
+        />
+      ) : null}
 
       {canManageReportAssignments(workspace) ? (
         <ReportRailAssignmentPanel
@@ -2582,25 +2592,30 @@ function ReportInspectorRail({
             )
           }
         />
-        <ReportRailMeta label="Captured" value={report.capturedAgo} />
+        <ReportRailMeta
+          label={report.source === "task" ? "Created" : "Captured"}
+          value={report.capturedAgo}
+        />
       </section>
 
-      <section className="border-b border-border-hairline px-4 py-3">
-        <div className="flex items-center gap-2 text-heading-5 text-foreground">
-          <MousePointer2 className="size-4 text-text-muted" />
-          Selected element
-        </div>
-        <div className="mt-2 rounded-lg border border-border-hairline bg-background p-2.5">
-          <p className="line-clamp-2 font-mono text-caption text-text-secondary">
-            {report.selectedElement.selector}
-          </p>
-          {report.selectedElement.text ? (
-            <p className="mt-1 line-clamp-1 text-caption text-text-muted">
-              {report.selectedElement.text}
+      {report.selectedElement ? (
+        <section className="border-b border-border-hairline px-4 py-3">
+          <div className="flex items-center gap-2 text-heading-5 text-foreground">
+            <MousePointer2 className="size-4 text-text-muted" />
+            Selected element
+          </div>
+          <div className="mt-2 rounded-lg border border-border-hairline bg-background p-2.5">
+            <p className="line-clamp-2 font-mono text-caption text-text-secondary">
+              {report.selectedElement.selector}
             </p>
-          ) : null}
-        </div>
-      </section>
+            {report.selectedElement.text ? (
+              <p className="mt-1 line-clamp-1 text-caption text-text-muted">
+                {report.selectedElement.text}
+              </p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="px-4 py-3">
         <div className="flex items-center gap-2 text-heading-5 text-foreground">
@@ -2646,6 +2661,7 @@ function ReportsContextRail({
   })
   const selectedReport = selectedDetailQuery.data?.report ?? selectedSummaryReport
   const isEvidenceHydrating =
+    selectedReport?.source === "feedback" &&
     selectedDetailQuery.isFetching &&
     Boolean(selectedReport) &&
     !selectedReport?.screenshots.some(

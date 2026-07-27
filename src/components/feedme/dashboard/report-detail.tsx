@@ -16,6 +16,7 @@ import {
 import {
   AlertTriangle,
   ArrowLeft,
+  Camera,
   Check,
   ChevronLeft,
   ChevronDown,
@@ -137,7 +138,7 @@ function getScreenshotDimensions(
     }
   }
 
-  const match = report.viewport.match(/(\d+)\s*x\s*(\d+)/i)
+  const match = report.viewport?.match(/(\d+)\s*x\s*(\d+)/i)
   const width = match ? Number(match[1]) : 1440
   const height = match ? Number(match[2]) : 900
 
@@ -355,6 +356,17 @@ function ScreenshotPanel({
                 Fetching the full report screenshots.
               </p>
             </div>
+          </div>
+        ) : null}
+        {!isEvidenceHydrating && report.screenshots.length === 0 ? (
+          <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-border-hairline bg-surface-card px-6 text-center lg:col-span-2">
+            <Camera className="size-4 text-text-muted" />
+            <p className="text-heading-5 text-foreground">
+              No screenshot evidence
+            </p>
+            <p className="max-w-sm text-caption text-text-muted">
+              This task was created without visual evidence.
+            </p>
           </div>
         ) : null}
       </div>
@@ -2940,7 +2952,9 @@ export function ReportDetail({
   })
   const currentReport = reportQuery.data?.report ?? report
   const isEvidenceHydrating =
-    reportQuery.isFetching && currentReport.screenshots.length < 2
+    currentReport.source === "feedback" &&
+    reportQuery.isFetching &&
+    currentReport.screenshots.length < 2
   const canManageReport =
     currentUserRole === "owner" || currentUserRole === "admin"
   const requestedTab = getAllowedReportDetailTab(
@@ -2956,7 +2970,10 @@ export function ReportDetail({
     label: string
     value: ReportDetailTab
   }> = [
-    { label: "Evidence", value: "evidence" },
+    {
+      label: currentReport.source === "task" ? "Details" : "Evidence",
+      value: "evidence",
+    },
     { label: "Activity / Notes", value: "activity" },
     { label: "Comments", value: "comments" },
     ...(canManageReport
@@ -3019,6 +3036,9 @@ export function ReportDetail({
             <DetailBadge className={reportNeutralPillStyle}>
               {currentReport.type}
             </DetailBadge>
+            {currentReport.source === "task" ? (
+              <DetailBadge className={reportNeutralPillStyle}>Task</DetailBadge>
+            ) : null}
           </div>
 
           <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -3028,21 +3048,33 @@ export function ReportDetail({
                 {currentReport.summary}
               </p>
             </div>
-            <a
-              href={currentReport.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
-            >
-              Open URL
-              <ExternalLink className="size-3.5" />
-            </a>
+            {currentReport.url ? (
+              <a
+                href={currentReport.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-3 text-heading-5 text-foreground shadow-button-hover transition-all duration-base ease-out-soft hover:border-border-strong hover:brightness-110 active:scale-[var(--press-scale)]"
+              >
+                Open URL
+                <ExternalLink className="size-3.5" />
+              </a>
+            ) : null}
           </div>
         </header>
 
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          <MetadataItem label="Domain" value={currentReport.domain} />
-          <MetadataItem label="Captured" value={currentReport.capturedAt} />
+          <MetadataItem
+            label={currentReport.source === "task" ? "Source URL" : "Domain"}
+            value={
+              currentReport.source === "task"
+                ? currentReport.url ?? "Not provided"
+                : currentReport.domain ?? "Unknown"
+            }
+          />
+          <MetadataItem
+            label={currentReport.source === "task" ? "Created" : "Captured"}
+            value={currentReport.capturedAt}
+          />
           <MetadataItem label="Owner" value={currentReport.assignee?.name ?? "Unassigned"} />
           <MetadataItem label="Comments" value={currentReport.commentsCount} />
         </div>
@@ -3073,16 +3105,25 @@ export function ReportDetail({
           <div className="mt-4 space-y-4">
             {activeTab === "evidence" ? (
               <>
-                <ScreenshotPanel
-                  isEvidenceHydrating={isEvidenceHydrating}
-                  report={currentReport}
-                />
+                {currentReport.source === "feedback" ? (
+                  <ScreenshotPanel
+                    isEvidenceHydrating={isEvidenceHydrating}
+                    report={currentReport}
+                  />
+                ) : null}
 
-                <div className="grid gap-4 xl:grid-cols-2">
+                <div
+                  className={cn(
+                    "grid gap-4",
+                    currentReport.selectedElement && "xl:grid-cols-2"
+                  )}
+                >
                   <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
                     <div className="flex items-center gap-2 text-heading-5 text-foreground">
                       <MessageSquare className="size-4 text-text-muted" />
-                      Feedback
+                      {currentReport.source === "task"
+                        ? "Task description"
+                        : "Feedback"}
                     </div>
                     <blockquote className="mt-3 text-body-2 text-text-secondary">
                       {currentReport.feedback.message}
@@ -3095,27 +3136,30 @@ export function ReportDetail({
                         size={22}
                         value={currentReport.feedback.reporterEmail}
                       />
+                      {currentReport.source === "task" ? "Created by " : null}
                       {currentReport.feedback.reporterName} -{" "}
                       {currentReport.feedback.reporterEmail}
                     </div>
                   </section>
 
-                  <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
-                    <div className="flex items-center gap-2 text-heading-5 text-foreground">
-                      <MousePointer2 className="size-4 text-text-muted" />
-                      Selected element
-                    </div>
-                    <div className="mt-3 rounded-lg border border-border-hairline bg-background p-3">
-                      <p className="font-mono text-body-3 text-text-secondary">
-                        {currentReport.selectedElement.selector}
-                      </p>
-                      {currentReport.selectedElement.text ? (
-                        <p className="mt-2 text-body-3 text-text-body">
-                          Text: {currentReport.selectedElement.text}
+                  {currentReport.selectedElement ? (
+                    <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
+                      <div className="flex items-center gap-2 text-heading-5 text-foreground">
+                        <MousePointer2 className="size-4 text-text-muted" />
+                        Selected element
+                      </div>
+                      <div className="mt-3 rounded-lg border border-border-hairline bg-background p-3">
+                        <p className="font-mono text-body-3 text-text-secondary">
+                          {currentReport.selectedElement.selector}
                         </p>
-                      ) : null}
-                    </div>
-                  </section>
+                        {currentReport.selectedElement.text ? (
+                          <p className="mt-2 text-body-3 text-text-body">
+                            Text: {currentReport.selectedElement.text}
+                          </p>
+                        ) : null}
+                      </div>
+                    </section>
+                  ) : null}
                 </div>
 
                 <section className="rounded-xl border border-border-hairline bg-fill-translucent p-4">
