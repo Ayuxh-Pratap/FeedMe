@@ -21,6 +21,8 @@ export type WorkspaceReportType =
   | "performance"
   | "accessibility"
 
+export type WorkspaceReportSource = "feedback" | "task"
+
 export type WorkspaceReportScreenshot = {
   id: string
   label: string
@@ -128,11 +130,12 @@ export type WorkspaceReport = {
   severity: WorkspaceReportSeverity
   status: WorkspaceReportStatus
   type: WorkspaceReportType
-  domain: string
-  url: string
+  source: WorkspaceReportSource
+  domain: string | null
+  url: string | null
   browser: string
   device: string
-  viewport: string
+  viewport: string | null
   capturedAt: string
   capturedAtIso?: string
   capturedAgo: string
@@ -142,7 +145,7 @@ export type WorkspaceReport = {
     selector: string
     text?: string
     attributes: Record<string, string>
-  }
+  } | null
   feedback: {
     message: string
     reporterName: string

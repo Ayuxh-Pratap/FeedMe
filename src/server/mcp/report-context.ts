@@ -13,17 +13,22 @@ import type {
 const MCP_IMAGE_BYTE_LIMIT = 4 * 1024 * 1024
 
 export function formatReportHandoff(report: WorkspaceReport): string {
+  const isTask = report.source === "task"
   const reportData = [
     `# ${report.title}`,
     `Report: ${report.id}`,
-    `Severity: ${report.severity} | Status: ${report.status} | Type: ${report.type}`,
-    `Domain: ${report.domain} | URL: ${report.url}`,
-    `Captured: ${report.capturedAt} | Browser: ${report.browser} | Device: ${report.device} | Viewport: ${report.viewport}`,
+    `Source: ${report.source} | Severity: ${report.severity} | Status: ${report.status} | Type: ${report.type}`,
+    isTask
+      ? `Source URL: ${report.url ?? "Not provided"}`
+      : `Domain: ${report.domain} | URL: ${report.url}`,
+    isTask
+      ? `Created: ${report.capturedAt}`
+      : `Captured: ${report.capturedAt} | Browser: ${report.browser} | Device: ${report.device} | Viewport: ${report.viewport}`,
     "",
     "## Summary",
     report.summary,
     "",
-    "## Reporter feedback",
+    isTask ? "## Task description" : "## Reporter feedback",
     `${report.feedback.message} - ${report.feedback.reporterName}`,
     "",
     formatSelectedElement(report),
@@ -54,9 +59,14 @@ export function formatReportContextPack(
   report: WorkspaceReport,
   context: Pick<AccessTokenContext, "role" | "userId" | "workspaceSlug">
 ) {
+  const isTask = report.source === "task"
   const definitionOfDone = uniqueStrings([
-    "The reported issue is fixed on the captured viewport.",
-    "The selected element no longer shows the described problem.",
+    ...(isTask
+      ? ["The task description and expected behavior are satisfied."]
+      : [
+          "The reported issue is fixed on the captured viewport.",
+          "The selected element no longer shows the described problem.",
+        ]),
     ...(report.implementationBrief?.acceptanceCriteria ?? []),
     "No unrelated UI or behavior changes were introduced.",
     "Relevant checks were run, or skipped with a clear reason.",
@@ -72,6 +82,7 @@ export function formatReportContextPack(
     `Severity: ${report.severity}`,
     `Status: ${report.status}`,
     `Type: ${report.type}`,
+    `Source: ${report.source}`,
     `Assignee: ${report.assignee?.name ?? "Unassigned"}`,
     `Reporter: ${report.feedback.reporterName} (${report.feedback.reporterEmail})`,
     "",
@@ -80,14 +91,14 @@ export function formatReportContextPack(
     `Reporter feedback: ${report.feedback.message}`,
     `Expected behavior: ${report.implementationBrief?.expectedBehavior ?? "Not specified"}`,
     "",
-    "## Evidence",
-    `URL: ${report.url}`,
-    `Domain: ${report.domain}`,
-    `Captured: ${report.capturedAt}`,
-    `Browser: ${report.browser}`,
-    `Device: ${report.device}`,
-    `Viewport: ${report.viewport}`,
-    `Screenshots attached: ${report.screenshots.length}`,
+    isTask ? "## Task source" : "## Evidence",
+    `URL: ${report.url ?? "Not provided"}`,
+    isTask ? null : `Domain: ${report.domain}`,
+    isTask ? `Created: ${report.capturedAt}` : `Captured: ${report.capturedAt}`,
+    isTask ? null : `Browser: ${report.browser}`,
+    isTask ? null : `Device: ${report.device}`,
+    isTask ? null : `Viewport: ${report.viewport}`,
+    isTask ? null : `Screenshots attached: ${report.screenshots.length}`,
     "",
     formatSelectedElement(report),
     "",
@@ -104,7 +115,9 @@ export function formatReportContextPack(
     "",
     "## Definition of done",
     definitionOfDone.map((item) => `- ${item}`).join("\n"),
-  ].join("\n")
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n")
 
   return [
     "# FeedMe report context pack",
@@ -136,6 +149,11 @@ export async function getReportImageBlocks(report: WorkspaceReport) {
 
 function formatSelectedElement(report: WorkspaceReport) {
   const element = report.selectedElement
+
+  if (!element) {
+    return null
+  }
+
   const attributeEntries = Object.entries(element.attributes ?? {})
   const attributes =
     attributeEntries.length > 0

@@ -191,6 +191,87 @@ export const updateReportImplementationBriefInputSchema = z.object({
   reviewChecklist: implementationBriefListSchema,
 })
 
+const bulkTaskAssigneeSchema = z
+  .object({
+    email: z.string().trim().email().max(320).optional(),
+    userId: z.string().uuid().optional(),
+  })
+  .strict()
+  .superRefine((assignee, context) => {
+    if (Number(Boolean(assignee.email)) + Number(Boolean(assignee.userId)) !== 1) {
+      context.addIssue({
+        code: "custom",
+        message: "Provide exactly one assignee email or user id.",
+      })
+    }
+  })
+
+const bulkTaskImplementationBriefSchema =
+  updateReportImplementationBriefInputSchema.partial().strict()
+
+export const bulkCreateTasksInputSchema = z
+  .object({
+    tasks: z
+      .array(
+        z
+          .object({
+            clientTaskId: z
+              .string()
+              .trim()
+              .min(8)
+              .max(160)
+              .regex(/^[a-zA-Z0-9:_-]+$/, "Invalid client task id."),
+            title: z.string().trim().min(3).max(180),
+            description: z.string().trim().min(3).max(5000),
+            summary: z.string().trim().min(3).max(2000).optional(),
+            severity: z
+              .enum(["low", "medium", "high", "urgent"])
+              .default("medium"),
+            type: z
+              .enum([
+                "bug",
+                "ux",
+                "design",
+                "copy",
+                "performance",
+                "accessibility",
+              ])
+              .default("bug"),
+            url: z
+              .string()
+              .trim()
+              .url("Enter a valid task URL.")
+              .refine((value) => /^https?:\/\//i.test(value), {
+                message: "Task URL must be a web page.",
+              })
+              .optional(),
+            assignee: bulkTaskAssigneeSchema.optional(),
+            developerPrompt: z.string().trim().max(8000).optional(),
+            implementationBrief: bulkTaskImplementationBriefSchema.optional(),
+            createdAt: z.string().datetime().optional(),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(25),
+  })
+  .strict()
+  .superRefine(({ tasks }, context) => {
+    const seenIds = new Set<string>()
+
+    tasks.forEach((task, index) => {
+      if (seenIds.has(task.clientTaskId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Client task ids must be unique within one bulk request.",
+          path: ["tasks", index, "clientTaskId"],
+        })
+      }
+
+      seenIds.add(task.clientTaskId)
+    })
+  })
+
 export const reportNoteKindInputSchema = z.enum([
   "work_note",
   "blocker",
@@ -237,6 +318,7 @@ export const commentIdParamSchema = z.string().uuid("Choose a valid comment.")
 
 export type AssignReportInput = z.infer<typeof assignReportInputSchema>
 export type UpdateReportStatusInput = z.infer<typeof updateReportStatusInputSchema>
+export type BulkCreateTasksInput = z.infer<typeof bulkCreateTasksInputSchema>
 export type UpdateReportImplementationBriefInput = z.infer<
   typeof updateReportImplementationBriefInputSchema
 >

@@ -62,6 +62,8 @@ export const reportType = pgEnum("report_type", [
   "accessibility",
 ])
 
+export const reportSource = pgEnum("report_source", ["feedback", "task"])
+
 export const reportStatus = pgEnum("report_status", [
   "submitted",
   "reviewing",
@@ -435,13 +437,15 @@ export const reports = pgTable(
     severity: reportSeverity("severity").default("medium").notNull(),
     status: reportStatus("status").default("submitted").notNull(),
     type: reportType("type").default("ux").notNull(),
+    source: reportSource("source").default("feedback").notNull(),
     clientReportId: varchar("client_report_id", { length: 160 }),
-    domain: varchar("domain", { length: 253 }).notNull(),
-    url: text("url").notNull(),
+    clientPayloadHash: varchar("client_payload_hash", { length: 64 }),
+    domain: varchar("domain", { length: 253 }),
+    url: text("url"),
     browser: varchar("browser", { length: 120 }),
     device: varchar("device", { length: 120 }),
-    viewport: jsonb("viewport").$type<ReportViewport>().notNull(),
-    selectedElement: jsonb("selected_element").$type<ReportSelectedElement>().notNull(),
+    viewport: jsonb("viewport").$type<ReportViewport>(),
+    selectedElement: jsonb("selected_element").$type<ReportSelectedElement>(),
     feedbackMessage: text("feedback_message").notNull(),
     developerPrompt: text("developer_prompt"),
     reporterUserId: uuid("reporter_user_id").references(() => users.id, {

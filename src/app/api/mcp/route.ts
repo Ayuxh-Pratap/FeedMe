@@ -23,13 +23,20 @@ import {
   getReportImageBlocks,
 } from "@/server/mcp/report-context"
 import {
+  assignWorkspaceReport,
+  bulkCreateWorkspaceTasks,
   createWorkspaceReportNote,
   getNextWorkspaceImplementationReport,
   getWorkspaceReport,
+  listAssignableWorkspaceReportMembers,
   listWorkspaceImplementationQueue,
   listWorkspaceReports,
   updateWorkspaceReportStatus,
 } from "@/server/reports/service"
+import {
+  assignReportInputSchema,
+  bulkCreateTasksInputSchema,
+} from "@/server/reports/validation"
 import {
   assertRateLimits,
   getRequestIp,
@@ -102,6 +109,93 @@ const baseHandler = createMcpHandler(
     )
 
     server.registerTool(
+      "list_assignable_members",
+      {
+        title: "List assignable workspace members",
+        description:
+          "List active developers and designers in the PAT's workspace. Call this before assigning imported tasks, then use an exact returned userId or email.",
+        inputSchema: {},
+      },
+      async (_args, extra) => {
+        const context = getContext(extra)
+        const { members, workspace } =
+          await listAssignableWorkspaceReportMembers(
+            context.userId,
+            context.workspaceSlug
+          )
+
+        if (members.length === 0) {
+          return textResult(
+            `Workspace "${workspace.slug}" has no active developers or designers. Import tasks without assignees or invite an assignable teammate first.`
+          )
+        }
+
+        return textResult(
+          [
+            `Assignable members in workspace "${workspace.slug}":`,
+            ...members.map(
+              (member) =>
+                `- ${member.name} | ${member.role} | userId: ${member.userId} | email: ${member.email}${member.title ? ` | title: ${member.title}` : ""}`
+            ),
+            "",
+            "Match the requested teammate, then use exactly one returned userId or email. Ask the user if a name is missing or ambiguous.",
+          ].join("\n")
+        )
+      }
+    )
+
+    server.registerTool(
+      "bulk_create_tasks",
+      {
+        title: "Create workspace tasks in bulk",
+        description:
+          "Create 1-25 idempotent FeedMe tasks with full problem details, optional assignees, implementation briefs, and source URLs. These are project tasks, so they do not fabricate screenshots, viewport data, or selected elements. Unassigned tasks start submitted; assigned tasks start assigned.",
+        inputSchema: {
+          tasks: bulkCreateTasksInputSchema.shape.tasks,
+        },
+      },
+      async ({ tasks }, extra) =>
+        runBulkCreateTasks(getContext(extra), { tasks })
+    )
+
+    server.registerTool(
+      "assign_report",
+      {
+        title: "Assign or unassign a report",
+        description:
+          "Assign an existing report or project task to an active developer/designer in the PAT's workspace. Call list_assignable_members first and use an exact returned userId. Pass null only when the user explicitly asks to unassign work before it starts.",
+        inputSchema: {
+          reportId: reportIdSchema,
+          assigneeUserId:
+            assignReportInputSchema.shape.assigneeUserId.describe(
+              "Exact userId returned by list_assignable_members, or null to unassign."
+            ),
+          note: assignReportInputSchema.shape.note,
+        },
+      },
+      async ({ assigneeUserId, note, reportId }, extra) => {
+        const context = getContext(extra)
+
+        try {
+          const { report } = await assignWorkspaceReport(
+            context.userId,
+            context.workspaceSlug,
+            reportId,
+            { assigneeUserId, note }
+          )
+
+          return textResult(
+            assigneeUserId
+              ? `Assigned report ${report.id} to ${report.assignee?.name ?? assigneeUserId}. Status: ${report.status}.`
+              : `Unassigned report ${report.id}. Status: ${report.status}.`
+          )
+        } catch (error) {
+          return mutationError(error, `Could not update assignment for report ${reportId}.`)
+        }
+      }
+    )
+
+    server.registerTool(
       "list_new_assigned_reports",
       {
         title: "List new assigned reports",
@@ -158,7 +252,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Get next assigned report",
         description:
-          "Select the highest-priority fresh assigned report, breaking ties by oldest assignment, and return its complete context pack and screenshots. This read does not start work automatically.",
+          "Select the highest-priority fresh assigned report, breaking ties by oldest assignment, and return its complete context pack plus any available screenshots. This read does not start work automatically.",
         inputSchema: {},
       },
       async (_args, extra) => {
@@ -232,7 +326,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Get readable report detail",
         description:
-          "Get the existing human-readable report handoff and screenshots. For canonical agent work, prefer get_report_context_pack.",
+          "Get the existing human-readable report handoff and any available screenshots. For canonical agent work, prefer get_report_context_pack.",
         inputSchema: { reportId: reportIdSchema },
       },
       async ({ reportId }, extra) => {
@@ -259,7 +353,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Get report context pack",
         description:
-          "Get the canonical agent handoff: identity, problem, evidence, target element, implementation brief, recent notes, blockers, status history, definition of done, safe next actions, and screenshots.",
+          "Get the canonical agent handoff: identity, problem, task source or capture evidence, implementation brief, recent notes, blockers, status history, definition of done, and safe next actions.",
         inputSchema: { reportId: reportIdSchema },
       },
       async ({ reportId }, extra) => {
@@ -432,7 +526,7 @@ const baseHandler = createMcpHandler(
   },
   {
     instructions: FEEDME_MCP_SERVER_INSTRUCTIONS,
-    serverInfo: { name: "feedme", version: "0.3.0" },
+    serverInfo: { name: "feedme", version: "0.5.0" },
   },
   { basePath: "/api", disableSse: true }
 )
@@ -489,6 +583,53 @@ async function runCreateNote(
   }
 }
 
+async function runBulkCreateTasks(
+  context: AccessTokenContext,
+  rawInput: unknown
+) {
+  try {
+    const input = bulkCreateTasksInputSchema.parse(rawInput)
+
+    await assertRateLimits([
+      {
+        cost: input.tasks.length,
+        key: context.tokenId,
+        limit: 250,
+        scope: "mcp.bulk_tasks_hourly",
+        windowMs: 60 * 60 * 1000,
+      },
+      {
+        cost: input.tasks.length,
+        key: context.tokenId,
+        limit: 1_000,
+        scope: "mcp.bulk_tasks_daily",
+        windowMs: 24 * 60 * 60 * 1000,
+      },
+    ])
+
+    const result = await bulkCreateWorkspaceTasks(
+      context.userId,
+      context.workspaceSlug,
+      input
+    )
+    const lines = result.tasks.map(
+      (task) =>
+        `- ${task.clientTaskId} -> ${task.reportId} [${task.status}] ${task.title} | assignee: ${task.assigneeUserId ?? "unassigned"}${task.created ? "" : " | already existed"}`
+    )
+
+    return textResult(
+      [
+        `Workspace "${context.workspaceSlug}": created ${result.createdCount} task(s); reused ${result.existingCount} idempotent task(s).`,
+        ...lines,
+        "",
+        "Assigned developers/designers can now use list_new_assigned_reports. Use get_report_context_pack before implementation.",
+      ].join("\n")
+    )
+  } catch (error) {
+    return mutationError(error, "Could not create the workspace tasks.")
+  }
+}
+
 function formatQueueResult(
   reports: WorkspaceReport[],
   emptyText: string,
@@ -500,7 +641,7 @@ function formatQueueResult(
 
   const lines = reports.map(
     (report) =>
-      `- ${report.id} [${report.severity} / ${report.status}] ${report.title} - ${report.domain} (${report.capturedAgo})`
+      `- ${report.id} [${report.severity} / ${report.status}] ${report.title} - ${report.domain ?? report.url ?? "workspace task"} (${report.capturedAgo})`
   )
 
   return `${reports.length} report(s):\n${lines.join("\n")}\n\n${nextInstruction}`
@@ -515,12 +656,21 @@ function reportReadError(reportId: string, error: unknown) {
 }
 
 function mutationError(error: unknown, fallback: string) {
+  const message =
+    error instanceof z.ZodError
+      ? error.issues
+          .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
+          .join("; ")
+      : error instanceof AppError
+        ? error.message
+        : fallback
+
   return {
     isError: true,
     content: [
       {
         type: "text" as const,
-        text: error instanceof AppError ? error.message : fallback,
+        text: message,
       },
     ],
   }

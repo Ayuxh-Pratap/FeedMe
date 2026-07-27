@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 import {
   and,
@@ -79,6 +79,7 @@ import { normalizeDomainHost } from "@/server/workspaces/domains"
 import { getWorkspaceForUserBySlug } from "@/server/workspaces/service"
 import type {
   AssignReportInput,
+  BulkCreateTasksInput,
   CreateReportCommentInput,
   CreateReportInput,
   CreateReportNoteInput,
@@ -98,12 +99,13 @@ type ReportRow = {
   severity: WorkspaceReport["severity"]
   status: WorkspaceReport["status"]
   type: WorkspaceReport["type"]
-  domain: string
-  url: string
+  source: WorkspaceReport["source"]
+  domain: string | null
+  url: string | null
   browser: string | null
   device: string | null
-  viewport: ReportViewport
-  selectedElement: ReportSelectedElement
+  viewport: ReportViewport | null
+  selectedElement: ReportSelectedElement | null
   feedbackMessage: string
   developerPrompt: string | null
   reporterUserId: string | null
@@ -176,6 +178,35 @@ type ListWorkspaceReportsServiceInput = Omit<ListReportsInput, "sort"> & {
 }
 
 export type WorkspaceImplementationQueueStatus = "assigned" | "in_progress"
+
+export type BulkCreatedTask = {
+  assigneeUserId: string | null
+  clientTaskId: string
+  created: boolean
+  reportId: string
+  status: WorkspaceReportStatus
+  title: string
+}
+
+export type AssignableWorkspaceReportMember = {
+  email: string
+  name: string
+  role: "developer" | "designer"
+  title: string | null
+  userId: string
+}
+
+type BulkTaskInput = BulkCreateTasksInput["tasks"][number]
+
+type ResolvedBulkTask = {
+  assigneeUserId: string | null
+  implementationBrief: ReturnType<
+    typeof normalizeBulkTaskImplementationBrief
+  >
+  input: BulkTaskInput
+  payloadHash: string
+  url: string | null
+}
 
 const statusRequiresAssignee = new Set<WorkspaceReportStatus>([
   "assigned",
@@ -484,6 +515,7 @@ function reportSelectFields() {
     severity: reports.severity,
     status: reports.status,
     type: reports.type,
+    source: reports.source,
     domain: reports.domain,
     url: reports.url,
     browser: reports.browser,
@@ -625,13 +657,17 @@ function getPersonName(person: ReportPerson | undefined, fallback: string) {
   )
 }
 
-function formatViewport(viewport: ReportViewport) {
-  return `${viewport.width} x ${viewport.height}`
+function formatViewport(viewport: ReportViewport | null) {
+  return viewport ? `${viewport.width} x ${viewport.height}` : null
 }
 
 function normalizeSelectedElement(
-  selectedElement: ReportSelectedElement
+  selectedElement: ReportSelectedElement | null
 ): WorkspaceReport["selectedElement"] {
+  if (!selectedElement) {
+    return null
+  }
+
   return {
     tag: selectedElement.tag || "element",
     selector: selectedElement.selector || "unknown",
@@ -657,10 +693,11 @@ function getDefaultScreenshots(reportId: string): WorkspaceReport["screenshots"]
 
 function getScreenshotsFromAssets(
   reportId: string,
-  assets: ReportAssetRow[] = []
+  assets: ReportAssetRow[] = [],
+  source: WorkspaceReport["source"] = "feedback"
 ): WorkspaceReport["screenshots"] {
   if (assets.length === 0) {
-    return getDefaultScreenshots(reportId)
+    return source === "feedback" ? getDefaultScreenshots(reportId) : []
   }
 
   return assets.map((asset) => {
@@ -849,7 +886,9 @@ function serializeReportComment(
 function buildDeveloperPrompt(row: ReportRow) {
   return (
     row.developerPrompt ??
-    `Review ${row.url}. Feedback: ${row.feedbackMessage}`
+    (row.source === "task"
+      ? `Complete this task: ${row.feedbackMessage}`
+      : `Review ${row.url}. Feedback: ${row.feedbackMessage}`)
   )
 }
 
@@ -950,6 +989,7 @@ function serializeReport(
     severity: row.severity,
     status: row.status,
     type: row.type,
+    source: row.source,
     domain: row.domain,
     url: row.url,
     browser: row.browser ?? "Unknown browser",
@@ -958,7 +998,7 @@ function serializeReport(
     capturedAt: formatReportCapturedAt(row.capturedAt),
     capturedAtIso: row.capturedAt.toISOString(),
     capturedAgo: formatReportCapturedAgo(row.capturedAt),
-    screenshots: getScreenshotsFromAssets(row.id, assets),
+    screenshots: getScreenshotsFromAssets(row.id, assets, row.source),
     selectedElement: normalizeSelectedElement(row.selectedElement),
     feedback: {
       message: row.feedbackMessage,
@@ -1867,6 +1907,494 @@ export async function getNextWorkspaceImplementationReport(
   }
 }
 
+async function getAssignableWorkspaceReportMembers(workspaceId: string) {
+  const members = await db
+    .select({
+      displayName: userProfiles.displayName,
+      email: users.email,
+      fullName: userProfiles.fullName,
+      role: workspaceMemberships.role,
+      title: userProfiles.title,
+      userId: workspaceMemberships.userId,
+    })
+    .from(workspaceMemberships)
+    .innerJoin(users, eq(users.id, workspaceMemberships.userId))
+    .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+    .where(
+      and(
+        eq(workspaceMemberships.workspaceId, workspaceId),
+        eq(workspaceMemberships.status, "active"),
+        inArray(workspaceMemberships.role, [...assignableReportRoles])
+      )
+    )
+    .orderBy(asc(users.email))
+
+  return members.flatMap((member) =>
+    isAssignableReportRole(member.role)
+      ? [
+          {
+            email: member.email,
+            name:
+              member.fullName?.trim() ||
+              member.displayName?.trim() ||
+              getNameFromEmail(member.email),
+            role: member.role,
+            title: member.title,
+            userId: member.userId,
+          },
+        ]
+      : []
+  )
+}
+
+export async function listAssignableWorkspaceReportMembers(
+  userId: string,
+  workspaceSlug: string
+) {
+  const workspace = await requireWorkspaceForReportsRead(userId, workspaceSlug)
+
+  assertCanWorkspaceRole(workspace.role, "report:assign")
+
+  return {
+    members: await getAssignableWorkspaceReportMembers(workspace.id),
+    workspace,
+  }
+}
+
+function assertBulkTaskMatchesExisting(
+  task: ResolvedBulkTask,
+  existing: {
+    clientPayloadHash: string | null
+  }
+) {
+  if (existing.clientPayloadHash !== task.payloadHash) {
+    throw new ConflictError(
+      `Client task id "${task.input.clientTaskId}" already belongs to a different report. Use a new client task id.`
+    )
+  }
+}
+
+function buildBulkTaskPayloadHash(
+  task: BulkTaskInput,
+  assigneeUserId: string | null,
+  implementationBrief: ReturnType<
+    typeof normalizeBulkTaskImplementationBrief
+  >
+) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        assigneeUserId,
+        createdAt: task.createdAt ?? null,
+        description: task.description,
+        developerPrompt: task.developerPrompt ?? null,
+        implementationBrief,
+        severity: task.severity,
+        summary: task.summary ?? null,
+        title: task.title,
+        type: task.type,
+        url: task.url ?? null,
+      })
+    )
+    .digest("hex")
+}
+
+function normalizeBulkTaskImplementationBrief(
+  brief: BulkTaskInput["implementationBrief"]
+) {
+  if (!brief) {
+    return null
+  }
+
+  const normalized = {
+    acceptanceCriteria: brief.acceptanceCriteria ?? [],
+    implementationNotes: brief.implementationNotes ?? null,
+    constraintsNonGoals: brief.constraintsNonGoals ?? [],
+    expectedBehavior: brief.expectedBehavior ?? null,
+    referenceLinks: brief.referenceLinks ?? [],
+    reviewChecklist: brief.reviewChecklist ?? [],
+  }
+  const hasContent =
+    normalized.acceptanceCriteria.length > 0 ||
+    Boolean(normalized.implementationNotes) ||
+    normalized.constraintsNonGoals.length > 0 ||
+    Boolean(normalized.expectedBehavior) ||
+    normalized.referenceLinks.length > 0 ||
+    normalized.reviewChecklist.length > 0
+
+  return hasContent ? normalized : null
+}
+
+async function getBulkTaskByClientId(
+  workspaceId: string,
+  clientTaskId: string
+) {
+  const [row] = await db
+    .select({
+      assigneeUserId: reports.assigneeUserId,
+      clientTaskId: reports.clientReportId,
+      clientPayloadHash: reports.clientPayloadHash,
+      reportId: reports.id,
+      status: reports.status,
+      title: reports.title,
+    })
+    .from(reports)
+    .where(
+      and(
+        eq(reports.workspaceId, workspaceId),
+        eq(reports.clientReportId, clientTaskId)
+      )
+    )
+    .limit(1)
+
+  return row ?? null
+}
+
+async function insertBulkTaskAtomic({
+  actorUserId,
+  task,
+  workspaceId,
+  workspaceSlug,
+}: {
+  actorUserId: string
+  task: ResolvedBulkTask
+  workspaceId: string
+  workspaceSlug: string
+}): Promise<BulkCreatedTask> {
+  const reportId = randomUUID()
+  const status: WorkspaceReportStatus = task.assigneeUserId
+    ? "assigned"
+    : "submitted"
+  const statusEventId = randomUUID()
+  const capturedAt = task.input.createdAt
+    ? new Date(task.input.createdAt)
+    : new Date()
+  const summary =
+    task.input.summary ?? truncateText(task.input.description, 500)
+  const developerPrompt =
+    task.input.developerPrompt ??
+    [
+      `Implement FeedMe task "${task.input.title}".`,
+      task.url ? `Source URL: ${task.url}` : null,
+      `Problem: ${task.input.description}`,
+    ]
+      .filter((line): line is string => line !== null)
+      .join("\n")
+  const outboxValues = task.assigneeUserId
+    ? buildNotificationOutboxValues({
+        workspaceId,
+        recipientUserIds: [task.assigneeUserId],
+        actorUserId,
+        reportId,
+        type: "report_assigned",
+        title: "Task assigned to you",
+        body: truncateNotificationBody(task.input.title),
+        href: getReportNotificationHref(workspaceSlug, reportId),
+        dedupeKey: `bulk-task-assigned:${task.input.clientTaskId}`,
+      })
+    : null
+  const briefCte = task.implementationBrief
+    ? sql`, inserted_brief AS (
+        INSERT INTO ${reportImplementationBriefs} (
+          "workspace_id",
+          "report_id",
+          "acceptance_criteria",
+          "implementation_notes",
+          "constraints_non_goals",
+          "expected_behavior",
+          "reference_links",
+          "review_checklist",
+          "updated_by_user_id"
+        )
+        SELECT
+          ${workspaceId},
+          "id",
+          CAST(${JSON.stringify(task.implementationBrief.acceptanceCriteria)} AS jsonb),
+          ${task.implementationBrief.implementationNotes},
+          CAST(${JSON.stringify(task.implementationBrief.constraintsNonGoals)} AS jsonb),
+          ${task.implementationBrief.expectedBehavior},
+          CAST(${JSON.stringify(task.implementationBrief.referenceLinks)} AS jsonb),
+          CAST(${JSON.stringify(task.implementationBrief.reviewChecklist)} AS jsonb),
+          ${actorUserId}
+        FROM inserted_report
+      )`
+    : sql``
+  const outboxCte = outboxValues
+    ? sql`, queued_notification AS (
+        INSERT INTO ${notificationOutbox} (
+          "id",
+          "workspace_id",
+          "dedupe_key",
+          "payload"
+        )
+        SELECT
+          ${outboxValues.id},
+          ${outboxValues.workspaceId},
+          ${outboxValues.dedupeKey},
+          CAST(${JSON.stringify(outboxValues.payload)} AS jsonb)
+        FROM inserted_report
+        ON CONFLICT ("workspace_id", "dedupe_key") DO NOTHING
+      )`
+    : sql``
+  const result = await db.execute<{ id: string }>(sql`
+    WITH eligible_assignee AS MATERIALIZED (
+      SELECT "user_id"
+      FROM ${workspaceMemberships}
+      WHERE "workspace_id" = ${workspaceId}
+        AND "user_id" = CAST(${task.assigneeUserId} AS uuid)
+        AND "status" = 'active'::membership_status
+        AND "role" IN ('developer'::workspace_role, 'designer'::workspace_role)
+      FOR UPDATE
+    ),
+    inserted_report AS (
+      INSERT INTO ${reports} (
+        "id",
+        "workspace_id",
+        "client_report_id",
+        "client_payload_hash",
+        "title",
+        "summary",
+        "severity",
+        "status",
+        "type",
+        "source",
+        "domain",
+        "url",
+        "browser",
+        "device",
+        "viewport",
+        "selected_element",
+        "feedback_message",
+        "developer_prompt",
+        "reporter_user_id",
+        "assignee_user_id",
+        "captured_at"
+      )
+      SELECT
+        ${reportId},
+        ${workspaceId},
+        ${task.input.clientTaskId},
+        ${task.payloadHash},
+        ${task.input.title},
+        ${summary},
+        CAST(${task.input.severity} AS report_severity),
+        CAST(${status} AS report_status),
+        CAST(${task.input.type} AS report_type),
+        'task'::report_source,
+        NULL,
+        ${task.url},
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        ${task.input.description},
+        ${developerPrompt},
+        ${actorUserId},
+        ${task.assigneeUserId},
+        ${capturedAt}
+      WHERE CAST(${task.assigneeUserId} AS uuid) IS NULL
+        OR EXISTS (SELECT 1 FROM eligible_assignee)
+      ON CONFLICT ("workspace_id", "client_report_id") DO NOTHING
+      RETURNING "id"
+    ),
+    inserted_event AS (
+      INSERT INTO ${reportStatusEvents} (
+        "id",
+        "workspace_id",
+        "report_id",
+        "actor_user_id",
+        "from_status",
+        "to_status",
+        "note"
+      )
+      SELECT
+        ${statusEventId},
+        ${workspaceId},
+        "id",
+        ${actorUserId},
+        NULL,
+        CAST(${status} AS report_status),
+        ${task.assigneeUserId
+          ? "Task created through MCP and assigned."
+          : "Task created through MCP."}
+      FROM inserted_report
+    )
+    ${briefCte}
+    ${outboxCte}
+    SELECT "id" FROM inserted_report
+  `)
+
+  if (result.rows[0]?.id) {
+    if (outboxValues?.id) {
+      await processNotificationOutboxEvent(outboxValues.id as string)
+    }
+
+    return {
+      assigneeUserId: task.assigneeUserId,
+      clientTaskId: task.input.clientTaskId,
+      created: true,
+      reportId,
+      status,
+      title: task.input.title,
+    }
+  }
+
+  const existing = await getBulkTaskByClientId(
+    workspaceId,
+    task.input.clientTaskId
+  )
+
+  if (!existing) {
+    throw new ConflictError(
+      `Task "${task.input.clientTaskId}" could not be committed atomically. Retry the same request.`
+    )
+  }
+
+  assertBulkTaskMatchesExisting(task, existing)
+
+  return {
+    assigneeUserId: existing.assigneeUserId,
+    clientTaskId: task.input.clientTaskId,
+    created: false,
+    reportId: existing.reportId,
+    status: existing.status,
+    title: existing.title,
+  }
+}
+
+export async function bulkCreateWorkspaceTasks(
+  userId: string,
+  workspaceSlug: string,
+  input: BulkCreateTasksInput
+) {
+  const workspace = await requireWorkspaceForReportCreate(userId, workspaceSlug)
+  const needsAssignment = input.tasks.some((task) => task.assignee)
+  const needsBrief = input.tasks.some(
+    (task) => normalizeBulkTaskImplementationBrief(task.implementationBrief) !== null
+  )
+
+  if (needsAssignment) {
+    assertCanWorkspaceRole(workspace.role, "report:assign")
+  }
+
+  if (needsBrief) {
+    assertCanWorkspaceRole(workspace.role, "report:update_brief")
+  }
+
+  const assignableMembers = needsAssignment
+    ? await getAssignableWorkspaceReportMembers(workspace.id)
+    : []
+  const memberById = new Map(
+    assignableMembers.map((member) => [member.userId, member])
+  )
+  const memberByEmail = new Map(
+    assignableMembers.map((member) => [member.email.toLowerCase(), member])
+  )
+  const resolvedTasks: ResolvedBulkTask[] = input.tasks.map((task, index) => {
+    const implementationBrief = normalizeBulkTaskImplementationBrief(
+      task.implementationBrief
+    )
+    const member = task.assignee?.userId
+      ? memberById.get(task.assignee.userId)
+      : task.assignee?.email
+        ? memberByEmail.get(task.assignee.email.toLowerCase())
+        : undefined
+
+    if (task.assignee && !member) {
+      throw new ValidationError(
+        `Task ${index + 1} has an invalid assignee.`,
+        {
+          [`tasks.${index}.assignee`]: [
+            "Choose an active developer or designer in this workspace.",
+          ],
+        }
+      )
+    }
+
+    return {
+      assigneeUserId: member?.userId ?? null,
+      implementationBrief,
+      input: task,
+      payloadHash: buildBulkTaskPayloadHash(
+        task,
+        member?.userId ?? null,
+        implementationBrief
+      ),
+      url: task.url ?? null,
+    }
+  })
+  const existingRows = await db
+    .select({
+      assigneeUserId: reports.assigneeUserId,
+      clientTaskId: reports.clientReportId,
+      clientPayloadHash: reports.clientPayloadHash,
+      reportId: reports.id,
+      status: reports.status,
+      title: reports.title,
+    })
+    .from(reports)
+    .where(
+      and(
+        eq(reports.workspaceId, workspace.id),
+        inArray(
+          reports.clientReportId,
+          resolvedTasks.map((task) => task.input.clientTaskId)
+        )
+      )
+    )
+  const existingByClientId = new Map(
+    existingRows.flatMap((row) =>
+      row.clientTaskId ? [[row.clientTaskId, row] as const] : []
+    )
+  )
+  const resultsByClientId = new Map<string, BulkCreatedTask>()
+  const newTasks: ResolvedBulkTask[] = []
+
+  for (const task of resolvedTasks) {
+    const existing = existingByClientId.get(task.input.clientTaskId)
+
+    if (!existing) {
+      newTasks.push(task)
+      continue
+    }
+
+    assertBulkTaskMatchesExisting(task, existing)
+    resultsByClientId.set(task.input.clientTaskId, {
+      assigneeUserId: existing.assigneeUserId,
+      clientTaskId: task.input.clientTaskId,
+      created: false,
+      reportId: existing.reportId,
+      status: existing.status,
+      title: existing.title,
+    })
+  }
+
+  const createdTasks = await Promise.all(
+    newTasks.map((task) =>
+      insertBulkTaskAtomic({
+        actorUserId: userId,
+        task,
+        workspaceId: workspace.id,
+        workspaceSlug,
+      })
+    )
+  )
+
+  for (const task of createdTasks) {
+    resultsByClientId.set(task.clientTaskId, task)
+  }
+
+  return {
+    createdCount: createdTasks.filter((task) => task.created).length,
+    existingCount:
+      input.tasks.length -
+      createdTasks.filter((task) => task.created).length,
+    tasks: input.tasks.map(
+      (task) => resultsByClientId.get(task.clientTaskId) as BulkCreatedTask
+    ),
+  }
+}
+
 export async function createWorkspaceReport(
   userId: string,
   workspaceSlug: string,
@@ -2097,7 +2625,16 @@ export async function assignWorkspaceReport(
       )`
     : sql``
   const updateResult = await db.execute<{ id: string }>(sql`
-    WITH updated_report AS (
+    WITH eligible_assignee AS MATERIALIZED (
+      SELECT "user_id"
+      FROM ${workspaceMemberships}
+      WHERE "workspace_id" = ${workspace.id}
+        AND "user_id" = CAST(${nextAssigneeUserId} AS uuid)
+        AND "status" = 'active'::membership_status
+        AND "role" IN ('developer'::workspace_role, 'designer'::workspace_role)
+      FOR UPDATE
+    ),
+    updated_report AS (
       UPDATE ${reports}
       SET
         "assignee_user_id" = ${nextAssigneeUserId},
@@ -2111,6 +2648,10 @@ export async function assignWorkspaceReport(
         AND "id" = ${reportId}
         AND "status" = CAST(${row.status} AS report_status)
         AND "assignee_user_id" IS NOT DISTINCT FROM ${row.assigneeUserId}
+        AND (
+          CAST(${nextAssigneeUserId} AS uuid) IS NULL
+          OR EXISTS (SELECT 1 FROM eligible_assignee)
+        )
       RETURNING "id"
     ),
     inserted_event AS (

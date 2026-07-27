@@ -10,6 +10,7 @@ export const FEEDME_MCP_SERVER_INSTRUCTIONS = [
   "FeedMe turns workspace reports into assigned implementation work.",
   `Before the first FeedMe task, read ${FEEDME_DEVELOPER_GUIDE_URI} or call get_feedme_guide.`,
   "Use list_new_assigned_reports for unstarted work, list_in_progress_reports for active work, and get_next_report when the user asks for the next issue.",
+  "Use bulk_create_tasks only when the user explicitly asks to import or create multiple workspace tasks. The PAT selects the destination workspace; call list_assignable_members before setting assignees, and provide stable clientTaskId values so retries cannot duplicate work.",
   "Always inspect get_report_context_pack before changing code. Start work explicitly, keep clarification requests separate from blockers, and mark ready for review only after verification.",
   FEEDME_MCP_TRUST_INSTRUCTION,
   FEEDME_MCP_LINK_INSTRUCTION,
@@ -39,6 +40,9 @@ Do not fetch every report and guess what to do. Select the correct queue, load o
 | Resume work already started | list_in_progress_reports(limit?) |
 | Pick the best fresh assignment now | get_next_report() |
 | Load one complete implementation packet | get_report_context_pack(reportId) |
+| Discover valid task assignees | list_assignable_members() |
+| Import structured project work | bulk_create_tasks(tasks) |
+| Assign existing work | assign_report(reportId, assigneeUserId, note?) |
 | Confirm workspace and live role | whoami() |
 
 get_next_report selects only reports assigned to the PAT user with exact status assigned. It orders urgent, high, medium, low, then uses the oldest assignment and capture time. It returns the context pack but does not change status.
@@ -49,14 +53,34 @@ Before editing code, call get_report_context_pack unless get_next_report already
 
 - report identity, status, severity, assignee, and reporter
 - problem summary, reporter feedback, and expected behavior
-- page, element, and annotated screenshot evidence
-- URL, browser, device, viewport, and selected DOM element
+- optional task source URL, or page/element screenshot evidence and capture metadata for feedback reports
 - implementation brief, acceptance criteria, constraints, links, and review checklist
 - existing developer prompt
 - recent work notes, clarification requests, blockers, and status history
 - definition of done and actions permitted for the current PAT user
 
 get_report(reportId) remains a shorter readable handoff. Prefer get_report_context_pack for implementation work.
+
+## Bulk task import
+
+Use bulk_create_tasks only when the user explicitly asks to create or import project work. It accepts 1-25 tasks per call.
+
+- The connected PAT fixes the destination to workspace "${context.workspaceSlug}". Never ask bulk_create_tasks to choose or infer another workspace. To target another workspace, the user must connect a PAT for that workspace.
+- clientTaskId is required, stable across retries, and unique inside the request. Namespace it to the source, for example github:repo_123 or import:sprint_7:task_12.
+- Only clientTaskId, title, and description are required. Severity defaults to medium and type defaults to bug.
+- createdAt optionally preserves the source task's creation timestamp.
+- url is optional context and may point to any HTTP(S) source. Tasks do not require a workspace capture domain.
+- When assignment is requested, call list_assignable_members first. Match the user's requested teammate against the returned members, then send that member's exact userId or email. Ask when the name is missing or ambiguous. Only active developers/designers are assignable, and setting an assignee requires owner/admin permission.
+- implementationBrief is optional, and every field inside it is independently optional: acceptance criteria, implementation notes, constraints/non-goals, expected behavior, reference links, and review checklist. Include only facts the user or source supplied. Never invent content to fill a field.
+- Preserve all useful source information in the closest matching field. Omit unknown optional fields instead of writing placeholders such as "N/A", "unknown", or fabricated acceptance criteria.
+- imported tasks have no screenshots, captured viewport, or selected DOM element.
+- a task with an assignee starts assigned; otherwise it starts submitted. Do not use bulk import to bypass later workflow transitions.
+- retry the same request with the same clientTaskId values after an uncertain response. FeedMe returns existing matching tasks and rejects an id reused for different content.
+- For more than 25 tasks, split the import into batches of at most 25 while keeping every clientTaskId stable.
+
+After import, assigned teammates use list_new_assigned_reports. Load get_report_context_pack before implementation.
+
+assign_report handles an existing unassigned report or task after import. Call list_assignable_members first and pass an exact returned userId. Assignment is locked once work starts; do not retry with a different teammate after a conflict. Pass assigneeUserId = null only when the user explicitly requests unassignment before work starts.
 
 ## Workflow actions
 
@@ -135,5 +159,15 @@ Presets are MCP prompts. They guide work but do not bypass tool permissions or r
 1. Use the analyze_no_code prompt with an optional reportId.
 2. Load the context pack.
 3. Return root cause, affected surfaces, edge cases, and a scoped plan.
-4. Do not start work, edit files, or change report status.`
+4. Do not start work, edit files, or change report status.
+
+### Import project tasks
+
+1. whoami() to confirm the destination workspace and live role.
+2. If any task should be assigned, call list_assignable_members().
+3. Match each requested teammate against the returned members, then use that member's exact userId or email. If the match is missing or ambiguous, ask the user; import it unassigned only with their approval.
+4. Build stable source-namespaced clientTaskId values and preserve all known task information.
+5. Include only known optional fields and implementation-brief sections.
+6. Call bulk_create_tasks in batches of at most 25.
+7. Report created versus reused task ids. If the response is uncertain, retry the identical payload with the same clientTaskId values.`
 }

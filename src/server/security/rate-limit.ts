@@ -7,6 +7,7 @@ import { rateLimitBuckets } from "@/db/schema"
 import { RateLimitError } from "@/server/http/errors"
 
 type RateLimitRule = {
+  cost?: number
   key: string
   limit: number
   scope: string
@@ -35,11 +36,13 @@ export function getRequestIp(request: Request) {
 }
 
 export async function assertRateLimit({
+  cost = 1,
   key,
   limit,
   scope,
   windowMs,
 }: RateLimitRule) {
+  const safeCost = Math.max(1, Math.floor(cost))
   const now = new Date()
   const nextWindowExpiresAt = new Date(now.getTime() + windowMs)
   const keyHash = hashRateLimitKey(key)
@@ -51,12 +54,12 @@ export async function assertRateLimit({
       "window_started_at",
       "window_expires_at"
     )
-    VALUES (${scope}, ${keyHash}, 1, ${now}, ${nextWindowExpiresAt})
+    VALUES (${scope}, ${keyHash}, ${safeCost}, ${now}, ${nextWindowExpiresAt})
     ON CONFLICT ("scope", "key_hash") DO UPDATE
     SET
       "hit_count" = CASE
-        WHEN ${rateLimitBuckets.windowExpiresAt} <= ${now} THEN 1
-        ELSE ${rateLimitBuckets.hitCount} + 1
+        WHEN ${rateLimitBuckets.windowExpiresAt} <= ${now} THEN ${safeCost}
+        ELSE ${rateLimitBuckets.hitCount} + ${safeCost}
       END,
       "window_started_at" = CASE
         WHEN ${rateLimitBuckets.windowExpiresAt} <= ${now} THEN ${now}

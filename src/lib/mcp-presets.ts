@@ -559,10 +559,12 @@ export function buildReportFixPrompt(report: WorkspaceReport) {
   const reportData = [
     `Report ID: ${report.id}`,
     `Title: ${report.title}`,
-    `URL: ${report.url}`,
+    `URL: ${report.url ?? "Not provided"}`,
     `Severity: ${report.severity}`,
     `Status: ${report.status}`,
-    `Selected element: ${report.selectedElement.selector}`,
+    report.selectedElement
+      ? `Selected element: ${report.selectedElement.selector}`
+      : `Source: ${report.source}`,
     "",
     "Problem:",
     report.feedback.message || report.summary,
@@ -599,7 +601,9 @@ export function buildReportFixPrompt(report: WorkspaceReport) {
     wrapUntrustedReportData(reportData),
     "",
     "Required workflow:",
-    "1. Inspect the screenshots and selected-element context.",
+    report.source === "task"
+      ? "1. Inspect the task description, implementation brief, notes, and source URL."
+      : "1. Inspect the screenshots and selected-element context.",
     "2. Trace the owning code path and state the root cause before editing.",
     "3. Implement the smallest complete production-safe fix using repository conventions.",
     "4. Run relevant checks and compare the result against every criterion above.",
