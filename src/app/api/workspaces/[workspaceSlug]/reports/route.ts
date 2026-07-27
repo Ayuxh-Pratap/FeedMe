@@ -9,6 +9,7 @@ import {
   createReportInputSchema,
   listReportsInputSchema,
 } from "@/server/reports/validation"
+import { assertRateLimits, getRequestIp } from "@/server/security/rate-limit"
 
 export const runtime = "nodejs"
 
@@ -24,6 +25,11 @@ export async function GET(
 ) {
   try {
     const currentSession = await requireCurrentSession()
+    await assertRateLimits([
+      { key: currentSession.user.id, limit: 30, scope: "reports.create.user", windowMs: 60 * 1000 },
+      { key: currentSession.user.id, limit: 500, scope: "reports.create.user_daily", windowMs: 24 * 60 * 60 * 1000 },
+      { key: getRequestIp(request), limit: 1_000, scope: "reports.create.ip_daily", windowMs: 24 * 60 * 60 * 1000 },
+    ])
     const { workspaceSlug } = await params
     const searchParams = new URL(request.url).searchParams
     const input = listReportsInputSchema.parse(

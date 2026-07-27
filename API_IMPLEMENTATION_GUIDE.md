@@ -1342,7 +1342,7 @@ list/detail/counts are separate contracts
 list pages render cached summaries immediately on return navigation
 right rail renders summary first, then hydrates selected report detail
 assignment/status mutations patch every affected cache optimistically
-failed mutations roll back to the previous cached report
+failed mutations refetch authoritative entity/list data without restoring whole-cache snapshots
 polling or realtime must surface new reports without hard reload
 ```
 
@@ -1828,7 +1828,7 @@ Dashboard interaction rules:
 row selection updates locally immediately
 right rail may show summary first, then hydrate detail
 assignment/status mutations update optimistically
-failed mutations roll back to the previous report
+failed mutations refetch authoritative entity/list data without restoring whole-cache snapshots
 do not router.refresh() after assignment/status changes
 ```
 
@@ -1878,3 +1878,90 @@ workspace membership checks
 domain normalization
 transactional workspace creation
 ```
+
+## Production Hardening Contract
+
+### Authentication Lifecycle
+
+Email/password signup is sessionless until email verification succeeds.
+Verification and password-reset tokens are random, hashed at rest, single-use,
+and expire after 24 hours and one hour respectively. Verification preserves a
+validated internal `nextPath`, including invite links. Password reset revokes all
+existing sessions before creating a new one. Password change keeps only the
+current session.
+
+Required production environment variables:
+
+```txt
+NEXT_PUBLIC_SITE_URL
+RESEND_API_KEY
+AUTH_EMAIL_FROM
+INTERNAL_OPERATIONS_SECRET
+```
+
+Account endpoints return generic email-request responses so callers cannot use
+signup or password recovery to enumerate registered accounts.
+
+### Abuse Protection
+
+The shared database-backed fixed-window limiter applies independent IP, user,
+email, and PAT quotas. Routes return `429` with `Retry-After`. Near-capacity and
+blocked events are emitted as structured server logs without raw emails, IPs, or
+tokens. High-cost paths have both burst and daily limits:
+
+```txt
+login and signup
+verification and password recovery
+upload signature issuance
+report and comment creation
+invite creation and acceptance
+PAT creation
+MCP requests
+```
+
+### Access Withdrawal
+
+Owners and admins can change managed roles, disable or restore members, remove
+members, revoke invite links, and revoke all workspace MCP tokens for a member.
+Owners are immutable. Admins cannot manage another admin. A member cannot manage
+their own workspace access through these endpoints.
+
+When an implementation member loses access or moves to a non-implementation
+role, active assignments are atomically released to `reviewing`, status events
+are recorded, and workspace PATs are revoked when access is disabled or removed.
+PATs expire after 90 days and always resolve the member's live role and status.
+
+### Atomic Writes And Idempotency
+
+Report creation inserts the report, initial event, and screenshot rows in one
+statement and deduplicates by `(workspace_id, client_report_id)`. Assignment and
+status transitions use compare-and-swap conditions. Comment creation uses
+`(workspace_id, client_mutation_id)` as its idempotency boundary and commits the
+comment, mentions, and notification outbox rows together. Invite acceptance uses
+an `invite_acceptances` ledger unique on `(invite_id, user_id)` and atomically
+claims invite capacity.
+
+### Notification Outbox
+
+Workflow changes and their notification outbox event commit together.
+Notification rows deduplicate per recipient. Delivery retries use bounded
+exponential backoff; after eight failures an event is dead-lettered and a
+structured error is logged.
+
+Call this endpoint from a trusted scheduler at least every five minutes:
+
+```txt
+GET /api/internal/notification-worker
+Authorization: Bearer <INTERNAL_OPERATIONS_SECRET>
+```
+
+The endpoint processes pending notifications, reports pending/dead-letter
+health, and prunes expired rate-limit buckets. Dashboard notification polling is
+an additional opportunistic retry path, not the only worker.
+
+### Migration Safety
+
+Migration `0008` intentionally backfills legacy users as verified, grants
+existing PATs a 90-day expiry window, repairs workflow rows missing assignees,
+and only then adds `NOT NULL` and CHECK constraints. Do not replace those
+statements with Drizzle's raw generated `ADD COLUMN ... NOT NULL` form.

@@ -71,8 +71,8 @@ import {
   reportStatusPillStyles,
 } from "@/components/feedme/dashboard/report-badge-styles"
 import { ConnectAgentDialog } from "@/components/feedme/dashboard/connect-agent-dialog"
+import { AccountSecurityDialog } from "@/components/feedme/dashboard/account-security-dialog"
 import { InviteMemberDialog } from "@/components/feedme/dashboard/invite-member-dialog"
-import { AppQueryProvider } from "@/components/providers/app-query-provider"
 import {
   useWorkspaceDashboardData,
   WorkspaceDashboardDataProvider,
@@ -389,6 +389,7 @@ function WorkspaceSwitcher({
   const [isSwitchDialogOpen, setIsSwitchDialogOpen] = useState(false)
   const [isDomainsDialogOpen, setIsDomainsDialogOpen] = useState(false)
   const [isConnectAgentOpen, setIsConnectAgentOpen] = useState(false)
+  const [isAccountSecurityOpen, setIsAccountSecurityOpen] = useState(false)
   const switchCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const workspaceOptions =
     availableWorkspaces.length > 0
@@ -471,11 +472,13 @@ function WorkspaceSwitcher({
             role="menu"
             className="absolute left-0 top-[calc(100%+0.375rem)] z-50 w-52 rounded-lg border border-border-hairline bg-surface-card p-1 text-foreground shadow-popover motion-safe:animate-[feedme-menu-in_180ms_var(--motion-out)_both]"
           >
-            <WorkspaceMenuDisabledItem>
+            <WorkspaceMenuAction onClick={() => {
+              setOpen(false)
+              setIsAccountSecurityOpen(true)
+            }}>
               <Settings2 className="size-4 text-text-muted" />
-              <span className="min-w-0 flex-1 truncate">Settings</span>
-              <span className="text-caption text-text-muted">Soon</span>
-            </WorkspaceMenuDisabledItem>
+              <span className="min-w-0 flex-1 truncate">Account security</span>
+            </WorkspaceMenuAction>
             <WorkspaceMenuAction
               onClick={() => {
                 setOpen(false)
@@ -590,6 +593,10 @@ function WorkspaceSwitcher({
         onOpenChange={setIsConnectAgentOpen}
         workspace={workspace}
       />
+      <AccountSecurityDialog
+        open={isAccountSecurityOpen}
+        onOpenChange={setIsAccountSecurityOpen}
+      />
     </>
   )
 }
@@ -610,18 +617,6 @@ function WorkspaceMenuAction({
     >
       {children}
     </button>
-  )
-}
-
-function WorkspaceMenuDisabledItem({ children }: { children: ReactNode }) {
-  return (
-    <div
-      aria-disabled="true"
-      role="menuitem"
-      className="flex h-8 items-center gap-2 rounded-md px-2.5 text-heading-5 text-text-muted"
-    >
-      {children}
-    </div>
   )
 }
 
@@ -1130,6 +1125,10 @@ function ExtensionCard({ onInstall }: { onInstall: () => void }) {
 }
 
 function SidebarInviteButton({ workspace }: { workspace: MockWorkspace }) {
+  if (workspace.currentUserRole !== "owner" && workspace.currentUserRole !== "admin") {
+    return null
+  }
+
   return (
     <InviteMemberDialog
       workspaceName={workspace.name}
@@ -1250,16 +1249,18 @@ function DashboardSearchInput({
 
   useEffect(() => {
     if (urlSearchValue === committedSearchValueRef.current) {
+      setDashboardSearchQuery(urlSearchValue)
       return
     }
 
     const syncTimer = setTimeout(() => {
       committedSearchValueRef.current = urlSearchValue
       setDraftSearchValue(urlSearchValue)
+      setDashboardSearchQuery(urlSearchValue)
     }, 0)
 
     return () => clearTimeout(syncTimer)
-  }, [urlSearchValue])
+  }, [setDashboardSearchQuery, urlSearchValue])
 
   useEffect(() => {
     return () => {
@@ -2947,7 +2948,6 @@ export function WorkspaceShell({
   const searchParams = useSearchParams()
 
   return (
-    <AppQueryProvider>
       <WorkspaceDashboardDataProvider
         currentUserId={workspace.currentUserId ?? ""}
         currentUserRole={workspace.currentUserRole ?? "viewer"}
@@ -2962,7 +2962,6 @@ export function WorkspaceShell({
           {children}
         </WorkspaceShellContent>
       </WorkspaceDashboardDataProvider>
-    </AppQueryProvider>
   )
 }
 
@@ -3028,14 +3027,10 @@ function WorkspaceShellContent({
     updateReport(nextReport)
   }, [updateReport])
 
-  // reportCount comes from the server render, so an empty workspace is known on
-  // the very first paint. This suppresses the rail synchronously instead of
-  // flashing the loading skeleton before the client store reports "empty".
-  const workspaceHasNoReports = (workspace.reportCount ?? 0) === 0
   const shouldDisableReportsRail =
     isReportsIndexRoute &&
-    (workspaceHasNoReports ||
-      (!reportRailIsLoading && scopedReportRailReports.length === 0))
+    !reportRailIsLoading &&
+    scopedReportRailReports.length === 0
   const shouldDisableMyWorkRail =
     isMyWorkRoute &&
     !reportRailIsLoading &&

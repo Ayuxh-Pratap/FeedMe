@@ -7,13 +7,13 @@ import {
   useQueryClient,
   type InfiniteData,
   type QueryClient,
-  type QueryKey,
 } from "@tanstack/react-query"
 import { useCallback, useEffect } from "react"
 
 import { deleteJson, getJson, patchJson, postJson } from "@/lib/api-client"
 import {
   reportKeys,
+  normalizeReportListFilters,
   workspaceKeys,
   type ReportCountFilters,
   type ReportListFilters,
@@ -33,18 +33,15 @@ import type {
 } from "@/lib/reports"
 
 export type ReportMutationResponse = {
-  notificationDelivery?: "delivered" | "failed" | "not_required"
+  notificationDelivery?: "delivered" | "queued" | "not_required"
   report: WorkspaceReport
 }
 
-type CachedReportSnapshot = Array<[QueryKey, unknown]>
 type ReportsInfiniteData = InfiniteData<WorkspaceReportsListResponse, string | null>
 type ReportsListQueryKey =
   | ReturnType<typeof reportKeys.list>
   | ReturnType<typeof reportKeys.myWork>
-type ReportMutationContext = {
-  snapshots: CachedReportSnapshot
-}
+type ReportMutationContext = void
 
 type AssignReportVariables = {
   assignee?: WorkspaceReport["assignee"]
@@ -327,19 +324,69 @@ export function countUnseenReports({
 
 function patchReportList(
   reports: WorkspaceReport[],
-  nextReport: WorkspaceReport
+  nextReport: WorkspaceReport,
+  filters?: ReturnType<typeof normalizeReportListFilters>
 ) {
   let didUpdate = false
-  const nextReports = reports.map((report) => {
+  const nextReports = reports.flatMap((report) => {
     if (report.id !== nextReport.id) {
-      return report
+      return [report]
     }
 
     didUpdate = true
-    return mergeReportCacheEntry(report, nextReport)
+    const mergedReport = mergeReportCacheEntry(report, nextReport)
+
+    return filters && !reportMatchesListFilters(mergedReport, report, filters)
+      ? []
+      : [mergedReport]
   })
 
   return didUpdate ? nextReports : reports
+}
+
+function reportMatchesListFilters(
+  report: WorkspaceReport,
+  previousReport: WorkspaceReport,
+  filters: ReturnType<typeof normalizeReportListFilters>
+) {
+  if (filters.status === "open" && !["submitted", "reviewing", "accepted", "needs_info"].includes(report.status)) {
+    return false
+  }
+
+  if (filters.status === "in_progress" && !["assigned", "in_progress", "ready_for_review"].includes(report.status)) {
+    return false
+  }
+
+  if (filters.status === "resolved" && report.status !== "resolved") {
+    return false
+  }
+
+  if (filters.scope === "assigned") {
+    const remainsAssignedToViewer =
+      report.assigneeUserId === previousReport.assigneeUserId &&
+      ["assigned", "in_progress", "ready_for_review"].includes(report.status)
+
+    if (!remainsAssignedToViewer) {
+      return false
+    }
+  }
+
+  if (filters.q) {
+    const query = filters.q.toLocaleLowerCase()
+    const searchable = [
+      report.title,
+      report.summary,
+      report.domain,
+      report.url,
+      report.feedback.message,
+    ].join(" ").toLocaleLowerCase()
+
+    if (!searchable.includes(query)) {
+      return false
+    }
+  }
+
+  return true
 }
 
 function isOptimisticReportComment(comment: WorkspaceReportComment) {
@@ -750,14 +797,15 @@ function patchReportDetailCacheData<T>(data: T, nextReport: WorkspaceReport): T 
 
 function patchReportCollectionCacheData<T>(
   data: T,
-  nextReport: WorkspaceReport
+  nextReport: WorkspaceReport,
+  filters?: ReturnType<typeof normalizeReportListFilters>
 ): T {
   if (!data || typeof data !== "object") {
     return data
   }
 
   if ("reports" in data && Array.isArray(data.reports)) {
-    const nextReports = patchReportList(data.reports, nextReport)
+    const nextReports = patchReportList(data.reports, nextReport, filters)
 
     if (nextReports === data.reports) {
       return data
@@ -780,7 +828,7 @@ function patchReportCollectionCacheData<T>(
         return page
       }
 
-      const nextReports = patchReportList(page.reports, nextReport)
+      const nextReports = patchReportList(page.reports, nextReport, filters)
 
       if (nextReports === page.reports) {
         return page
@@ -806,22 +854,31 @@ function patchReportCollectionCacheData<T>(
   return data
 }
 
-function patchReportCacheData<T>(data: T, nextReport: WorkspaceReport): T {
-  return patchReportCollectionCacheData(
-    patchReportDetailCacheData(data, nextReport),
-    nextReport
-  )
-}
-
 export function syncReportAcrossCaches(
   queryClient: QueryClient,
   workspaceSlug: string,
   report: WorkspaceReport
 ) {
-  queryClient.setQueriesData(
-    { queryKey: reportKeys.all(workspaceSlug) },
-    (currentData) => patchReportCacheData(currentData, report)
-  )
+  for (const [queryKey, currentData] of queryClient.getQueriesData({
+    queryKey: reportKeys.all(workspaceSlug),
+  })) {
+    const cacheKind = queryKey[3]
+    const filters =
+      (cacheKind === "list" || cacheKind === "my-work") &&
+      queryKey[4] &&
+      typeof queryKey[4] === "object"
+        ? (queryKey[4] as ReturnType<typeof normalizeReportListFilters>)
+        : undefined
+
+    queryClient.setQueryData(
+      queryKey,
+      patchReportCollectionCacheData(
+        patchReportDetailCacheData(currentData, report),
+        report,
+        filters
+      )
+    )
+  }
 }
 
 export function syncReportCollectionCaches(
@@ -969,18 +1026,26 @@ function invalidateWorkspaceNotifications(
   })
 }
 
-function restoreReportSnapshots(
-  queryClient: QueryClient,
-  snapshots: CachedReportSnapshot | undefined
-) {
-  for (const [queryKey, data] of snapshots ?? []) {
-    queryClient.setQueryData(queryKey, data)
-  }
+function recoverReportCaches(queryClient: QueryClient, workspaceSlug: string) {
+  void queryClient.invalidateQueries({
+    queryKey: reportKeys.all(workspaceSlug),
+    refetchType: "active",
+  })
 }
 
-function getReportSnapshots(queryClient: QueryClient, workspaceSlug: string) {
-  return queryClient.getQueriesData({
-    queryKey: reportKeys.all(workspaceSlug),
+function refreshReportCollections(queryClient: QueryClient, workspaceSlug: string) {
+  void queryClient.invalidateQueries({
+    predicate: (query) => {
+      const key = query.queryKey
+
+      return (
+        key[0] === "workspace" &&
+        key[1] === workspaceSlug &&
+        key[2] === "reports" &&
+        ["list", "my-work", "freshness"].includes(String(key[3]))
+      )
+    },
+    refetchType: "active",
   })
 }
 
@@ -1149,13 +1214,12 @@ export function useAssignReportMutation(workspaceSlug: string) {
         `${getReportMutationBaseUrl(workspaceSlug, report.id)}/assignment`,
         { assigneeUserId }
       ),
-    onError: (_error, _variables, context) => {
-      restoreReportSnapshots(queryClient, context?.snapshots)
+    onError: () => {
+      recoverReportCaches(queryClient, workspaceSlug)
     },
     onMutate: async ({ assignee, assigneeUserId, report }) => {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
 
-      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
       const optimisticReport: WorkspaceReport = {
         ...report,
         assignee,
@@ -1169,11 +1233,14 @@ export function useAssignReportMutation(workspaceSlug: string) {
 
       syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
 
-      return { snapshots }
     },
     onSettled: () => {
+      refreshReportCollections(queryClient, workspaceSlug)
       void queryClient.invalidateQueries({
         queryKey: reportKeys.countsRoot(workspaceSlug),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: workspaceKeys.members(workspaceSlug),
       })
       invalidateWorkspaceNotifications(queryClient, workspaceSlug)
     },
@@ -1197,13 +1264,12 @@ export function useUpdateReportStatusMutation(workspaceSlug: string) {
         `${getReportMutationBaseUrl(workspaceSlug, report.id)}/status`,
         { status }
       ),
-    onError: (_error, _variables, context) => {
-      restoreReportSnapshots(queryClient, context?.snapshots)
+    onError: () => {
+      recoverReportCaches(queryClient, workspaceSlug)
     },
     onMutate: async ({ report, status }) => {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
 
-      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
       const optimisticReport: WorkspaceReport = {
         ...report,
         status,
@@ -1211,11 +1277,14 @@ export function useUpdateReportStatusMutation(workspaceSlug: string) {
 
       syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
 
-      return { snapshots }
     },
     onSettled: () => {
+      refreshReportCollections(queryClient, workspaceSlug)
       void queryClient.invalidateQueries({
         queryKey: reportKeys.countsRoot(workspaceSlug),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: workspaceKeys.members(workspaceSlug),
       })
       invalidateWorkspaceNotifications(queryClient, workspaceSlug)
     },
@@ -1239,13 +1308,12 @@ export function useUpdateReportImplementationBriefMutation(workspaceSlug: string
         `${getReportMutationBaseUrl(workspaceSlug, report.id)}/implementation-brief`,
         implementationBrief
       ),
-    onError: (_error, _variables, context) => {
-      restoreReportSnapshots(queryClient, context?.snapshots)
+    onError: () => {
+      recoverReportCaches(queryClient, workspaceSlug)
     },
     onMutate: async ({ implementationBrief, report }) => {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
 
-      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
       const optimisticReport: WorkspaceReport = {
         ...report,
         implementationBrief,
@@ -1253,7 +1321,6 @@ export function useUpdateReportImplementationBriefMutation(workspaceSlug: string
 
       syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
 
-      return { snapshots }
     },
     onSuccess: (result) => {
       syncReportAcrossCaches(queryClient, workspaceSlug, result.report)
@@ -1275,13 +1342,12 @@ export function useCreateReportNoteMutation(workspaceSlug: string) {
         `${getReportMutationBaseUrl(workspaceSlug, report.id)}/notes`,
         { body, kind }
       ),
-    onError: (_error, _variables, context) => {
-      restoreReportSnapshots(queryClient, context?.snapshots)
+    onError: () => {
+      recoverReportCaches(queryClient, workspaceSlug)
     },
     onMutate: async ({ optimisticActivityItem, report }) => {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
 
-      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
       const optimisticReport: WorkspaceReport = {
         ...report,
         activity: [optimisticActivityItem, ...(report.activity ?? [])],
@@ -1289,7 +1355,6 @@ export function useCreateReportNoteMutation(workspaceSlug: string) {
 
       syncReportAcrossCaches(queryClient, workspaceSlug, optimisticReport)
 
-      return { snapshots }
     },
     onSettled: () => {
       invalidateWorkspaceNotifications(queryClient, workspaceSlug)
@@ -1309,22 +1374,35 @@ export function useCreateReportCommentMutation(workspaceSlug: string) {
     CreateReportCommentVariables,
     ReportMutationContext
   >({
-    mutationFn: ({ body, mentionedUserIds, parentCommentId, report }) =>
+    mutationFn: ({
+      body,
+      mentionedUserIds,
+      optimisticComment,
+      parentCommentId,
+      report,
+    }) =>
       postJson<WorkspaceReportCommentMutationResponse>(
         `${getReportMutationBaseUrl(workspaceSlug, report.id)}/comments`,
         {
           body,
+          clientMutationId: optimisticComment.id,
           mentionedUserIds: mentionedUserIds ?? [],
           parentCommentId: parentCommentId ?? null,
         }
       ),
-    onError: (_error, _variables, context) => {
-      restoreReportSnapshots(queryClient, context?.snapshots)
+    onError: (_error, variables) => {
+      patchReportCommentsAcrossCaches({
+        baseReport: variables.report,
+        queryClient,
+        reportId: variables.report.id,
+        workspaceSlug,
+        patcher: (comments) => removeCommentFromTree(comments, variables.optimisticComment.id),
+      })
+      recoverReportCaches(queryClient, workspaceSlug)
     },
     onMutate: async ({ onOptimisticCommit, optimisticComment, report }) => {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
 
-      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
       const optimisticCommentsCount = report.commentsCount + 1
 
       patchReportCommentsAcrossCaches({
@@ -1342,7 +1420,6 @@ export function useCreateReportCommentMutation(workspaceSlug: string) {
       })
       onOptimisticCommit?.()
 
-      return { snapshots }
     },
     onSettled: () => {
       void queryClient.invalidateQueries({
@@ -1391,13 +1468,11 @@ export function useUpdateReportCommentMutation(workspaceSlug: string) {
         }),
         { body, mentionedUserIds }
       ),
-    onError: (_error, _variables, context) => {
-      restoreReportSnapshots(queryClient, context?.snapshots)
+    onError: () => {
+      recoverReportCaches(queryClient, workspaceSlug)
     },
     onMutate: async ({ optimisticComment, report }) => {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
-
-      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
 
       patchReportCommentsAcrossCaches({
         baseReport: report,
@@ -1407,7 +1482,6 @@ export function useUpdateReportCommentMutation(workspaceSlug: string) {
         patcher: (comments) => updateCommentInTree(comments, optimisticComment),
       })
 
-      return { snapshots }
     },
     onSettled: () => {
       invalidateWorkspaceNotifications(queryClient, workspaceSlug)
@@ -1441,15 +1515,14 @@ export function useDeleteReportCommentMutation(workspaceSlug: string) {
           workspaceSlug,
         })
       ),
-    onError: (_error, variables, context) => {
+    onError: (_error, variables) => {
       // The delete failed; allow the comment to reappear.
       unmarkCommentDeleted(variables.comment.id)
-      restoreReportSnapshots(queryClient, context?.snapshots)
+      recoverReportCaches(queryClient, workspaceSlug)
     },
     onMutate: async ({ comment, optimisticComment, report }) => {
       await queryClient.cancelQueries({ queryKey: reportKeys.all(workspaceSlug) })
 
-      const snapshots = getReportSnapshots(queryClient, workspaceSlug)
       const optimisticRemoved = comment.replyCount === 0
       const optimisticCommentsCount = Math.max(0, report.commentsCount - 1)
 
@@ -1472,7 +1545,6 @@ export function useDeleteReportCommentMutation(workspaceSlug: string) {
         workspaceSlug,
       })
 
-      return { snapshots }
     },
     onSettled: () => {
       void queryClient.invalidateQueries({

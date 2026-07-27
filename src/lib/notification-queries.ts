@@ -38,20 +38,17 @@ export function useMarkWorkspaceNotificationsReadMutation(workspaceSlug: string)
     MarkWorkspaceNotificationsReadResponse,
     Error,
     MarkNotificationsReadVariables,
-    { previousData?: WorkspaceNotificationsResponse }
+    void
   >({
     mutationFn: ({ notificationIds }) =>
       patchJson<MarkWorkspaceNotificationsReadResponse>(
         `/api/workspaces/${encodeURIComponent(workspaceSlug)}/notifications`,
         { notificationIds }
       ),
-    onError: (_error, _variables, context) => {
-      if (context?.previousData) {
-        queryClient.setQueryData(
-          workspaceKeys.notifications(workspaceSlug),
-          context.previousData
-        )
-      }
+    onError: () => {
+      void queryClient.invalidateQueries({
+        queryKey: workspaceKeys.notifications(workspaceSlug),
+      })
     },
     onMutate: async ({ notificationIds }) => {
       const queryKey = workspaceKeys.notifications(workspaceSlug)
@@ -88,7 +85,6 @@ export function useMarkWorkspaceNotificationsReadMutation(workspaceSlug: string)
         })
       }
 
-      return { previousData }
     },
     onSuccess: (result) => {
       queryClient.setQueryData(

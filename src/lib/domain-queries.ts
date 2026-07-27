@@ -30,10 +30,6 @@ type DeleteDomainVariables = {
   domainId: string
 }
 
-type DomainMutationContext = {
-  previousDomains?: WorkspaceDomainsResponse
-}
-
 function getWorkspaceDomainsUrl(workspaceSlug: string) {
   return `/api/workspaces/${encodeURIComponent(workspaceSlug)}/domains`
 }
@@ -98,22 +94,17 @@ export function useDeleteWorkspaceDomainMutation(workspaceSlug: string) {
     WorkspaceDomainMutationResponse,
     Error,
     DeleteDomainVariables,
-    DomainMutationContext
+    void
   >({
     mutationFn: ({ domainId }) =>
       deleteJson<WorkspaceDomainMutationResponse>(
         getWorkspaceDomainUrl(workspaceSlug, domainId)
       ),
-    onError: (_error, _variables, context) => {
-      if (context?.previousDomains) {
-        queryClient.setQueryData(queryKey, context.previousDomains)
-      }
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey })
     },
     onMutate: async ({ domainId }) => {
       await queryClient.cancelQueries({ queryKey })
-
-      const previousDomains =
-        queryClient.getQueryData<WorkspaceDomainsResponse>(queryKey)
 
       queryClient.setQueryData<WorkspaceDomainsResponse>(queryKey, (currentData) => {
         if (!currentData) {
@@ -126,7 +117,6 @@ export function useDeleteWorkspaceDomainMutation(workspaceSlug: string) {
         }
       })
 
-      return { previousDomains }
     },
   })
 }

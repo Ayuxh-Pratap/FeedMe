@@ -1,8 +1,11 @@
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm"
+import { randomUUID } from "node:crypto"
+
+import { and, asc, desc, eq, inArray, isNull, lte, ne, sql } from "drizzle-orm"
 
 import { db } from "@/db"
 import {
   notifications,
+  notificationOutbox,
   userProfiles,
   users,
   workspaceMemberships,
@@ -43,6 +46,44 @@ export type CreateWorkspaceNotificationInput = {
   title: string
   type: WorkspaceNotificationType
   workspaceId: string
+}
+
+export type DurableWorkspaceNotificationInput =
+  CreateWorkspaceNotificationInput & { dedupeKey: string }
+
+export function buildNotificationOutboxValues(
+  input: DurableWorkspaceNotificationInput
+): typeof notificationOutbox.$inferInsert | null {
+  const recipientUserIds = [
+    ...new Set(
+      input.recipientUserIds.filter(
+        (recipientUserId) =>
+          recipientUserId && recipientUserId !== input.actorUserId
+      )
+    ),
+  ]
+
+  if (recipientUserIds.length === 0) {
+    return null
+  }
+
+  return {
+    id: randomUUID(),
+    workspaceId: input.workspaceId,
+    dedupeKey: input.dedupeKey,
+    payload: {
+      actorUserId: input.actorUserId,
+      body: input.body,
+      commentId: input.commentId,
+      href: input.href,
+      metadata: input.metadata,
+      noteId: input.noteId,
+      recipientUserIds,
+      reportId: input.reportId,
+      title: input.title,
+      type: input.type,
+    },
+  }
 }
 
 function getPersonName(person: NotificationPerson) {
@@ -154,6 +195,7 @@ export async function listWorkspaceNotifications(
     userId,
     workspaceSlug
   )
+  await processWorkspaceNotificationOutbox(workspace.id)
   const unreadCondition = input.unreadOnly ? isNull(notifications.readAt) : undefined
   const rows = await db
     .select()
@@ -295,4 +337,161 @@ export async function createWorkspaceNotifications({
     })
 
   return uniqueRecipientIds.length
+}
+
+export async function enqueueWorkspaceNotification(
+  input: DurableWorkspaceNotificationInput
+) {
+  const values = buildNotificationOutboxValues(input)
+
+  if (!values) {
+    return null
+  }
+
+  const [event] = await db
+    .insert(notificationOutbox)
+    .values(values)
+    .onConflictDoNothing({
+      target: [notificationOutbox.workspaceId, notificationOutbox.dedupeKey],
+    })
+    .returning({ id: notificationOutbox.id })
+
+  if (event) {
+    return event.id
+  }
+
+  const [existing] = await db
+    .select({ id: notificationOutbox.id })
+    .from(notificationOutbox)
+    .where(
+      and(
+        eq(notificationOutbox.workspaceId, input.workspaceId),
+        eq(notificationOutbox.dedupeKey, input.dedupeKey)
+      )
+    )
+    .limit(1)
+
+  return existing?.id ?? null
+}
+
+export async function processNotificationOutboxEvent(eventId: string) {
+  const [event] = await db
+    .select()
+    .from(notificationOutbox)
+    .where(
+      and(
+        eq(notificationOutbox.id, eventId),
+        isNull(notificationOutbox.processedAt),
+        isNull(notificationOutbox.deadLetteredAt),
+        lte(notificationOutbox.availableAt, new Date())
+      )
+    )
+    .limit(1)
+
+  if (!event) {
+    return false
+  }
+
+  try {
+    await createWorkspaceNotifications({
+      ...event.payload,
+      dedupeKey: event.dedupeKey,
+      workspaceId: event.workspaceId,
+    })
+
+    await db
+      .update(notificationOutbox)
+      .set({ processedAt: new Date(), lastError: null })
+      .where(eq(notificationOutbox.id, event.id))
+
+    return true
+  } catch (error) {
+    const attempts = event.attempts + 1
+    const deadLettered = attempts >= 8
+    const backoffMs = Math.min(15 * 60 * 1000, 2 ** Math.min(attempts, 8) * 1000)
+    const errorMessage =
+      error instanceof Error
+        ? error.message.slice(0, 1000)
+        : "Unknown notification delivery error."
+
+    await db
+      .update(notificationOutbox)
+      .set({
+        attempts,
+        availableAt: new Date(Date.now() + backoffMs),
+        deadLetteredAt: deadLettered ? new Date() : null,
+        lastError: errorMessage,
+      })
+      .where(eq(notificationOutbox.id, event.id))
+
+    if (deadLettered) {
+      console.error("notifications.outbox.dead_lettered", {
+        eventId: event.id,
+        workspaceId: event.workspaceId,
+        attempts,
+        error: errorMessage,
+      })
+    }
+
+    return false
+  }
+}
+
+export async function processWorkspaceNotificationOutbox(
+  workspaceId: string,
+  limit = 20
+) {
+  const events = await db
+    .select({ id: notificationOutbox.id })
+    .from(notificationOutbox)
+    .where(
+      and(
+        eq(notificationOutbox.workspaceId, workspaceId),
+        isNull(notificationOutbox.processedAt),
+        isNull(notificationOutbox.deadLetteredAt),
+        lte(notificationOutbox.availableAt, new Date())
+      )
+    )
+    .orderBy(asc(notificationOutbox.createdAt), asc(notificationOutbox.id))
+    .limit(limit)
+
+  for (const event of events) {
+    await processNotificationOutboxEvent(event.id)
+  }
+}
+
+export async function processPendingNotificationOutbox(limit = 100) {
+  const events = await db
+    .select({ id: notificationOutbox.id })
+    .from(notificationOutbox)
+    .where(
+      and(
+        isNull(notificationOutbox.processedAt),
+        isNull(notificationOutbox.deadLetteredAt),
+        lte(notificationOutbox.availableAt, new Date())
+      )
+    )
+    .orderBy(asc(notificationOutbox.createdAt), asc(notificationOutbox.id))
+    .limit(limit)
+  let processed = 0
+
+  for (const event of events) {
+    if (await processNotificationOutboxEvent(event.id)) {
+      processed += 1
+    }
+  }
+
+  return { attempted: events.length, processed }
+}
+
+export async function getNotificationOutboxHealth() {
+  const [row] = await db
+    .select({
+      pending: sql<number>`count(*) filter (where ${notificationOutbox.processedAt} is null and ${notificationOutbox.deadLetteredAt} is null)::int`.mapWith(Number),
+      deadLettered: sql<number>`count(*) filter (where ${notificationOutbox.deadLetteredAt} is not null)::int`.mapWith(Number),
+      oldestPendingAt: sql<Date | null>`min(${notificationOutbox.createdAt}) filter (where ${notificationOutbox.processedAt} is null and ${notificationOutbox.deadLetteredAt} is null)`,
+    })
+    .from(notificationOutbox)
+
+  return row ?? { pending: 0, deadLettered: 0, oldestPendingAt: null }
 }

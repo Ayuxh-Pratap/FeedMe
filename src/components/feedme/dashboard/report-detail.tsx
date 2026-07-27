@@ -1219,7 +1219,6 @@ function ActivityNotesPanel({
   )
   const [body, setBody] = useState("")
   const [error, setError] = useState<string | null>(null)
-  const [deliveryWarning, setDeliveryWarning] = useState<string | null>(null)
   const createNoteMutation = useCreateReportNoteMutation(workspaceSlug)
   const activity = report.activity ?? []
   const effectiveKind =
@@ -1236,10 +1235,9 @@ function ActivityNotesPanel({
     }
 
     setError(null)
-    setDeliveryWarning(null)
 
     try {
-      const result = await createNoteMutation.mutateAsync({
+      await createNoteMutation.mutateAsync({
         body: trimmedBody,
         kind: effectiveKind,
         optimisticActivityItem: {
@@ -1261,13 +1259,6 @@ function ActivityNotesPanel({
         report,
       })
       setBody("")
-
-      if (result.notificationDelivery === "failed") {
-        setDeliveryWarning(
-          "The note was saved, but notifications could not be delivered. Do not submit it again."
-        )
-        return
-      }
 
       setNoteDialogOpen(false)
     } catch (updateError) {
@@ -1301,7 +1292,6 @@ function ActivityNotesPanel({
                 type="button"
                 onClick={() => {
                   setError(null)
-                  setDeliveryWarning(null)
                   setNoteDialogOpen(true)
                 }}
                 className="inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border-hairline bg-fill-translucent px-2.5 text-heading-5 text-text-body shadow-button-secondary transition-all duration-base ease-out-soft hover:bg-fill-subtle hover:text-foreground active:scale-[var(--press-scale)]"
@@ -1369,9 +1359,6 @@ function ActivityNotesPanel({
 
                 {error ? (
                   <p className="mt-2 text-caption text-error">{error}</p>
-                ) : null}
-                {deliveryWarning ? (
-                  <p className="mt-2 text-caption text-warning">{deliveryWarning}</p>
                 ) : null}
               </div>
 

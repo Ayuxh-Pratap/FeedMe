@@ -610,13 +610,22 @@ reports list returns from cache on back navigation
 right rail changes selected report instantly
 detail evidence hydrates without blanking summary content
 assignment/status updates reflect instantly across list, rail, detail, and my work
-failed mutations roll back cleanly with visible error messaging
+failed mutations reconcile from authoritative data with visible error messaging
 status/count tabs show exact backend totals
 new reports appear through polling or realtime without hard reload
 no report workflow action calls router.refresh()
 no backend entities live in Zustand
 no random component fetches bypass query hooks
 ```
+
+Mutation recovery must be concurrency-safe. A failed mutation may remove its own
+optimistic entity by id, but it must never restore every report cache from an old
+snapshot because that can undo another mutation that succeeded later.
+
+There is exactly one application `QueryClientProvider`, mounted in the root
+layout. Workspace shells must not create nested query clients. Cached rows stay
+visible during background reconciliation, and list membership is checked against
+the active backend filters after status or assignment changes.
 
 Current implementation status:
 

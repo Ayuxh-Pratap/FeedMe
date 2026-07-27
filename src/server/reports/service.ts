@@ -21,6 +21,7 @@ import {
   reportComments,
   reportImplementationBriefs,
   reportNotes,
+  notificationOutbox,
   reportStatusEvents,
   reports,
   userProfiles,
@@ -68,9 +69,10 @@ import {
   ValidationError,
 } from "@/server/http/errors"
 import {
-  createWorkspaceNotifications,
+  buildNotificationOutboxValues,
   getActiveWorkspaceUserIdsByRoles,
-  type CreateWorkspaceNotificationInput,
+  processNotificationOutboxEvent,
+  type DurableWorkspaceNotificationInput,
 } from "@/server/notifications/service"
 import { assertCanWorkspaceRole } from "@/server/policies/can"
 import { normalizeDomainHost } from "@/server/workspaces/domains"
@@ -225,17 +227,6 @@ function truncateNotificationBody(value: string) {
   }
 
   return `${normalized.slice(0, notificationTextMaxLength - 1).trim()}…`
-}
-
-async function createWorkspaceNotificationsSafely(
-  input: CreateWorkspaceNotificationInput
-) {
-  try {
-    return await createWorkspaceNotifications(input)
-  } catch (error) {
-    console.error("Failed to create workspace notification.", error)
-    return null
-  }
 }
 
 function isAssignedImplementationMember(
@@ -1535,73 +1526,6 @@ async function getReportIdByClientReportId(
   return row?.id ?? null
 }
 
-function getSubmittedStatusEventValues(
-  workspaceId: string,
-  reportId: string,
-  userId: string
-) {
-  return {
-    workspaceId,
-    reportId,
-    actorUserId: userId,
-    fromStatus: null,
-    toStatus: "submitted" as const,
-    note: "Report submitted.",
-  }
-}
-
-function getCreateReportAssetValues(
-  workspaceId: string,
-  reportId: string,
-  input: CreateReportInput
-) {
-  return input.assets.map((asset) => ({
-    workspaceId,
-    reportId,
-    type: asset.type,
-    url: asset.url,
-    mimeType: asset.mimeType,
-    width: asset.width,
-    height: asset.height,
-  }))
-}
-
-async function insertReportCreateSideEffects(
-  workspaceId: string,
-  reportId: string,
-  userId: string,
-  input: CreateReportInput
-) {
-  const statusEventInsert = db
-    .insert(reportStatusEvents)
-    .values(getSubmittedStatusEventValues(workspaceId, reportId, userId))
-
-  if (input.assets.length > 0) {
-    await db.batch([
-      statusEventInsert,
-      db
-        .insert(reportAssets)
-        .values(getCreateReportAssetValues(workspaceId, reportId, input)),
-    ])
-    return
-  }
-
-  await statusEventInsert
-}
-
-async function deleteInsertedReportAfterCreateFailure(
-  workspaceId: string,
-  reportId: string
-) {
-  try {
-    await db
-      .delete(reports)
-      .where(and(eq(reports.workspaceId, workspaceId), eq(reports.id, reportId)))
-  } catch (cleanupError) {
-    console.error("Failed to clean up report after create failure.", cleanupError)
-  }
-}
-
 async function assertAssignableReportMember(workspaceId: string, userId: string) {
   const [member] = await db
     .select({ id: workspaceMemberships.id })
@@ -1656,6 +1580,7 @@ async function applyReportStatusTransitionAtomic({
   actorUserId,
   fromStatus,
   note,
+  outboxValues,
   reportId,
   statusEventId,
   toStatus,
@@ -1664,6 +1589,7 @@ async function applyReportStatusTransitionAtomic({
   actorUserId: string
   fromStatus: WorkspaceReportStatus
   note?: string
+  outboxValues?: typeof notificationOutbox.$inferInsert | null
   reportId: string
   statusEventId: string
   toStatus: WorkspaceReportStatus
@@ -1679,6 +1605,23 @@ async function applyReportStatusTransitionAtomic({
           ("workspace_id", "report_id", "author_user_id", "kind", "body")
         SELECT ${workspaceId}, ${reportId}, ${actorUserId}, 'work_note', ${readyForReviewNote}
         FROM updated_report
+      )`
+    : sql.empty()
+  const outboxCte = outboxValues
+    ? sql`, queued_notification AS (
+        INSERT INTO ${notificationOutbox} (
+          "id",
+          "workspace_id",
+          "dedupe_key",
+          "payload"
+        )
+        SELECT
+          ${outboxValues.id},
+          ${outboxValues.workspaceId},
+          ${outboxValues.dedupeKey},
+          CAST(${JSON.stringify(outboxValues.payload)} AS jsonb)
+        FROM updated_report
+        ON CONFLICT ("workspace_id", "dedupe_key") DO NOTHING
       )`
     : sql.empty()
   const result = await db.execute<{ updated: boolean }>(sql`
@@ -1707,6 +1650,7 @@ async function applyReportStatusTransitionAtomic({
       FROM updated_report
     )
     ${noteCte}
+    ${outboxCte}
     SELECT EXISTS (SELECT 1 FROM updated_report) AS "updated"
   `)
 
@@ -1957,34 +1901,116 @@ export async function createWorkspaceReport(
     capturedAt,
   } satisfies typeof reports.$inferInsert
 
+  const statusEventId = randomUUID()
+  const assetRows = sql.join(
+    input.assets.map(
+      (asset) => sql`(
+        CAST(${asset.type} AS report_asset_type),
+        ${asset.url},
+        ${asset.mimeType ?? null},
+        ${asset.width ?? null},
+        ${asset.height ?? null}
+      )`
+    ),
+    sql`, `
+  )
+  const result = await db.execute<{ id: string }>(sql`
+    WITH inserted_report AS (
+      INSERT INTO ${reports} (
+        "id",
+        "workspace_id",
+        "client_report_id",
+        "title",
+        "summary",
+        "severity",
+        "status",
+        "type",
+        "domain",
+        "url",
+        "browser",
+        "device",
+        "viewport",
+        "selected_element",
+        "feedback_message",
+        "developer_prompt",
+        "reporter_user_id",
+        "captured_at"
+      )
+      VALUES (
+        ${reportId},
+        ${workspace.id},
+        ${clientReportId},
+        ${reportValues.title},
+        ${reportValues.summary},
+        CAST(${reportValues.severity} AS report_severity),
+        'submitted'::report_status,
+        CAST(${reportValues.type} AS report_type),
+        ${reportValues.domain},
+        ${reportValues.url},
+        ${reportValues.browser ?? null},
+        ${reportValues.device ?? null},
+        CAST(${JSON.stringify(reportValues.viewport)} AS jsonb),
+        CAST(${JSON.stringify(reportValues.selectedElement)} AS jsonb),
+        ${reportValues.feedbackMessage},
+        ${reportValues.developerPrompt ?? null},
+        ${userId},
+        ${capturedAt}
+      )
+      ON CONFLICT ("workspace_id", "client_report_id") DO NOTHING
+      RETURNING "id"
+    ),
+    inserted_status_event AS (
+      INSERT INTO ${reportStatusEvents} (
+        "id",
+        "workspace_id",
+        "report_id",
+        "actor_user_id",
+        "from_status",
+        "to_status",
+        "note"
+      )
+      SELECT
+        ${statusEventId},
+        ${workspace.id},
+        "id",
+        ${userId},
+        NULL,
+        'submitted'::report_status,
+        'Report submitted.'
+      FROM inserted_report
+    ),
+    inserted_assets AS (
+      INSERT INTO ${reportAssets} (
+        "workspace_id",
+        "report_id",
+        "type",
+        "url",
+        "mime_type",
+        "width",
+        "height"
+      )
+      SELECT
+        ${workspace.id},
+        inserted_report."id",
+        asset."type",
+        asset."url",
+        asset."mime_type",
+        asset."width",
+        asset."height"
+      FROM inserted_report
+      CROSS JOIN (
+        VALUES ${assetRows}
+      ) AS asset("type", "url", "mime_type", "width", "height")
+    )
+    SELECT "id" FROM inserted_report
+  `)
+  const insertedReportId = result.rows[0]?.id
+
+  if (insertedReportId) {
+    return getWorkspaceReport(userId, workspaceSlug, insertedReportId)
+  }
+
   if (clientReportId) {
-    const [insertedReport] = await db
-      .insert(reports)
-      .values(reportValues)
-      .onConflictDoNothing({
-        target: [reports.workspaceId, reports.clientReportId],
-      })
-      .returning({ id: reports.id })
-
-    if (insertedReport) {
-      try {
-        await insertReportCreateSideEffects(
-          workspace.id,
-          insertedReport.id,
-          userId,
-          input
-        )
-      } catch (error) {
-        await deleteInsertedReportAfterCreateFailure(
-          workspace.id,
-          insertedReport.id
-        )
-        throw error
-      }
-
-      return getWorkspaceReport(userId, workspaceSlug, insertedReport.id)
-    }
-
     const existingReportId = await getReportIdByClientReportId(
       workspace.id,
       clientReportId
@@ -1993,28 +2019,11 @@ export async function createWorkspaceReport(
     if (existingReportId) {
       return getWorkspaceReport(userId, workspaceSlug, existingReportId)
     }
-
-    throw new ValidationError("Report was already submitted. Refresh and try again.")
   }
 
-  const reportInsert = db.insert(reports).values(reportValues)
-  const statusEventInsert = db
-    .insert(reportStatusEvents)
-    .values(getSubmittedStatusEventValues(workspace.id, reportId, userId))
-
-  if (input.assets.length > 0) {
-    await db.batch([
-      reportInsert,
-      statusEventInsert,
-      db
-        .insert(reportAssets)
-        .values(getCreateReportAssetValues(workspace.id, reportId, input)),
-    ])
-  } else {
-    await db.batch([reportInsert, statusEventInsert])
-  }
-
-  return getWorkspaceReport(userId, workspaceSlug, reportId)
+  throw new ConflictError(
+    "This report could not be committed atomically. Refresh and try again."
+  )
 }
 
 export async function assignWorkspaceReport(
@@ -2051,48 +2060,91 @@ export async function assignWorkspaceReport(
     return getWorkspaceReport(userId, workspaceSlug, reportId)
   }
 
-  const updateValues: Partial<typeof reports.$inferInsert> = {
-    assigneeUserId: nextAssigneeUserId,
-    status: nextStatus,
-  }
-
-  if (didChangeStatus) {
-    updateValues.resolvedAt = getResolvedAtForStatus(nextStatus)
-  }
-
   const note =
     input.note ??
     (nextAssigneeUserId ? "Report assigned." : "Report unassigned.")
   const statusEventId = randomUUID()
+  const now = new Date()
+  const outboxValues =
+    didChangeAssignee && nextAssigneeUserId
+      ? buildNotificationOutboxValues({
+          workspaceId: workspace.id,
+          recipientUserIds: [nextAssigneeUserId],
+          actorUserId: userId,
+          reportId,
+          type: "report_assigned",
+          title: "Report assigned to you",
+          body: truncateNotificationBody(row.title),
+          href: getReportNotificationHref(workspaceSlug, reportId),
+          dedupeKey: `report-assigned:${statusEventId}`,
+        })
+      : null
+  const outboxCte = outboxValues
+    ? sql`, queued_notification AS (
+        INSERT INTO ${notificationOutbox} (
+          "id",
+          "workspace_id",
+          "dedupe_key",
+          "payload"
+        )
+        SELECT
+          ${outboxValues.id},
+          ${outboxValues.workspaceId},
+          ${outboxValues.dedupeKey},
+          CAST(${JSON.stringify(outboxValues.payload)} AS jsonb)
+        FROM updated_report
+        ON CONFLICT ("workspace_id", "dedupe_key") DO NOTHING
+      )`
+    : sql``
+  const updateResult = await db.execute<{ id: string }>(sql`
+    WITH updated_report AS (
+      UPDATE ${reports}
+      SET
+        "assignee_user_id" = ${nextAssigneeUserId},
+        "status" = CAST(${nextStatus} AS report_status),
+        "resolved_at" = CASE
+          WHEN ${didChangeStatus} THEN ${getResolvedAtForStatus(nextStatus)}
+          ELSE "resolved_at"
+        END,
+        "updated_at" = ${now}
+      WHERE "workspace_id" = ${workspace.id}
+        AND "id" = ${reportId}
+        AND "status" = CAST(${row.status} AS report_status)
+        AND "assignee_user_id" IS NOT DISTINCT FROM ${row.assigneeUserId}
+      RETURNING "id"
+    ),
+    inserted_event AS (
+      INSERT INTO ${reportStatusEvents} (
+        "id",
+        "workspace_id",
+        "report_id",
+        "actor_user_id",
+        "from_status",
+        "to_status",
+        "note"
+      )
+      SELECT
+        ${statusEventId},
+        ${workspace.id},
+        ${reportId},
+        ${userId},
+        CAST(${row.status} AS report_status),
+        CAST(${nextStatus} AS report_status),
+        ${note}
+      FROM updated_report
+    )
+    ${outboxCte}
+    SELECT "id" FROM updated_report
+  `)
 
-  await db.batch([
-    db
-      .update(reports)
-      .set(updateValues)
-      .where(and(eq(reports.workspaceId, workspace.id), eq(reports.id, reportId))),
-    db.insert(reportStatusEvents).values({
-      id: statusEventId,
-      workspaceId: workspace.id,
-      reportId,
-      actorUserId: userId,
-      fromStatus: row.status,
-      toStatus: nextStatus,
-      note,
-    }),
-  ])
+  if (!updateResult.rows[0]) {
+    throw new ConflictError(
+      "This report changed before the assignment was applied. Refresh and try again."
+    )
+  }
 
-  if (didChangeAssignee && nextAssigneeUserId) {
-    await createWorkspaceNotificationsSafely({
-      workspaceId: workspace.id,
-      recipientUserIds: [nextAssigneeUserId],
-      actorUserId: userId,
-      reportId,
-      type: "report_assigned",
-      title: "Report assigned to you",
-      body: truncateNotificationBody(row.title),
-      href: getReportNotificationHref(workspaceSlug, reportId),
-      dedupeKey: `report-assigned:${statusEventId}`,
-    })
+  if (outboxValues?.id) {
+    await processNotificationOutboxEvent(outboxValues.id)
   }
 
   return getWorkspaceReport(userId, workspaceSlug, reportId)
@@ -2148,21 +2200,7 @@ export async function updateWorkspaceReportStatus(
   }
 
   const statusEventId = randomUUID()
-  const didUpdate = await applyReportStatusTransitionAtomic({
-    actorUserId: userId,
-    fromStatus: row.status,
-    note: input.note,
-    reportId,
-    statusEventId,
-    toStatus: input.status,
-    workspaceId: workspace.id,
-  })
-
-  if (!didUpdate) {
-    throw new ConflictError(
-      "This report changed before the update was applied. Refresh its context and try again."
-    )
-  }
+  let statusOutboxValues: typeof notificationOutbox.$inferInsert | null = null
 
   if (input.status === "ready_for_review") {
     const adminUserIds = await getActiveWorkspaceUserIdsByRoles(
@@ -2171,7 +2209,7 @@ export async function updateWorkspaceReportStatus(
       [userId]
     )
 
-    await createWorkspaceNotificationsSafely({
+    statusOutboxValues = buildNotificationOutboxValues({
       workspaceId: workspace.id,
       recipientUserIds: adminUserIds,
       actorUserId: userId,
@@ -2185,7 +2223,7 @@ export async function updateWorkspaceReportStatus(
   }
 
   if (input.status === "resolved") {
-    await createWorkspaceNotificationsSafely({
+    statusOutboxValues = buildNotificationOutboxValues({
       workspaceId: workspace.id,
       recipientUserIds: [row.assigneeUserId, row.reporterUserId].filter(
         Boolean
@@ -2198,6 +2236,27 @@ export async function updateWorkspaceReportStatus(
       href: getReportNotificationHref(workspaceSlug, reportId),
       dedupeKey: `report-resolved:${statusEventId}`,
     })
+  }
+
+  const didUpdate = await applyReportStatusTransitionAtomic({
+    actorUserId: userId,
+    fromStatus: row.status,
+    note: input.note,
+    outboxValues: statusOutboxValues,
+    reportId,
+    statusEventId,
+    toStatus: input.status,
+    workspaceId: workspace.id,
+  })
+
+  if (!didUpdate) {
+    throw new ConflictError(
+      "This report changed before the update was applied. Refresh its context and try again."
+    )
+  }
+
+  if (statusOutboxValues?.id) {
+    await processNotificationOutboxEvent(statusOutboxValues.id)
   }
 
   return getWorkspaceReport(userId, workspaceSlug, reportId)
@@ -2220,64 +2279,20 @@ export async function createWorkspaceReportNote(
   })
 
   const noteId = randomUUID()
-  const insertedNote = assignedMemberNoteKinds.has(input.kind)
-    ? (
-        await db.execute<{ id: string }>(sql`
-          INSERT INTO ${reportNotes}
-            ("id", "workspace_id", "report_id", "author_user_id", "kind", "body")
-          SELECT
-            ${noteId},
-            ${workspace.id},
-            ${reportId},
-            ${userId},
-            CAST(${input.kind} AS report_note_kind),
-            ${input.body}
-          FROM ${reports}
-          WHERE "workspace_id" = ${workspace.id}
-            AND "id" = ${reportId}
-            AND "assignee_user_id" = ${userId}
-            AND "status" = ${row.status}
-            AND "archived_at" IS NULL
-          RETURNING "id"
-        `)
-      ).rows[0]
-    : (
-        await db
-          .insert(reportNotes)
-          .values({
-            id: noteId,
-            workspaceId: workspace.id,
-            reportId,
-            authorUserId: userId,
-            kind: input.kind,
-            body: input.body,
-          })
-          .returning({ id: reportNotes.id })
-      )[0]
-
-  if (!insertedNote) {
-    throw new ConflictError(
-      "This report changed before the note was saved. Refresh its context and try again."
-    )
-  }
-
-  let notificationDelivery: "delivered" | "failed" | "not_required" =
-    "not_required"
-
+  let notificationInput: DurableWorkspaceNotificationInput | null = null
   if (input.kind === "clarification" && row.assigneeUserId) {
-    const recipientCount = await createWorkspaceNotificationsSafely({
+    notificationInput = {
       workspaceId: workspace.id,
       recipientUserIds: [row.assigneeUserId],
       actorUserId: userId,
       reportId,
-      noteId: insertedNote.id,
+      noteId,
       type: "clarification_added",
       title: "Clarification added",
       body: truncateNotificationBody(input.body),
       href: getReportNotificationHref(workspaceSlug, reportId, "activity"),
-      dedupeKey: `clarification:${insertedNote.id}`,
-    })
-    notificationDelivery = getNotificationDelivery(recipientCount)
+      dedupeKey: `clarification:${noteId}`,
+    }
   }
 
   if (input.kind === "clarification_request") {
@@ -2291,19 +2306,18 @@ export async function createWorkspaceReportNote(
       ...(row.reporterUserId ? [row.reporterUserId] : []),
     ]
 
-    const recipientCount = await createWorkspaceNotificationsSafely({
+    notificationInput = {
       workspaceId: workspace.id,
       recipientUserIds,
       actorUserId: userId,
       reportId,
-      noteId: insertedNote.id,
+      noteId,
       type: "clarification_requested",
       title: "Clarification requested",
       body: truncateNotificationBody(input.body),
       href: getReportNotificationHref(workspaceSlug, reportId, "activity"),
-      dedupeKey: `clarification-request:${insertedNote.id}`,
-    })
-    notificationDelivery = getNotificationDelivery(recipientCount)
+      dedupeKey: `clarification-request:${noteId}`,
+    }
   }
 
   if (input.kind === "blocker") {
@@ -2313,33 +2327,77 @@ export async function createWorkspaceReportNote(
       [userId]
     )
 
-    const recipientCount = await createWorkspaceNotificationsSafely({
+    notificationInput = {
       workspaceId: workspace.id,
       recipientUserIds: adminUserIds,
       actorUserId: userId,
       reportId,
-      noteId: insertedNote.id,
+      noteId,
       type: "blocker_added",
       title: "Blocker added",
       body: truncateNotificationBody(input.body),
       href: getReportNotificationHref(workspaceSlug, reportId, "activity"),
-      dedupeKey: `blocker:${insertedNote.id}`,
-    })
-    notificationDelivery = getNotificationDelivery(recipientCount)
+      dedupeKey: `blocker:${noteId}`,
+    }
   }
+
+  const outboxValues = notificationInput
+    ? buildNotificationOutboxValues(notificationInput)
+    : null
+  const outboxCte = outboxValues
+    ? sql`, queued_notification AS (
+        INSERT INTO ${notificationOutbox} ("id", "workspace_id", "dedupe_key", "payload")
+        SELECT
+          ${outboxValues.id},
+          ${outboxValues.workspaceId},
+          ${outboxValues.dedupeKey},
+          CAST(${JSON.stringify(outboxValues.payload)} AS jsonb)
+        FROM inserted_note
+        ON CONFLICT ("workspace_id", "dedupe_key") DO NOTHING
+      )`
+    : sql.empty()
+  const insertedNote = await db.execute<{ id: string }>(sql`
+    WITH inserted_note AS (
+      INSERT INTO ${reportNotes}
+        ("id", "workspace_id", "report_id", "author_user_id", "kind", "body")
+      SELECT
+        ${noteId},
+        ${workspace.id},
+        ${reportId},
+        ${userId},
+        CAST(${input.kind} AS report_note_kind),
+        ${input.body}
+      FROM ${reports}
+      WHERE "workspace_id" = ${workspace.id}
+        AND "id" = ${reportId}
+        AND "status" = CAST(${row.status} AS report_status)
+        AND "archived_at" IS NULL
+        AND (
+          ${!assignedMemberNoteKinds.has(input.kind)}
+          OR "assignee_user_id" = ${userId}
+        )
+      RETURNING "id"
+    )
+    ${outboxCte}
+    SELECT "id" FROM inserted_note
+  `)
+
+  if (!insertedNote.rows[0]) {
+    throw new ConflictError(
+      "This report changed before the note was saved. Refresh its context and try again."
+    )
+  }
+
+  const notificationDelivery = outboxValues?.id
+    ? (await processNotificationOutboxEvent(outboxValues.id))
+      ? "delivered" as const
+      : "queued" as const
+    : "not_required" as const
 
   return {
     ...(await getWorkspaceReport(userId, workspaceSlug, reportId)),
     notificationDelivery,
   }
-}
-
-function getNotificationDelivery(recipientCount: number | null) {
-  if (recipientCount === null) {
-    return "failed" as const
-  }
-
-  return recipientCount > 0 ? ("delivered" as const) : ("not_required" as const)
 }
 
 async function assertReportCommentParent(
@@ -2436,50 +2494,54 @@ async function getActiveMentionedUserIds(
   return activeMentionedUserIds
 }
 
-async function replaceReportCommentMentions({
-  commentId,
-  mentionedUserIds,
+async function buildReportCommentMutationResponse({
+  comment,
   reportId,
   userId,
   workspaceId,
 }: {
-  commentId: string
-  mentionedUserIds: string[]
+  comment: Omit<ReportCommentRow, "mentions" | "reactions" | "replyCount">
   reportId: string
   userId: string
   workspaceId: string
 }) {
-  await db
-    .delete(reportCommentMentions)
-    .where(
-      and(
-        eq(reportCommentMentions.workspaceId, workspaceId),
-        eq(reportCommentMentions.reportId, reportId),
-        eq(reportCommentMentions.commentId, commentId)
-      )
-    )
+  const [[hydratedComment], commentsCount] = await Promise.all([
+    withCommentMetadata(workspaceId, reportId, userId, [comment]),
+    getReportCommentsCount(workspaceId, reportId),
+  ])
 
-  if (mentionedUserIds.length === 0) {
-    return
+  if (!hydratedComment) {
+    throw new Error("Failed to hydrate report comment.")
   }
 
-  await db
-    .insert(reportCommentMentions)
-    .values(
-      mentionedUserIds.map((mentionedUserId) => ({
-        workspaceId,
-        reportId,
-        commentId,
-        mentionedUserId,
-        createdByUserId: userId,
-      }))
+  const peopleById = await getPeopleById(
+    compactUserIds([hydratedComment.authorUserId])
+  )
+
+  return {
+    report: { id: reportId, commentsCount },
+    comment: serializeReportComment(hydratedComment, peopleById),
+  }
+}
+
+async function getCommentByClientMutationId(
+  workspaceId: string,
+  reportId: string,
+  clientMutationId: string
+) {
+  const [comment] = await db
+    .select(reportCommentSelectFields())
+    .from(reportComments)
+    .where(
+      and(
+        eq(reportComments.workspaceId, workspaceId),
+        eq(reportComments.reportId, reportId),
+        eq(reportComments.clientMutationId, clientMutationId)
+      )
     )
-    .onConflictDoNothing({
-      target: [
-        reportCommentMentions.commentId,
-        reportCommentMentions.mentionedUserId,
-      ],
-    })
+    .limit(1)
+
+  return comment ?? null
 }
 
 export async function createWorkspaceReportComment(
@@ -2491,6 +2553,21 @@ export async function createWorkspaceReportComment(
   const workspace = await requireWorkspaceForReportNote(userId, workspaceSlug)
 
   const row = await getMutableReportRow(workspace.id, reportId)
+  const existingComment = await getCommentByClientMutationId(
+    workspace.id,
+    reportId,
+    input.clientMutationId
+  )
+
+  if (existingComment) {
+    return buildReportCommentMutationResponse({
+      comment: existingComment,
+      reportId,
+      userId,
+      workspaceId: workspace.id,
+    })
+  }
+
   const [parentComment, mentionedUserIds] = await Promise.all([
     getReportCommentParentForCreate(
       workspace.id,
@@ -2500,59 +2577,33 @@ export async function createWorkspaceReportComment(
     getActiveMentionedUserIds(workspace.id, input.mentionedUserIds),
   ])
 
-  const [insertedComment] = await db
-    .insert(reportComments)
-    .values({
-      workspaceId: workspace.id,
-      reportId,
-      authorUserId: userId,
-      parentCommentId: input.parentCommentId ?? null,
-      body: input.body,
-    })
-    .returning(reportCommentSelectFields())
-
-  if (!insertedComment) {
-    throw new Error("Failed to create report comment.")
-  }
-
-  if (mentionedUserIds.length > 0) {
-    await replaceReportCommentMentions({
-      commentId: insertedComment.id,
-      mentionedUserIds,
-      reportId,
-      userId,
-      workspaceId: workspace.id,
-    })
-  }
-
+  const commentId = randomUUID()
   const notifiedRecipientIds = new Set<string>()
   const commentHref = getReportNotificationHref(
     workspaceSlug,
     reportId,
     "comments",
-    insertedComment.id
+    commentId
   )
   const commentBody = truncateNotificationBody(input.body)
-  const notificationWrites: Array<Promise<unknown>> = []
+  const notificationInputs: DurableWorkspaceNotificationInput[] = []
 
   if (mentionedUserIds.length > 0) {
     mentionedUserIds.forEach((mentionedUserId) =>
       notifiedRecipientIds.add(mentionedUserId)
     )
-    notificationWrites.push(
-      createWorkspaceNotificationsSafely({
+    notificationInputs.push({
         workspaceId: workspace.id,
         recipientUserIds: mentionedUserIds,
         actorUserId: userId,
         reportId,
-        commentId: insertedComment.id,
+        commentId,
         type: "comment_mention",
         title: "You were mentioned",
         body: commentBody,
         href: commentHref,
-        dedupeKey: `comment-mention:${insertedComment.id}`,
+        dedupeKey: `comment-mention:${commentId}`,
       })
-    )
   }
 
   if (
@@ -2560,20 +2611,18 @@ export async function createWorkspaceReportComment(
     !notifiedRecipientIds.has(parentComment.authorUserId)
   ) {
     notifiedRecipientIds.add(parentComment.authorUserId)
-    notificationWrites.push(
-      createWorkspaceNotificationsSafely({
+    notificationInputs.push({
         workspaceId: workspace.id,
         recipientUserIds: [parentComment.authorUserId],
         actorUserId: userId,
         reportId,
-        commentId: insertedComment.id,
+        commentId,
         type: "comment_reply",
         title: "New reply on your comment",
         body: commentBody,
         href: commentHref,
-        dedupeKey: `comment-reply:${insertedComment.id}`,
+        dedupeKey: `comment-reply:${commentId}`,
       })
-    )
   }
 
   if (
@@ -2581,50 +2630,96 @@ export async function createWorkspaceReportComment(
     row.assigneeUserId &&
     !notifiedRecipientIds.has(row.assigneeUserId)
   ) {
-    notificationWrites.push(
-      createWorkspaceNotificationsSafely({
+    notificationInputs.push({
         workspaceId: workspace.id,
         recipientUserIds: [row.assigneeUserId],
         actorUserId: userId,
         reportId,
-        commentId: insertedComment.id,
+        commentId,
         type: "admin_comment_added",
         title: "Admin commented on your assigned report",
         body: commentBody,
         href: commentHref,
-        dedupeKey: `admin-comment:${insertedComment.id}`,
+        dedupeKey: `admin-comment:${commentId}`,
       })
+  }
+  const outboxValues = notificationInputs
+    .map(buildNotificationOutboxValues)
+    .filter(
+      (value): value is typeof notificationOutbox.$inferInsert => Boolean(value)
+    )
+  const commentInsert = db
+    .insert(reportComments)
+    .values({
+      id: commentId,
+      workspaceId: workspace.id,
+      reportId,
+      authorUserId: userId,
+      parentCommentId: input.parentCommentId ?? null,
+      clientMutationId: input.clientMutationId,
+      body: input.body,
+    })
+    .returning(reportCommentSelectFields())
+  const mentionInsert = mentionedUserIds.length
+    ? db.insert(reportCommentMentions).values(
+        mentionedUserIds.map((mentionedUserId) => ({
+          workspaceId: workspace.id,
+          reportId,
+          commentId,
+          mentionedUserId,
+          createdByUserId: userId,
+        }))
+      )
+    : db.execute(sql`SELECT 1`)
+  const outboxInsert = outboxValues.length
+    ? db
+        .insert(notificationOutbox)
+        .values(outboxValues)
+        .onConflictDoNothing({
+          target: [notificationOutbox.workspaceId, notificationOutbox.dedupeKey],
+        })
+    : db.execute(sql`SELECT 1`)
+  let insertedComment:
+    | Omit<ReportCommentRow, "mentions" | "reactions" | "replyCount">
+    | null = null
+
+  try {
+    const [insertedRows] = await db.batch([
+      commentInsert,
+      mentionInsert,
+      outboxInsert,
+    ])
+    insertedComment = insertedRows[0] ?? null
+  } catch (error) {
+    const errorCode = (error as { code?: string }).code
+
+    if (errorCode !== "23505") {
+      throw error
+    }
+
+    insertedComment = await getCommentByClientMutationId(
+      workspace.id,
+      reportId,
+      input.clientMutationId
     )
   }
 
-  const commentsCountPromise = getReportCommentsCount(workspace.id, reportId)
-  const hydratedCommentPromise = withCommentMetadata(
-    workspace.id,
+  if (!insertedComment) {
+    throw new ConflictError(
+      "This comment could not be committed atomically. Refresh and try again."
+    )
+  }
+
+  await Promise.all(
+    outboxValues.map((event) => processNotificationOutboxEvent(event.id as string))
+  )
+
+  return buildReportCommentMutationResponse({
+    comment: insertedComment,
     reportId,
     userId,
-    [insertedComment]
-  )
-  await Promise.all(notificationWrites)
-  const [commentsCount, [hydratedComment]] = await Promise.all([
-    commentsCountPromise,
-    hydratedCommentPromise,
-  ])
-
-  if (!hydratedComment) {
-    throw new Error("Failed to create report comment.")
-  }
-
-  const peopleById = await getPeopleById(
-    compactUserIds([hydratedComment.authorUserId])
-  )
-
-  return {
-    report: {
-      id: reportId,
-      commentsCount,
-    },
-    comment: serializeReportComment(hydratedComment, peopleById),
-  }
+    workspaceId: workspace.id,
+  })
 }
 
 async function getReportCommentForView(
@@ -2713,7 +2808,29 @@ export async function updateWorkspaceReportComment(
   assertCanEditReportComment(userId, currentComment)
 
   const editedAt = new Date()
-  const [updatedComment] = await db
+  const mentionedUserIds = input.mentionedUserIds
+    ? await getActiveMentionedUserIds(workspace.id, input.mentionedUserIds)
+    : null
+  const outboxValues = mentionedUserIds?.length
+    ? buildNotificationOutboxValues({
+        workspaceId: workspace.id,
+        recipientUserIds: mentionedUserIds,
+        actorUserId: userId,
+        reportId,
+        commentId,
+        type: "comment_mention",
+        title: "You were mentioned",
+        body: truncateNotificationBody(input.body),
+        href: getReportNotificationHref(
+          workspaceSlug,
+          reportId,
+          "comments",
+          commentId
+        ),
+        dedupeKey: `comment-mention:${commentId}:${editedAt.getTime()}`,
+      })
+    : null
+  const updateComment = db
     .update(reportComments)
     .set({
       body: input.body,
@@ -2728,67 +2845,58 @@ export async function updateWorkspaceReportComment(
       )
     )
     .returning(reportCommentSelectFields())
+  const deleteMentions = mentionedUserIds
+    ? db
+        .delete(reportCommentMentions)
+        .where(
+          and(
+            eq(reportCommentMentions.workspaceId, workspace.id),
+            eq(reportCommentMentions.reportId, reportId),
+            eq(reportCommentMentions.commentId, commentId)
+          )
+        )
+    : db.execute(sql`SELECT 1`)
+  const insertMentions = mentionedUserIds?.length
+    ? db.insert(reportCommentMentions).values(
+        mentionedUserIds.map((mentionedUserId) => ({
+          workspaceId: workspace.id,
+          reportId,
+          commentId,
+          mentionedUserId,
+          createdByUserId: userId,
+        }))
+      )
+    : db.execute(sql`SELECT 1`)
+  const insertOutbox = outboxValues
+    ? db
+        .insert(notificationOutbox)
+        .values(outboxValues)
+        .onConflictDoNothing({
+          target: [notificationOutbox.workspaceId, notificationOutbox.dedupeKey],
+        })
+    : db.execute(sql`SELECT 1`)
+  const [updatedRows] = await db.batch([
+    updateComment,
+    deleteMentions,
+    insertMentions,
+    insertOutbox,
+  ])
+  const updatedComment = updatedRows[0]
 
   if (!updatedComment) {
     throw new NotFoundError("Comment not found.")
   }
 
-  if (input.mentionedUserIds) {
-    const mentionedUserIds = await getActiveMentionedUserIds(
-      workspace.id,
-      input.mentionedUserIds
-    )
-
-    await replaceReportCommentMentions({
-      commentId,
-      mentionedUserIds,
-      reportId,
-      userId,
-      workspaceId: workspace.id,
-    })
-
-    await createWorkspaceNotificationsSafely({
-      workspaceId: workspace.id,
-      recipientUserIds: mentionedUserIds,
-      actorUserId: userId,
-      reportId,
-      commentId,
-      type: "comment_mention",
-      title: "You were mentioned",
-      body: truncateNotificationBody(input.body),
-      href: getReportNotificationHref(
-        workspaceSlug,
-        reportId,
-        "comments",
-        commentId
-      ),
-      dedupeKey: `comment-mention:${commentId}`,
-    })
+  if (outboxValues?.id) {
+    await processNotificationOutboxEvent(outboxValues.id)
   }
 
-  const [hydratedComment] = await withCommentMetadata(
-    workspace.id,
+  return buildReportCommentMutationResponse({
+    comment: updatedComment,
     reportId,
     userId,
-    [updatedComment]
-  )
-
-  if (!hydratedComment) {
-    throw new Error("Failed to update report comment.")
-  }
-
-  const [commentsCount, peopleById] = await Promise.all([
-    getReportCommentsCount(workspace.id, reportId),
-    getPeopleById(compactUserIds([hydratedComment.authorUserId])),
-  ])
-
-  return {
-    report: {
-      id: reportId,
-      commentsCount,
-    },
-    comment: serializeReportComment(hydratedComment, peopleById),
-  }
+    workspaceId: workspace.id,
+  })
 }
 
 export async function deleteWorkspaceReportComment(

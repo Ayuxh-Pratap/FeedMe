@@ -87,18 +87,30 @@ const reportAssetUrlSchema = z
   .refine(isAllowedCloudinaryImageUrl, {
     message: "Screenshots must use FeedMe image storage.",
   })
+  .refine((value) => /\.(?:jpe?g|png|webp)$/i.test(new URL(value).pathname), {
+    message: "Screenshots must be PNG, JPEG, or WebP images.",
+  })
 
-const reportAssetInputSchema = z.object({
-  type: z.enum([
-    "page_screenshot",
-    "element_screenshot",
-    "annotated_screenshot",
-  ]),
-  url: reportAssetUrlSchema,
-  mimeType: z.string().trim().max(80).optional(),
-  width: z.number().int().positive().max(10000).optional(),
-  height: z.number().int().positive().max(10000).optional(),
-})
+const reportAssetInputSchema = z
+  .object({
+    type: z.enum([
+      "page_screenshot",
+      "element_screenshot",
+      "annotated_screenshot",
+    ]),
+    url: reportAssetUrlSchema,
+    mimeType: z.enum(["image/png", "image/jpeg", "image/jpg", "image/webp"]).optional(),
+    width: z.number().int().positive().max(10000).optional(),
+    height: z.number().int().positive().max(10000).optional(),
+  })
+  .superRefine((asset, context) => {
+    if (asset.width && asset.height && asset.width * asset.height > 25_000_000) {
+      context.addIssue({
+        code: "custom",
+        message: "Screenshots cannot exceed 25 megapixels.",
+      })
+    }
+  })
 
 export const createReportInputSchema = z.object({
   clientReportId: z
@@ -193,6 +205,12 @@ export const createReportNoteInputSchema = z.object({
 })
 
 export const createReportCommentInputSchema = z.object({
+  clientMutationId: z
+    .string()
+    .trim()
+    .min(8)
+    .max(160)
+    .regex(/^[a-zA-Z0-9:_-]+$/, "Invalid comment mutation id."),
   body: z.string().trim().min(1).max(5000),
   mentionedUserIds: z.array(z.string().uuid()).max(20).default([]),
   parentCommentId: z.string().uuid("Choose a valid parent comment.").nullable().optional(),
