@@ -441,6 +441,9 @@ list_in_progress_reports(limit?)
 get_next_report()
 get_report(reportId)
 get_report_context_pack(reportId)
+list_assignable_members()
+bulk_create_tasks(tasks)
+assign_report(reportId, assigneeUserId, note?)
 start_work(reportId)
 mark_ready_for_review(reportId, note?)
 add_work_note(reportId, note)
@@ -474,6 +477,47 @@ list_my_reports
   must not be the agent's default work-selection path
 ```
 
+Bulk task semantics:
+
+```txt
+list_assignable_members
+  reads only the PAT's current workspace
+  returns active developers/designers with exact userId and email
+  requires owner/admin assignment permission
+  is the source of truth before setting bulk assignees
+
+bulk_create_tasks
+  creates 1-25 first-class task work items in the shared FeedMe workflow
+  writes only to the workspace selected by the connected PAT
+  requires a stable, source-namespaced clientTaskId per item
+  retries reuse matching reports instead of creating duplicates
+  rejects duplicate ids in one request and ids reused for different content
+  requires only clientTaskId, title, and description
+  optionally accepts summary, severity, type, createdAt, source URL,
+  developer prompt and any known implementation-brief fields
+  stores source = task with no screenshot, viewport, or selected element
+  accepts assignee by user id or email
+  resolve requested names against list_assignable_members and ask on ambiguity
+  only active developers/designers can be assigned
+  assignment and implementation-brief fields require owner/admin permission
+  assigned items start assigned; unassigned items start submitted
+  source URL is optional and may point to any HTTP(S) reference
+  tasks do not require or inherit a workspace capture domain
+  caps each PAT at 250 imported tasks/hour and 1,000/day
+
+assign_report
+  assigns an existing report/task after import using a listed userId
+  may unassign only when explicitly requested
+  reuses the production assignment service, permissions, workflow locks,
+  compare-and-swap update, status event, and durable notification
+```
+
+The tool validates the entire request before writing. Each new task, initial
+status event, brief, and assignment notification is committed as one
+database statement. A transport failure may leave some independently valid
+items committed; retrying the identical request is safe because clientTaskId is
+the idempotency key and the complete normalized payload is fingerprinted.
+
 Later tools:
 
 ```txt
@@ -492,7 +536,7 @@ all MCP tools resolve PAT -> user -> live active workspace membership on every r
 developers/designers can only mutate reports assigned to them
 developer status changes are exact and atomic: assigned -> in_progress -> ready_for_review
 stale or concurrent transitions return conflict instead of overwriting newer state or writing false history
-owners/admins can get future admin tools, but not in the first developer workflow pass
+owner/admin-only fields are permission-checked against the PAT's live role
 tool responses should be concise but include the report id and next suggested action
 server initialization tells agents to read feedme://developer-guide or call get_feedme_guide
 resource and tool guide output come from one builder so instructions cannot drift

@@ -222,6 +222,29 @@ Developers and designers are assignable implementation roles. Admins can assign 
 
 ## Report Lifecycle
 
+### Project Tasks
+
+FeedMe also accepts structured project tasks through MCP. These are first-class
+workspace work items in the same report queue and assignment lifecycle, with
+`source = task`.
+
+Project tasks include a title, full description, severity, type, optional
+source URL, optional assignee, developer prompt, and optional implementation
+brief. They do not have screenshots, captured viewport data, or a selected DOM
+element, and they do not require or inherit a workspace capture domain. The
+dashboard presents a Details view instead of capture Evidence.
+
+`bulk_create_tasks` accepts 1-25 tasks with stable `clientTaskId` values. A task
+with an assignee starts as `assigned`; an unassigned task starts as `submitted`.
+Retries with the same id reuse the existing task, while reusing an id for
+different content is rejected. The PAT determines the destination workspace.
+Before assigning imported work, the agent calls `list_assignable_members` and
+uses an exact returned developer/designer user id or email. Every
+implementation-brief field is optional; unknown fields are omitted rather than
+invented. Existing unassigned reports or tasks can be routed later with
+`assign_report`, which uses the same assignment locks and notifications as the
+dashboard.
+
 Internal report statuses:
 
 ```txt

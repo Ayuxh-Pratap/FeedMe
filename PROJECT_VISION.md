@@ -63,6 +63,8 @@ Each workspace has its own dashboard.
 
 - Overview: report counts, active issues, critical items, and resolved trend.
 - Report queue: incoming feedback from testers and reporters.
+- Project tasks: structured work can be imported in bulk through MCP and managed in the same assignment lifecycle without capture evidence.
+- MCP task imports are bound to the connected PAT workspace and discover active developer/designer assignees before assignment.
 - Report detail: selected element screenshot, full page screenshot, metadata, reporter note, URL, selector, and viewport.
 - Assignment: admin assigns report to developer or designer.
 - Assigned queue: developers and designers see only assigned reports.
@@ -121,7 +123,7 @@ That model lets the product scale from one internal project to many companies.
 - A user must be a member before submitting.
 - A role decides what the user can see or change.
 - Extension must always know the active workspace.
-- Server must validate membership and domain, not just trust the extension.
+- Server must validate membership for every item and domain ownership for captured feedback; project tasks are not domain-bound.
 - Dashboard must never show cross-workspace data.
 - Dashboard server state must be cached, invalidated, and updated optimistically through the production data layer, not duplicated in ad hoc local stores.
 - Domain activation should eventually require verification.
