@@ -1,16 +1,11 @@
 import type { Metadata, Viewport } from "next";
-import { Google_Sans, Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { siteConfig } from "@/lib/site";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Agentation } from "agentation";
 import { AppQueryProvider } from "@/components/providers/app-query-provider";
-
-const googleSans = Google_Sans({
-  variable: "--font-google-sans",
-  subsets: ["latin"],
-});
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,8 +26,8 @@ export const metadata: Metadata = {
   description: siteConfig.description,
   applicationName: siteConfig.name,
   keywords: [...siteConfig.keywords],
-  authors: [{ name: siteConfig.name, url: siteConfig.url }],
-  creator: siteConfig.name,
+  authors: [{ name: siteConfig.authorName, url: siteConfig.repositoryUrl }],
+  creator: siteConfig.authorName,
   publisher: siteConfig.name,
   category: "productivity",
   formatDetection: { email: false, address: false, telephone: false },
@@ -65,7 +60,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={cn("h-full", "antialiased", googleSans.variable, geistSans.variable, geistMono.variable, "font-sans")}
+      className={cn("h-full", "antialiased", geistSans.variable, geistMono.variable, "font-sans")}
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <AppQueryProvider>

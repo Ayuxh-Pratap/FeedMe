@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  /* FeedMe primitives from design.md */
+  /* FeedMe color primitives */
   --color-surface-shell: var(--surface-shell);
   --color-surface-panel: var(--surface-panel);
   --color-surface-page: var(--surface-page);
@@ -69,7 +69,7 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
 
-  /* Exact radius scale from design.md */
+  /* FeedMe radius scale */
   --radius-sm: var(--rounded-sm);
   --radius-md: var(--rounded-md);
   --radius-lg: var(--rounded-lg);
@@ -85,7 +85,7 @@
   --spacing-right-rail: var(--right-rail-width);
   --spacing-page-gutter: var(--page-gutter);
 
-  /* Type scale from design.md */
+  /* FeedMe type scale */
   --text-heading-1: var(--type-heading-1-size);
   --text-heading-1--line-height: var(--type-heading-1-line);
   --text-heading-1--font-weight: var(--weight-semibold);
@@ -134,7 +134,7 @@
 :root {
   color-scheme: dark;
 
-  /* FeedMe primitive tokens. Mirrors design.md. */
+  /* FeedMe runtime design tokens. */
   --surface-shell: #0f1012;
   --surface-panel: #15161c;
   --surface-page: #15161c;

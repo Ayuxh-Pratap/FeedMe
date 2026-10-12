@@ -2,6 +2,8 @@
 // the generated OG image, and per-route metadata.
 export const siteConfig = {
   name: "FeedMe",
+  repositoryUrl: "https://github.com/Ayuxh-Pratap/FeedMe-Dashboard",
+  authorName: "Ayush Pratap Singh",
   url:
     process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
     "https://meefeed.vercel.app",

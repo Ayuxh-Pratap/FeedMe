@@ -1,9 +1,9 @@
-import Link from "next/link"
 import type { ReactNode } from "react"
 import { ArrowUpRight } from "lucide-react"
 
 import { FeedMeBrand } from "@/components/feedme/brand"
 import { AnimatedBars } from "@/components/feedme/experience/animated-bars"
+import { siteConfig } from "@/lib/site"
 
 type OnboardingShellProps = {
   children: ReactNode
@@ -22,20 +22,23 @@ function DesignSpace() {
           aria-label="Product links"
           className="ml-auto flex items-center gap-5 text-body-3 font-medium text-text-muted"
         >
-          <Link
+          <a
             className="inline-flex items-center gap-1 transition-colors hover:text-text-secondary"
-            href="/login"
+            href={siteConfig.repositoryUrl}
+            rel="noreferrer"
+            target="_blank"
           >
-            How it works
+            Source
             <ArrowUpRight className="size-3" />
-          </Link>
-          <Link
+          </a>
+          <a
             className="inline-flex items-center gap-1 transition-colors hover:text-text-secondary"
-            href="/login"
+            download
+            href="/downloads/feedme-extension.zip"
           >
             Extension
             <ArrowUpRight className="size-3" />
-          </Link>
+          </a>
         </nav>
 
         <div className="ml-auto max-w-[390px] pb-2 text-right">
