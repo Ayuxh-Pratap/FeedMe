@@ -63,17 +63,17 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^26",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "agentation": "^3.0.2",
+    "agentation": "^3.1.2",
     "babel-plugin-react-compiler": "1.0.0",
     "drizzle-kit": "^0.31.10",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "16.4.0",
-    "shadcn": "4.11.0",
+    "shadcn": "4.21.4",
     "tailwindcss": "^4",
-    "tsx": "^4.22.4",
-    "typescript": "^5"
+    "tsx": "^4.23.15",
+    "typescript": "^7"
   }
 }
