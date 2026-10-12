@@ -4,6 +4,8 @@ import {
   FEEDME_DASHBOARD_CLIENT,
 } from "@/lib/api-trust"
 
+export const FEEDME_UNAUTHORIZED_EVENT = "feedme:unauthorized"
+
 export class ApiClientError extends Error {
   readonly code: string
   readonly fieldErrors?: ApiFailure["error"]["fieldErrors"]
@@ -36,7 +38,11 @@ async function readApiResponse<T>(response: Response): Promise<T> {
 
     if (response.status === 401 && typeof window !== "undefined") {
       const nextPath = `${window.location.pathname}${window.location.search}`
-      window.location.assign(`/login?next=${encodeURIComponent(nextPath)}`)
+      window.dispatchEvent(
+        new CustomEvent(FEEDME_UNAUTHORIZED_EVENT, {
+          detail: { nextPath },
+        })
+      )
     }
 
     throw error
