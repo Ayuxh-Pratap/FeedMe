@@ -1,12 +1,25 @@
+import { randomUUID } from "node:crypto"
+
 import { and, eq, gt, isNull, ne, sql } from "drizzle-orm"
 
 import { db } from "@/db"
-import { authActionTokens, sessions, users } from "@/db/schema"
 import {
-  createAuthActionToken,
+  authActionTokens,
+  authEmailOutbox,
+  sessions,
+  users,
+} from "@/db/schema"
+import {
+  buildAuthActionToken,
   hashAuthActionToken,
 } from "@/server/auth/action-tokens"
 import { normalizeEmail } from "@/server/auth/email"
+import {
+  buildAuthEmailOutboxValues,
+  enqueueAuthEmail,
+  processAuthEmailOutboxEvent,
+} from "@/server/auth/email-outbox"
+import { assertAuthEmailConfigured } from "@/server/auth/emails"
 import {
   hashPassword,
   passwordHashNeedsUpgrade,
@@ -25,11 +38,6 @@ import {
   ValidationError,
 } from "@/server/http/errors"
 import { getPostAuthRedirectPath } from "@/server/onboarding/service"
-import {
-  sendExistingAccountEmail,
-  sendPasswordResetEmail,
-  sendVerificationEmail,
-} from "@/server/auth/emails"
 
 const DUMMY_PASSWORD_HASH =
   "scrypt$131072$8$1$feedme-auth-dummy-salt-v2$dF-0vcGORjDFsHHxKyDMlhmNKkPfawSceyzC6GrviKkIWLyag5LCzSSd348WOUYruN2iKSLblxiWrZm4oLzC4w"
@@ -55,60 +63,115 @@ async function findUserByEmail(email: string) {
   return user ?? null
 }
 
+type AuthUser = NonNullable<Awaited<ReturnType<typeof findUserByEmail>>>
+
+function isUniqueViolation(error: unknown) {
+  return (error as { code?: string }).code === "23505"
+}
+
+async function attemptAuthEmailDelivery(eventId: string | null) {
+  if (eventId) await processAuthEmailOutboxEvent(eventId)
+}
+
+async function queueAuthActionEmail({
+  user,
+  purpose,
+  template,
+  redirectPath,
+}: {
+  user: AuthUser
+  purpose: "email_verification" | "password_reset"
+  template: "email_verification" | "password_reset"
+  redirectPath?: string
+}) {
+  const actionToken = buildAuthActionToken(user.id, purpose, redirectPath)
+  const emailEvent = buildAuthEmailOutboxValues({
+    userId: user.id,
+    recipientEmail: user.email,
+    template,
+    token: actionToken.token,
+  })
+
+  await db.batch([
+    db.insert(authActionTokens).values(actionToken.values),
+    db.insert(authEmailOutbox).values(emailEvent),
+  ])
+  await attemptAuthEmailDelivery(emailEvent.id)
+}
+
+async function queueExistingAccountEmail(user: AuthUser) {
+  const eventId = await enqueueAuthEmail(
+    buildAuthEmailOutboxValues({
+      userId: user.id,
+      recipientEmail: user.email,
+      template: "existing_account",
+    })
+  )
+
+  await attemptAuthEmailDelivery(eventId)
+}
+
+async function queueSignupEmail(user: AuthUser, nextPath?: string) {
+  if (user.emailVerifiedAt) {
+    await queueExistingAccountEmail(user)
+    return
+  }
+
+  await queueAuthActionEmail({
+    user,
+    purpose: "email_verification",
+    template: "email_verification",
+    redirectPath: nextPath,
+  })
+}
+
 export async function signupWithEmail(input: SignupInput) {
+  assertAuthEmailConfigured()
+
   const [existingUser, requestedPasswordHash] = await Promise.all([
     findUserByEmail(input.email),
     hashPassword(input.password),
   ])
-  let user = existingUser
-  let createdAccount = false
 
-  if (!user) {
-    try {
-      const [createdUser] = await db
-        .insert(users)
-        .values({
-          email: input.email,
-          passwordHash: requestedPasswordHash,
-        })
-        .returning({
-          id: users.id,
-          email: users.email,
-          passwordHash: users.passwordHash,
-          emailVerifiedAt: users.emailVerifiedAt,
-        })
+  if (existingUser) {
+    await queueSignupEmail(existingUser, input.nextPath)
+    return { nextPath: "/check-email" }
+  }
 
-      user = createdUser ?? null
-      createdAccount = Boolean(createdUser)
-    } catch (error) {
-      if ((error as { code?: string }).code !== "23505") {
-        throw error
-      }
+  const userId = randomUUID()
+  const actionToken = buildAuthActionToken(
+    userId,
+    "email_verification",
+    input.nextPath
+  )
+  const emailEvent = buildAuthEmailOutboxValues({
+    userId,
+    recipientEmail: input.email,
+    template: "email_verification",
+    token: actionToken.token,
+  })
 
-      user = await findUserByEmail(input.email)
+  try {
+    await db.batch([
+      db.insert(users).values({
+        id: userId,
+        email: input.email,
+        passwordHash: requestedPasswordHash,
+      }),
+      db.insert(authActionTokens).values(actionToken.values),
+      db.insert(authEmailOutbox).values(emailEvent),
+    ])
+    await attemptAuthEmailDelivery(emailEvent.id)
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error
+
+    const racedUser = await findUserByEmail(input.email)
+
+    if (!racedUser) {
+      throw new Error("Account creation conflict did not return a user.")
     }
-  }
 
-  if (!user) {
-    throw new Error("Account creation did not return a user.")
-  }
-
-  if (!user.emailVerifiedAt && !createdAccount) {
-    await db
-      .update(users)
-      .set({ passwordHash: requestedPasswordHash, updatedAt: new Date() })
-      .where(and(eq(users.id, user.id), isNull(users.emailVerifiedAt)))
-  }
-
-  if (user.emailVerifiedAt) {
-    await sendExistingAccountEmail(user.email)
-  } else {
-    const { token } = await createAuthActionToken(
-      user.id,
-      "email_verification",
-      input.nextPath
-    )
-    await sendVerificationEmail(user.email, token)
+    await queueSignupEmail(racedUser, input.nextPath)
   }
 
   return {
@@ -136,11 +199,12 @@ export async function loginWithEmail(input: LoginInput) {
   }
 
   if (!user.emailVerifiedAt) {
-    const { token } = await createAuthActionToken(
-      user.id,
-      "email_verification"
-    )
-    await sendVerificationEmail(user.email, token)
+    assertAuthEmailConfigured()
+    await queueAuthActionEmail({
+      user,
+      purpose: "email_verification",
+      template: "email_verification",
+    })
     throw new ForbiddenError(
       "Verify your email before signing in. We sent you a new verification link."
     )
@@ -172,15 +236,16 @@ export async function loginWithEmail(input: LoginInput) {
 }
 
 export async function resendVerificationEmail(email: string, nextPath?: string) {
+  assertAuthEmailConfigured()
   const user = await findUserByEmail(email)
 
   if (user && !user.emailVerifiedAt) {
-    const { token } = await createAuthActionToken(
-      user.id,
-      "email_verification",
-      nextPath
-    )
-    await sendVerificationEmail(user.email, token)
+    await queueAuthActionEmail({
+      user,
+      purpose: "email_verification",
+      template: "email_verification",
+      redirectPath: nextPath,
+    })
   }
 }
 
@@ -200,6 +265,12 @@ export async function verifyEmailAddress(token: string) {
         AND "consumed_at" IS NULL
         AND "expires_at" > ${now}
       RETURNING "user_id", "redirect_path"
+    ), invalidated_tokens AS (
+      UPDATE ${authActionTokens}
+      SET "consumed_at" = ${now}
+      WHERE "user_id" IN (SELECT "user_id" FROM consumed_token)
+        AND "purpose" = 'email_verification'::auth_action_token_purpose
+        AND "consumed_at" IS NULL
     )
     UPDATE ${users}
     SET
@@ -231,11 +302,15 @@ export async function verifyEmailAddress(token: string) {
 }
 
 export async function requestPasswordReset(email: string) {
+  assertAuthEmailConfigured()
   const user = await findUserByEmail(email)
 
   if (user?.emailVerifiedAt) {
-    const { token } = await createAuthActionToken(user.id, "password_reset")
-    await sendPasswordResetEmail(user.email, token)
+    await queueAuthActionEmail({
+      user,
+      purpose: "password_reset",
+      template: "password_reset",
+    })
   }
 }
 
@@ -252,6 +327,12 @@ export async function resetPassword(input: ResetPasswordInput) {
         AND "consumed_at" IS NULL
         AND "expires_at" > ${now}
       RETURNING "user_id"
+    ), invalidated_tokens AS (
+      UPDATE ${authActionTokens}
+      SET "consumed_at" = ${now}
+      WHERE "user_id" IN (SELECT "user_id" FROM consumed_token)
+        AND "purpose" = 'password_reset'::auth_action_token_purpose
+        AND "consumed_at" IS NULL
     ), updated_user AS (
       UPDATE ${users}
       SET "password_hash" = ${passwordHash}, "updated_at" = ${now}

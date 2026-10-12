@@ -618,6 +618,13 @@ GET  /api/onboarding/state
 
 If server actions are used instead of route handlers, they should preserve the same conceptual boundaries.
 
+Authentication email is queued durably. Signup must validate email configuration
+before account writes, then atomically commit the user, verification token, and
+auth-email outbox event. Delivery failures retry in the background and must not
+turn a successful database write into a failed-looking signup. Repeated signup
+for an unverified email sends another verification link without changing the
+stored password.
+
 ## Validation
 
 Signup:

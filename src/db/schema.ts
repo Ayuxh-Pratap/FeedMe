@@ -116,6 +116,16 @@ export const authActionTokenPurpose = pgEnum("auth_action_token_purpose", [
   "password_reset",
 ])
 
+export const authEmailTemplate = pgEnum("auth_email_template", [
+  "email_verification",
+  "password_reset",
+  "existing_account",
+])
+
+export type AuthEmailOutboxPayload = {
+  token?: string
+}
+
 export type NotificationOutboxPayload = {
   actorUserId?: string | null
   body: string
@@ -233,6 +243,38 @@ export const authActionTokens = pgTable(
     uniqueIndex("auth_action_tokens_token_hash_unique").on(table.tokenHash),
     index("auth_action_tokens_user_purpose_idx").on(table.userId, table.purpose),
     index("auth_action_tokens_expires_at_idx").on(table.expiresAt),
+  ]
+)
+
+export const authEmailOutbox = pgTable(
+  "auth_email_outbox",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    recipientEmail: varchar("recipient_email", { length: 320 }).notNull(),
+    template: authEmailTemplate("template").notNull(),
+    dedupeKey: varchar("dedupe_key", { length: 240 }).notNull(),
+    payload: jsonb("payload").$type<AuthEmailOutboxPayload>().notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    availableAt: timestamp("available_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    ...timestamps(),
+  },
+  (table) => [
+    uniqueIndex("auth_email_outbox_dedupe_unique").on(table.dedupeKey),
+    index("auth_email_outbox_delivery_idx").on(
+      table.processedAt,
+      table.deadLetteredAt,
+      table.availableAt
+    ),
+    index("auth_email_outbox_user_id_idx").on(table.userId),
+    check("auth_email_outbox_attempts_nonnegative", sql`${table.attempts} >= 0`),
   ]
 )
 

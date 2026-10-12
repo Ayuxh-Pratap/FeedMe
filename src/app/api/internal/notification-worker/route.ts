@@ -1,6 +1,10 @@
 import { timingSafeEqual } from "node:crypto"
 
 import {
+  getAuthEmailOutboxHealth,
+  processPendingAuthEmailOutbox,
+} from "@/server/auth/email-outbox"
+import {
   getNotificationOutboxHealth,
   processPendingNotificationOutbox,
 } from "@/server/notifications/service"
@@ -30,11 +34,23 @@ export async function GET(request: Request) {
   try {
     if (!isAuthorized(request)) throw new UnauthorizedError()
 
-    const delivery = await processPendingNotificationOutbox()
+    const [delivery, authEmailDelivery] = await Promise.all([
+      processPendingNotificationOutbox(),
+      processPendingAuthEmailOutbox(),
+    ])
     const prunedRateLimitBuckets = await pruneExpiredRateLimitBuckets()
-    const health = await getNotificationOutboxHealth()
+    const [health, authEmailHealth] = await Promise.all([
+      getNotificationOutboxHealth(),
+      getAuthEmailOutboxHealth(),
+    ])
 
-    return ok({ delivery, health, prunedRateLimitBuckets })
+    return ok({
+      delivery,
+      health,
+      authEmailDelivery,
+      authEmailHealth,
+      prunedRateLimitBuckets,
+    })
   } catch (error) {
     return errorResponse(error)
   }

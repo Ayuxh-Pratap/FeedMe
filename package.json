@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test src/lib/report-workflow.test.mjs src/lib/mcp-trust.test.mjs src/lib/mcp-bulk-tasks.test.mjs src/lib/security-hardening.test.mjs",
+    "test": "tsx --test src/lib/report-workflow.test.mjs src/lib/mcp-trust.test.mjs src/lib/mcp-bulk-tasks.test.mjs src/lib/security-hardening.test.mjs src/lib/auth-email-lifecycle.test.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

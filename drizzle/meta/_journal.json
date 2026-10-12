@@ -71,6 +71,13 @@
       "when": 1785148894973,
       "tag": "0009_plain_gideon",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791796200000,
+      "tag": "0010_auth_email_outbox",
+      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
 
-import { and, eq, isNull } from "drizzle-orm"
-
-import { db } from "@/db"
 import { authActionTokens } from "@/db/schema"
 
 export type AuthActionPurpose =
@@ -17,7 +14,7 @@ export function hashAuthActionToken(token: string) {
   return createHash("sha256").update(token).digest("hex")
 }
 
-export async function createAuthActionToken(
+export function buildAuthActionToken(
   userId: string,
   purpose: AuthActionPurpose,
   redirectPath?: string
@@ -27,24 +24,13 @@ export async function createAuthActionToken(
   const expiresAt = new Date(
     now.getTime() + AUTH_ACTION_TOKEN_LIFETIMES[purpose]
   )
-  const deletePrevious = db
-    .delete(authActionTokens)
-    .where(
-      and(
-        eq(authActionTokens.userId, userId),
-        eq(authActionTokens.purpose, purpose),
-        isNull(authActionTokens.consumedAt)
-      )
-    )
-  const insertToken = db.insert(authActionTokens).values({
+  const values: typeof authActionTokens.$inferInsert = {
     userId,
     purpose,
     tokenHash: hashAuthActionToken(token),
     redirectPath,
     expiresAt,
-  })
+  }
 
-  await db.batch([deletePrevious, insertToken])
-
-  return { token, expiresAt }
+  return { token, expiresAt, values }
 }

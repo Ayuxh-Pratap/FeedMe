@@ -1884,11 +1884,18 @@ transactional workspace creation
 ### Authentication Lifecycle
 
 Email/password signup is sessionless until email verification succeeds.
-Verification and password-reset tokens are random, hashed at rest, single-use,
-and expire after 24 hours and one hour respectively. Verification preserves a
-validated internal `nextPath`, including invite links. Password reset revokes all
-existing sessions before creating a new one. Password change keeps only the
-current session.
+Verification and password-reset tokens are random and single-use; action-token
+records store only their hashes. They expire after 24 hours and one hour
+respectively. Verification preserves a validated internal `nextPath`, including
+invite links. Password reset revokes all existing sessions before creating a new
+one. Password change keeps only the current session.
+
+Signup validates the auth-email configuration before hashing or writing account
+data. A new account, its verification token, and its auth-email outbox event
+commit atomically. Retrying signup for an existing unverified email never changes
+that account's password. Resend operations create an additional valid token
+without invalidating previously delivered links; successfully consuming one
+token invalidates all remaining tokens for that user and purpose.
 
 Required production environment variables:
 
@@ -1941,12 +1948,19 @@ comment, mentions, and notification outbox rows together. Invite acceptance uses
 an `invite_acceptances` ledger unique on `(invite_id, user_id)` and atomically
 claims invite capacity.
 
-### Notification Outbox
+### Delivery Outboxes
 
 Workflow changes and their notification outbox event commit together.
 Notification rows deduplicate per recipient. Delivery retries use bounded
 exponential backoff; after eight failures an event is dead-lettered and a
 structured error is logged.
+
+Authentication email uses a separate account-scoped outbox. The plaintext token
+exists in the outbox only while delivery is pending and is removed after delivery
+or dead-lettering. Provider failures do not roll back or strand account state;
+they leave a retryable event. Missing email configuration fails before any auth
+write and returns a generic `503` while the missing variable names are logged
+only on the server.
 
 Call this endpoint from a trusted scheduler at least every five minutes:
 
@@ -1955,9 +1969,10 @@ GET /api/internal/notification-worker
 Authorization: Bearer <INTERNAL_OPERATIONS_SECRET>
 ```
 
-The endpoint processes pending notifications, reports pending/dead-letter
-health, and prunes expired rate-limit buckets. Dashboard notification polling is
-an additional opportunistic retry path, not the only worker.
+The endpoint processes pending notifications and authentication email, reports
+pending/dead-letter health for both queues, and prunes expired rate-limit
+buckets. Dashboard notification polling is an additional opportunistic retry
+path, not the only worker.
 
 ### Migration Safety
 

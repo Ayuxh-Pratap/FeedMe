@@ -10,14 +10,25 @@ type AuthEmailInput = {
   text: string
 }
 
-function getEmailConfig() {
-  const apiKey = process.env.RESEND_API_KEY?.trim()
-  const from = process.env.AUTH_EMAIL_FROM?.trim()
+type AuthEmailEnvironment = Readonly<Record<string, string | undefined>>
+
+export function assertAuthEmailConfigured(
+  environment: AuthEmailEnvironment = process.env
+) {
+  const apiKey = environment.RESEND_API_KEY?.trim()
+  const from = environment.AUTH_EMAIL_FROM?.trim()
 
   if (!apiKey || !from) {
+    console.error("auth.email.configuration_missing", {
+      missing: [
+        ...(!apiKey ? ["RESEND_API_KEY"] : []),
+        ...(!from ? ["AUTH_EMAIL_FROM"] : []),
+      ],
+    })
+
     throw new AppError({
-      code: "EMAIL_NOT_CONFIGURED",
-      message: "Account email delivery is not configured.",
+      code: "SERVICE_UNAVAILABLE",
+      message: "Email delivery is temporarily unavailable. Please try again shortly.",
       status: 503,
     })
   }
@@ -31,7 +42,7 @@ async function sendAuthEmail({
   subject,
   text,
 }: AuthEmailInput) {
-  const config = getEmailConfig()
+  const config = assertAuthEmailConfigured()
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -48,9 +59,15 @@ async function sendAuthEmail({
   })
 
   if (!response.ok) {
+    console.error("auth.email.delivery_failed", {
+      provider: "resend",
+      status: response.status,
+      requestId: response.headers.get("x-request-id"),
+    })
+
     throw new AppError({
       code: "EMAIL_DELIVERY_FAILED",
-      message: "We could not send that email. Please try again.",
+      message: "Email delivery is temporarily unavailable. Please try again shortly.",
       status: 503,
     })
   }
@@ -98,10 +115,13 @@ export async function sendPasswordResetEmail(email: string, token: string) {
   })
 }
 
-export async function sendExistingAccountEmail(email: string) {
+export async function sendExistingAccountEmail(
+  email: string,
+  deliveryId = email
+) {
   await sendAuthEmail({
     email,
-    idempotencyKey: `existing-account-${createHash("sha256").update(email).digest("hex")}`,
+    idempotencyKey: `existing-account-${createHash("sha256").update(deliveryId).digest("hex")}`,
     subject: "A FeedMe signup was requested",
     text: [
       "Someone tried to create a FeedMe account with this email address.",
