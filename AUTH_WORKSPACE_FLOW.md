@@ -165,7 +165,15 @@ Secondary action:
 Already have an account? Log in
 ```
 
-After successful account creation:
+After successful account creation in public demo mode:
+
+```txt
+create the account as email-verified
+create the first authenticated session
+-> /welcome (or the validated invite/deep-link destination)
+```
+
+After successful account creation in verified mode:
 
 ```txt
 /check-email
@@ -174,9 +182,18 @@ After successful account creation:
 -> /welcome (or the validated invite/deep-link destination)
 ```
 
-Signup does not create a session. A single-use verification link creates the
-first authenticated session only after the address is verified. Profile and
-workspace data are collected in the welcome flow.
+Demo mode is active when `AUTH_MODE` is unset or explicitly set to `demo`.
+Signup creates the first session immediately and does not require transactional
+email. `AUTH_MODE=verified` preserves the full durable verification flow: signup
+does not create a session, and a single-use verification link creates the first
+session only after the address is verified. Profile and workspace data are
+collected in the welcome flow in both modes.
+
+The hosted demo login page may expose a shared populated account through
+`DEMO_ACCOUNT_EMAIL` and `DEMO_ACCOUNT_PASSWORD`. Those credentials are public
+by design because they are delivered to the browser. The interface must explain
+that the hosted instance is a product demo and must not represent it as a
+production SaaS environment.
 
 ## Welcome
 
@@ -618,12 +635,18 @@ GET  /api/onboarding/state
 
 If server actions are used instead of route handlers, they should preserve the same conceptual boundaries.
 
-Authentication email is queued durably. Signup must validate email configuration
-before account writes, then atomically commit the user, verification token, and
-auth-email outbox event. Delivery failures retry in the background and must not
-turn a successful database write into a failed-looking signup. Repeated signup
-for an unverified email sends another verification link without changing the
-stored password.
+When `AUTH_MODE=verified`, authentication email is queued durably. Signup must
+validate email configuration before account writes, then atomically commit the
+user, verification token, and auth-email outbox event. Delivery failures retry
+in the background and must not turn a successful database write into a
+failed-looking signup. Repeated signup for an unverified email sends another
+verification link without changing the stored password.
+
+When `AUTH_MODE=demo` or the variable is absent, signup still enforces email
+format and password policy but skips token and email creation, marks the address
+verified, creates a session, and continues directly. Duplicate signup never
+overwrites an existing password. Existing unverified users may log in while demo
+mode is active, allowing deployments to switch modes without stranding accounts.
 
 ## Validation
 

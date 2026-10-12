@@ -7,10 +7,12 @@ import {
   AuthHeading,
   SocialAuthButtons,
 } from "@/components/feedme/auth-ui"
+import { DemoModeInfo } from "@/components/feedme/auth/demo-mode-info"
 import { SignupForm } from "@/components/feedme/auth/signup-form"
 import { RouteTransitionLink } from "@/components/feedme/experience/route-transition-button"
 import { getSafeNextPath } from "@/lib/safe-next-path"
 import { getCurrentSession } from "@/server/auth/current-user"
+import { getAuthMode } from "@/server/auth/config"
 import { getOnboardingStateForUser } from "@/server/onboarding/service"
 
 type SignupPageProps = {
@@ -39,12 +41,15 @@ export default async function SignupPage({ searchParams }: SignupPageProps) {
     redirect(nextPath ?? onboarding.nextPath)
   }
 
+  const demoMode = getAuthMode() === "demo"
+
   return (
     <AuthContentFrame>
       <section className="w-full">
         <AuthHeading
           title="Create your account"
           description="Set up your FeedMe login. Your profile and workspace come next."
+          accessory={demoMode ? <DemoModeInfo /> : undefined}
         />
 
         <SocialAuthButtons />

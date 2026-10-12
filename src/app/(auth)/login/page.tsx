@@ -7,10 +7,15 @@ import {
   AuthHeading,
   SocialAuthButtons,
 } from "@/components/feedme/auth-ui"
+import { DemoModeInfo } from "@/components/feedme/auth/demo-mode-info"
 import { LoginForm } from "@/components/feedme/auth/login-form"
 import { RouteTransitionLink } from "@/components/feedme/experience/route-transition-button"
 import { getSafeNextPath } from "@/lib/safe-next-path"
 import { getCurrentSession } from "@/server/auth/current-user"
+import {
+  getAuthMode,
+  getDemoAccountCredentials,
+} from "@/server/auth/config"
 import { getOnboardingStateForUser } from "@/server/onboarding/service"
 
 type LoginPageProps = {
@@ -41,10 +46,16 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     redirect(nextPath ?? onboarding.nextPath)
   }
 
+  const demoMode = getAuthMode() === "demo"
+  const demoCredentials = demoMode ? getDemoAccountCredentials() : undefined
+
   return (
     <AuthContentFrame>
       <section className="w-full">
-        <AuthHeading title="Sign in to your account" />
+        <AuthHeading
+          title="Sign in to your account"
+          accessory={demoMode ? <DemoModeInfo /> : undefined}
+        />
 
         <SocialAuthButtons />
 
@@ -52,7 +63,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <AuthDivider label="or log in with email" />
         </div>
 
-        <LoginForm />
+        <LoginForm demoCredentials={demoCredentials} />
 
         <div>
           <p className="pt-3 text-center text-body-3 font-medium text-muted-foreground">

@@ -18,18 +18,27 @@ export function hashSessionToken(token: string) {
   return createHash("sha256").update(token).digest("hex")
 }
 
-export async function createSession(userId: string) {
+export function buildSession(userId: string) {
   const token = randomBytes(32).toString("base64url")
-  const tokenHash = hashSessionToken(token)
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS)
-  const [session] = await db
-    .insert(sessions)
-    .values({
+
+  return {
+    token,
+    expiresAt,
+    values: {
       userId,
-      tokenHash,
+      tokenHash: hashSessionToken(token),
       expiresAt,
       lastUsedAt: new Date(),
-    })
+    },
+  }
+}
+
+export async function createSession(userId: string) {
+  const pendingSession = buildSession(userId)
+  const [session] = await db
+    .insert(sessions)
+    .values(pendingSession.values)
     .returning({
       id: sessions.id,
       userId: sessions.userId,
@@ -37,7 +46,7 @@ export async function createSession(userId: string) {
     })
 
   return {
-    token,
+    token: pendingSession.token,
     session,
   }
 }

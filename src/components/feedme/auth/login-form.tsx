@@ -19,17 +19,36 @@ type AuthResponse = {
   nextPath: string
 }
 
+type DemoCredentials = {
+  email: string
+  password: string
+}
+
 function formValue(formData: FormData, key: string) {
   return String(formData.get(key) ?? "")
 }
 
-export function LoginForm() {
+export function LoginForm({
+  demoCredentials,
+}: {
+  demoCredentials?: DemoCredentials
+}) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isRedirecting, setIsRedirecting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
   const isBusy = isSubmitting || isRedirecting
+
+  const handleDemoFill = () => {
+    if (!demoCredentials || isBusy) return
+
+    setEmail(demoCredentials.email)
+    setPassword(demoCredentials.password)
+    setErrorMessage(null)
+  }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -73,6 +92,8 @@ export function LoginForm() {
         placeholder="your@workemail.com"
         autoComplete="email"
         disabled={isBusy}
+        value={email}
+        onChange={(event) => setEmail(event.currentTarget.value)}
         required
       />
 
@@ -81,12 +102,14 @@ export function LoginForm() {
           <label htmlFor="password" className="text-body-3 font-medium text-foreground">
             Password
           </label>
-          <Link
-            href="/forgot-password"
-            className="text-body-3 text-muted-foreground hover:text-text-secondary"
-          >
-            Forgot password?
-          </Link>
+          {!demoCredentials ? (
+            <Link
+              href="/forgot-password"
+              className="text-body-3 text-muted-foreground hover:text-text-secondary"
+            >
+              Forgot password?
+            </Link>
+          ) : null}
         </div>
         <FeedMeField
           id="password"
@@ -95,6 +118,8 @@ export function LoginForm() {
           placeholder="********"
           autoComplete="current-password"
           disabled={isBusy}
+          value={password}
+          onChange={(event) => setPassword(event.currentTarget.value)}
           required
         />
       </div>
@@ -108,6 +133,20 @@ export function LoginForm() {
       <AuthButton type="submit" className="w-full" disabled={isBusy}>
         {isRedirecting ? "Opening workspace..." : isSubmitting ? "Logging in..." : "Log in"}
       </AuthButton>
+
+      {demoCredentials ? (
+        <p className="text-center text-body-3 text-muted-foreground">
+          Want to explore populated data?{" "}
+          <button
+            type="button"
+            className="font-medium text-foreground hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={isBusy}
+            onClick={handleDemoFill}
+          >
+            Use demo account
+          </button>
+        </p>
+      ) : null}
     </form>
   )
 }

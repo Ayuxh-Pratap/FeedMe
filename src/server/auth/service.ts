@@ -13,6 +13,7 @@ import {
   buildAuthActionToken,
   hashAuthActionToken,
 } from "@/server/auth/action-tokens"
+import { isEmailVerificationRequired } from "@/server/auth/config"
 import { normalizeEmail } from "@/server/auth/email"
 import {
   buildAuthEmailOutboxValues,
@@ -25,7 +26,7 @@ import {
   passwordHashNeedsUpgrade,
   verifyPassword,
 } from "@/server/auth/password"
-import { createSession } from "@/server/auth/sessions"
+import { buildSession, createSession } from "@/server/auth/sessions"
 import type {
   ChangePasswordInput,
   LoginInput,
@@ -33,6 +34,7 @@ import type {
   SignupInput,
 } from "@/server/auth/validation"
 import {
+  ConflictError,
   ForbiddenError,
   UnauthorizedError,
   ValidationError,
@@ -126,7 +128,11 @@ async function queueSignupEmail(user: AuthUser, nextPath?: string) {
 }
 
 export async function signupWithEmail(input: SignupInput) {
-  assertAuthEmailConfigured()
+  const emailVerificationRequired = isEmailVerificationRequired()
+
+  if (emailVerificationRequired) {
+    assertAuthEmailConfigured()
+  }
 
   const [existingUser, requestedPasswordHash] = await Promise.all([
     findUserByEmail(input.email),
@@ -134,11 +140,55 @@ export async function signupWithEmail(input: SignupInput) {
   ])
 
   if (existingUser) {
-    await queueSignupEmail(existingUser, input.nextPath)
-    return { nextPath: "/check-email" }
+    if (emailVerificationRequired) {
+      await queueSignupEmail(existingUser, input.nextPath)
+      return {
+        flow: "verification_required" as const,
+        nextPath: "/check-email",
+      }
+    }
+
+    throw new ConflictError(
+      "An account with this email already exists. Log in instead."
+    )
   }
 
   const userId = randomUUID()
+
+  if (!emailVerificationRequired) {
+    const verifiedAt = new Date()
+    const pendingSession = buildSession(userId)
+
+    try {
+      await db.batch([
+        db.insert(users).values({
+          id: userId,
+          email: input.email,
+          passwordHash: requestedPasswordHash,
+          emailVerifiedAt: verifiedAt,
+        }),
+        db.insert(sessions).values(pendingSession.values),
+      ])
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error
+
+      throw new ConflictError(
+        "An account with this email already exists. Log in instead."
+      )
+    }
+
+    return {
+      flow: "authenticated" as const,
+      user: {
+        id: userId,
+        email: input.email,
+      },
+      sessionToken: pendingSession.token,
+      sessionExpiresAt: pendingSession.expiresAt,
+      nextPath: input.nextPath ?? (await getPostAuthRedirectPath(userId)),
+    }
+  }
+
   const actionToken = buildAuthActionToken(
     userId,
     "email_verification",
@@ -175,6 +225,7 @@ export async function signupWithEmail(input: SignupInput) {
   }
 
   return {
+    flow: "verification_required" as const,
     nextPath: "/check-email",
   }
 }
@@ -198,7 +249,7 @@ export async function loginWithEmail(input: LoginInput) {
     throw new UnauthorizedError("Email or password is incorrect.")
   }
 
-  if (!user.emailVerifiedAt) {
+  if (!user.emailVerifiedAt && isEmailVerificationRequired()) {
     assertAuthEmailConfigured()
     await queueAuthActionEmail({
       user,

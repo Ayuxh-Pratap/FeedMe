@@ -18,13 +18,22 @@ export function AuthContentFrame({ children, className }: AuthContentFrameProps)
 type AuthHeadingProps = {
   title: string
   description?: string
+  accessory?: ReactNode
   className?: string
 }
 
-export function AuthHeading({ title, description, className }: AuthHeadingProps) {
+export function AuthHeading({
+  title,
+  description,
+  accessory,
+  className,
+}: AuthHeadingProps) {
   return (
     <header className={cn("mb-6 text-center", description && "mb-8", className)}>
-      <h1 className="text-heading-3 text-foreground">{title}</h1>
+      <div className="flex items-center justify-center gap-1.5">
+        <h1 className="text-heading-3 text-foreground">{title}</h1>
+        {accessory}
+      </div>
       {description ? (
         <p className="mt-2 text-body-2 text-text-body">{description}</p>
       ) : null}
