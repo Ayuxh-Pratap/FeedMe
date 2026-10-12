@@ -39,3 +39,13 @@ test("production hardening migration backfills before enforcing constraints", as
   assert.ok(repairReports >= 0)
   assert.ok(reportConstraint > repairReports)
 })
+
+test("atomic report creation preserves integer screenshot dimensions", async () => {
+  const service = await readFile(
+    new URL("../server/reports/service.ts", import.meta.url),
+    "utf8"
+  )
+
+  assert.ok(service.includes('CAST(${asset.width ?? null} AS integer)'))
+  assert.ok(service.includes('CAST(${asset.height ?? null} AS integer)'))
+})

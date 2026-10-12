@@ -2436,8 +2436,8 @@ export async function createWorkspaceReport(
         CAST(${asset.type} AS report_asset_type),
         ${asset.url},
         ${asset.mimeType ?? null},
-        ${asset.width ?? null},
-        ${asset.height ?? null}
+        CAST(${asset.width ?? null} AS integer),
+        CAST(${asset.height ?? null} AS integer)
       )`
     ),
     sql`, `
